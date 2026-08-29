@@ -1,87 +1,118 @@
-# PlayLearnAI: Emberdeep
+# PlayLearnAI: Moonbase
 
-An agent-native colony management game that teaches people how to delegate effectively to AI.
+A browser-based lunar operations game about learning to supervise AI agents through shared, live tools.
 
-Emberdeep presents the player with a living settlement: twenty colonists, competing work orders, scarce resources, injuries, fatigue, and cascading risks. The human sees a legible command interface. Their browser agent receives a structured WebMCP toolbelt that can inspect the same state and make bounded changes. Success comes from prompting the agent to gather evidence, act with clear constraints, and verify the outcome.
+This proof of concept puts the player in charge of a small Moon base during a pressure breach. The page is the shared source of truth: a person can operate the response manually, while a compatible browser agent can inspect and change the same simulation through WebMCP. The point is not to ask an AI for a one-shot answer. It is to practice grounding a decision in evidence, making a bounded plan, supervising execution, and verifying the result.
 
-This project is being built for the [OpenAI WebMCP Challenge](https://openai.com/webmcp-challenge/).
+PlayLearnAI is being built for the [OpenAI WebMCP Challenge](https://openai.com/webmcp-challenge/).
 
-## Why WebMCP belongs in the game
+## The pressure-breach loop
 
-The colony is intentionally too information-dense to optimize by clicking through one worker at a time. WebMCP lets an agent query skills and risks, assemble a reasoned batch of assignments, and update the exact same browser state the player is watching. The page remains the shared, visual source of truth; the agent becomes a capable staff officer rather than a separate chatbot.
+The POC is organized around one short operational loop:
 
-The learning loop is visible in the interface:
+1. **Ground** — inspect the vacuum-exposed laboratory, oxygen margin, dust forecast, power state, crew readiness, and location and condition of useful equipment before changing anything.
+2. **Plan** — set an objective, oxygen floor, protected crew, time horizon, and stop condition. Assign suitable crew, reserve the required equipment, set priorities, and validate the Operations Plan before commit.
+3. **Supervise** — commit against the current world and plan revisions, advance a bounded amount of time, and watch the same map, telemetry, crew state, equipment movement, work progress, and event history the agent is using.
+4. **Verify** — compare fresh evidence with the original objective and constraints, confirm whether the laboratory is safe and research is restored, and identify any remaining oxygen or power risk.
 
-1. **Inspect** — ask for evidence and tradeoffs before authorizing changes.
-2. **Act** — delegate a specific outcome with constraints and a rationale.
-3. **Verify** — advance a small amount of time, check effects, and adjust.
+Resetting the scenario makes it easy to try a different crew assignment or response order and compare outcomes.
 
-## Current vertical slice
+## Play manually
 
-- Deterministic, browser-local colony simulation with 20 colonists.
-- Resource consumption, fatigue, health, work progress, injuries, and risk alerts.
-- Shared UI and agent state with persistent demo progress.
-- Eight imperative WebMCP tools registered through `document.modelContext.registerTool()`:
-  - `get_colony_brief`
-  - `query_colonists`
-  - `list_work_orders`
-  - `create_work_order`
-  - `assign_colonists`
-  - `set_work_order_priority`
-  - `advance_colony_time`
-  - `verify_colony_outcome`
-- A Promptcraft coach that rewards inspect → act → verify behavior.
-- Manual time advancement and instant scenario reset for demos.
+WebMCP is optional for the manual path. After starting the app:
+
+1. Read the incident, pressure, reserve, power, crew, work, and equipment panels.
+2. Define the plan brief, then add crew assignments, equipment reservations, and work priorities.
+3. Preview and validate the plan. Resolve any conflicts before committing it.
+4. Advance the simulation in small steps or to a bounded stop condition.
+5. Watch the breach get sealed, the laboratory move through **No → Low → Yes** atmosphere, equipment travel to the work site, and oxygen, power, crew condition, work progress, and activity history change.
+6. Verify the outcome against the scenario objective and constraints, or reset and try another approach.
+
+The simulation remains playable in a normal browser when WebMCP is unavailable.
+
+### Fast successful run
+
+For a deterministic smoke test, use a 12-hour horizon, a 12-hour oxygen floor, protect Jonah Reed, and stop on **Objective complete**. Stage:
+
+- Mateo + EVA Suit 01 + Engineering Kit 01 for the breach;
+- Soo-jin + Engineering Kit 02 for repressurization;
+- Leila for Regolith Sintering research; and
+- Nia + EVA Suit 02 + the Kestrel rover for the solar bank.
+
+The preview should report a valid 10-hour plan. Commit, choose **To stop**, then **Verify**; all five outcome checks should pass.
+
+## Why WebMCP belongs here
+
+Colony incidents create more relevant state than a player should have to copy into a chat window. A compatible agent can instead use structured Site Tools to:
+
+- inspect live colony, pressure, crew, equipment, and incident state;
+- prepare or apply bounded response actions;
+- advance the simulation by a controlled amount; and
+- retrieve fresh evidence for outcome verification.
+
+Manual controls and agent tools operate on the same browser-local game state and use the same simulation rules. Agent actions become visible on the page rather than disappearing into a separate chatbot. There is no hidden solver, in-page model, API key, or privileged agent-only game state.
+
+## Implemented POC scope
+
+The current POC is intentionally narrow:
+
+- one fixed lunar-base scenario with six named crew and an active laboratory pressure breach;
+- engineering, science, medicine, and operations skills plus crew health, fatigue, morale, location, and work state;
+- physical EVA suits, engineering and medical kits, and a rover with location, condition, reservation, transit, and deployment state;
+- oxygen, food, water, construction stock, solar generation, demand, battery charge, and a dust forecast that can reduce power;
+- a playable **Seal breach → Repressurize laboratory → Research Regolith Sintering** work chain, with a parallel solar-cleaning response;
+- a revision-checked Operations Plan with objective, constraints, horizon, stop condition, editable actions, preview, validation, and commit;
+- a complete Ground → Plan → Supervise → Verify response loop;
+- manual play and equivalent WebMCP interaction categories over shared state;
+- bounded time advancement with visible consequences and evidence-based verification; and
+- browser-local progress plus deterministic scenario reset.
+
+Given the same reset state and the same actions, the simulation produces the same result. Use the reset control to discard the current run and restore the original breach scenario.
+
+## Later vertical-slice targets
+
+The larger game design is not represented as implemented POC functionality. Planned vertical-slice work includes:
+
+- incoming and returning flights competing for landing access;
+- cargo recovery and physical pallet hauling;
+- broader corridor and habitat construction planning; and
+- additional research and production chains, settlement growth, and the full campaign progression described in the game design.
+
+Those systems are deliberately outside this first playable loop. See [the game design document](docs/GAME_DESIGN.md) for the target experience and explicit jam cuts.
 
 ## Run locally
 
-Requirements: Node.js 22+ and npm.
+Requirements: Node.js 22 or newer and npm.
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the Vite URL in either:
-
-- ChatGPT's in-app browser, which supports WebMCP; or
-- Chrome 149+ with `chrome://flags/#enable-webmcp-testing` enabled, followed by a browser restart.
-
-In a browser without WebMCP support the simulation and UI still run, but the header reports `WebMCP unavailable` and no agent tools are registered.
-
-## Try the core scenario
-
-With Emberdeep open in a supported browser, ask the browser agent:
-
-> Assess Emberdeep's three biggest risks. Use the colony tools, cite the evidence you found, and do not make any changes yet.
-
-Then delegate a bounded response:
-
-> Choose the single highest-leverage response. Explain your constraints, then make only the work-order and assignment changes needed. Protect injured or exhausted colonists.
-
-Finally, close the loop:
-
-> Advance only two hours, then verify whether the intervention worked. Compare the evidence with your expectation, report side effects, and stop before taking another action.
+Open the local URL printed by Vite. Use a compatible WebMCP host to test agent collaboration; otherwise, use the complete manual path in a standard browser.
 
 ## Project commands
 
 ```bash
-npm run dev       # start local development
+npm run dev       # start the local development server
 npm run build     # type-check and create a production build
 npm run lint      # run ESLint
 npm test          # run the simulation tests once
 npm run preview   # serve the production build locally
 ```
 
+## Project boundaries
+
+- Single-page React and TypeScript application.
+- Browser-local simulation and persistence; no backend required for the POC.
+- Direct WebMCP Site Tool registration in supported environments.
+- No model API calls or credentials inside the game.
+
 ## Documentation
 
 - [Challenge requirements](docs/CHALLENGE.md)
 - [Game and learning design](docs/GAME_DESIGN.md)
 - [Submission checklist](docs/SUBMISSION_CHECKLIST.md)
-
-## Status
-
-This is an early hackathon build created after the challenge opened on August 25, 2026. The simulation is client-only and uses no API keys. Hosting, incident progression, outcome comparison, and the polished demo scenario are next.
 
 ## License
 

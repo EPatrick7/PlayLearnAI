@@ -18,7 +18,7 @@ Deadline: **September 3, 2026 at 1:00 p.m. PT**. Internal target: freeze the jud
 - [x] Non-trivial imperative WebMCP implementation.
 - [x] Human-visible updates from agent tool calls.
 - [x] Resettable demo scenario.
-- [ ] Add a scenario win/fail state and outcome comparison.
+- [x] Add a scenario win/fail state and outcome comparison.
 - [ ] Test every tool in ChatGPT's in-app browser.
 - [ ] Test in Chrome 149+ with WebMCP testing enabled.
 - [ ] Complete keyboard, small-screen, and reduced-motion checks.

@@ -1,61 +1,286 @@
-import { describe, expect, it } from 'vitest'
-import { createInitialState } from './seed'
-import { advanceSimulation, assignColonists, createOrder, deriveAlerts } from './simulation'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { createInitialState, MOONBASE_SEED } from './seed'
+import {
+  advanceSimulation,
+  commitOperationsPlan,
+  recordLearningEvidence,
+  removePlanAction,
+  setPlanBrief,
+  stagePlanAction,
+  validateOperationsPlan,
+  verifyOperationsPlan,
+} from './simulation'
+import { useColonyStore } from './store'
+import type { MoonbaseState, PlanActionInput } from './types'
 
-describe('Emberdeep simulation', () => {
-  it('starts with enough state to reward structured inspection', () => {
-    const state = createInitialState()
-    expect(state.colonists).toHaveLength(20)
-    expect(state.workOrders).toHaveLength(4)
-    expect(state.alerts.some((alert) => alert.severity === 'critical')).toBe(true)
-  })
+const brief = {
+  objective: 'restore_lab_and_research_sintering' as const,
+  constraints: { oxygenFloorHours: 12, protectedCrewIds: ['crew-jonah-reed'] },
+  horizonHours: 12,
+  stopCondition: { kind: 'objective_complete' as const },
+}
 
-  it('rejects assignments that would send an injured colonist to work', () => {
-    const state = createInitialState()
-    const injured = state.colonists.find((colonist) => colonist.status === 'injured')!
-    const [nextState, result] = assignColonists(state, [
-      { colonistId: injured.id, workOrderId: 'order-001' },
+const coreActions: PlanActionInput[] = [
+  { kind: 'assign_crew', crewId: 'crew-mateo-alvarez', workOrderId: 'work-seal-lab' },
+  { kind: 'reserve_equipment', equipmentId: 'equipment-eva-01', workOrderId: 'work-seal-lab' },
+  { kind: 'reserve_equipment', equipmentId: 'equipment-engineering-01', workOrderId: 'work-seal-lab' },
+  { kind: 'assign_crew', crewId: 'crew-soo-jin-park', workOrderId: 'work-repressurize-lab' },
+  { kind: 'reserve_equipment', equipmentId: 'equipment-engineering-02', workOrderId: 'work-repressurize-lab' },
+  { kind: 'assign_crew', crewId: 'crew-leila-haddad', workOrderId: 'work-research-sintering' },
+]
+
+const dustActions: PlanActionInput[] = [
+  { kind: 'assign_crew', crewId: 'crew-nia-kimani', workOrderId: 'work-clean-solar' },
+  { kind: 'reserve_equipment', equipmentId: 'equipment-eva-02', workOrderId: 'work-clean-solar' },
+  { kind: 'reserve_equipment', equipmentId: 'equipment-rover-01', workOrderId: 'work-clean-solar' },
+]
+
+const stage = (source: MoonbaseState, actions: PlanActionInput[]) =>
+  actions.reduce((state, action) => stagePlanAction(state, action, 'agent')[0], source)
+
+const makePlan = (includeDustMitigation = true) => {
+  let state = createInitialState()
+  state = setPlanBrief(state, brief, 'agent')[0]
+  return stage(state, includeDustMitigation ? [...coreActions, ...dustActions] : coreActions)
+}
+
+describe('Moonbase domain seed', () => {
+  it('resets to the same six-crew lunar incident every time', () => {
+    const first = createInitialState()
+    const second = createInitialState()
+
+    expect(first).toEqual(second)
+    expect(first.seed).toBe(MOONBASE_SEED)
+    expect(first.crew).toHaveLength(6)
+    expect(first.modules).toHaveLength(8)
+    expect(first.map).toEqual({ width: 24, height: 18 })
+    expect(first.workOrders.map((order) => order.id)).toEqual([
+      'work-seal-lab',
+      'work-repressurize-lab',
+      'work-research-sintering',
+      'work-clean-solar',
     ])
-
-    expect(result.assigned).toHaveLength(0)
-    expect(result.errors[0]).toContain('injured')
-    expect(nextState.workOrders[0].workers).not.toContain(injured.id)
   })
 
-  it('turns skilled, bounded assignments into visible colony progress', () => {
+  it('starts with a breached vacuum lab, a dust deadline, and six physical equipment objects', () => {
     const state = createInitialState()
-    const growers = [...state.colonists]
-      .filter((colonist) => colonist.status !== 'injured')
-      .sort((a, b) => b.skills.farming - a.skills.farming)
-      .slice(0, 2)
-    const [assignedState] = assignColonists(
-      state,
-      growers.map((colonist) => ({ colonistId: colonist.id, workOrderId: 'order-001' })),
+
+    expect(state.lab).toMatchObject({ atmosphere: 'no', breached: true, sealed: false })
+    expect(state.dust).toMatchObject({ startsAtHour: 3, active: false, mitigated: false })
+    expect(state.equipment).toHaveLength(6)
+    expect(state.equipment.every((item) => item.location && item.reservedForWorkOrderId === null)).toBe(true)
+    expect(state.workOrders.find((order) => order.id === 'work-repressurize-lab')?.prerequisiteIds).toEqual([
+      'work-seal-lab',
+    ])
+    expect(state.workOrders.find((order) => order.id === 'work-research-sintering')?.prerequisiteIds).toEqual([
+      'work-repressurize-lab',
+    ])
+  })
+})
+
+describe('Operations Plan staging and validation', () => {
+  it('keeps plan edits staged and revisioned without changing the world', () => {
+    const initial = createInitialState()
+    const [briefed] = setPlanBrief(initial, brief)
+    const [staged, stagedResult] = stagePlanAction(briefed, coreActions[0])
+
+    expect(staged.worldRevision).toBe(initial.worldRevision)
+    expect(staged.operationsPlan.revision).toBe(initial.operationsPlan.revision + 2)
+    expect(stagedResult.actionId).toBeDefined()
+    expect(staged.crew.find((member) => member.id === 'crew-mateo-alvarez')?.taskId).toBeNull()
+
+    const [edited, removeResult] = removePlanAction(staged, stagedResult.actionId!)
+    expect(removeResult.ok).toBe(true)
+    expect(edited.operationsPlan.actions).toHaveLength(0)
+    expect(edited.operationsPlan.revision).toBe(staged.operationsPlan.revision + 1)
+  })
+
+  it('rejects a superficially complete recovery plan that ignores the dust-driven power loss', () => {
+    const state = makePlan(false)
+    const validation = validateOperationsPlan(state)
+
+    expect(validation.valid).toBe(false)
+    expect(validation.preview.estimatedCompletionHours).toBe(10)
+    expect(validation.preview.projectedBatteryKwh).toBe(0)
+    expect(validation.issues).toContainEqual(
+      expect.objectContaining({ code: 'power_projection', severity: 'error', targetId: 'work-clean-solar' }),
     )
-    const advancedState = advanceSimulation(assignedState, 8)
-
-    expect(advancedState.workOrders[0].status).toBe('complete')
-    expect(advancedState.resources.food).toBeGreaterThan(state.resources.food)
-    expect(advancedState.events[0].message).toContain('Completed')
   })
 
-  it('ignores store action functions when cloning UI-backed state', () => {
-    const stateWithAction = Object.assign(createInitialState(), { resetColony: () => undefined })
-    expect(() => advanceSimulation(stateWithAction, 1)).not.toThrow()
+  it('previews a safe, complete parallel response when crew and equipment are explicit', () => {
+    const state = makePlan()
+    const validation = validateOperationsPlan(state)
+
+    expect(validation.valid).toBe(true)
+    expect(validation.issues.filter((issue) => issue.severity === 'error')).toHaveLength(0)
+    expect(validation.preview).toMatchObject({
+      estimatedCompletionHours: 10,
+      projectedOxygenHours: expect.any(Number),
+      projectedBatteryKwh: expect.any(Number),
+    })
+    expect(validation.preview.projectedOxygenHours).toBeGreaterThanOrEqual(12)
+    expect(validation.preview.projectedBatteryKwh).toBeGreaterThan(0)
   })
 
-  it('creates typed work that the agent can assign later', () => {
-    const state = createInitialState()
-    const [nextState, orderId] = createOrder(state, { type: 'mine_ore', priority: 4 })
-    const order = nextState.workOrders.find((candidate) => candidate.id === orderId)
+  it('fails stale world and plan revision commits cleanly', () => {
+    const state = makePlan()
+    const stalePlan = commitOperationsPlan(
+      state,
+      state.worldRevision,
+      state.operationsPlan.revision - 1,
+      'agent',
+    )[1]
+    expect(stalePlan).toMatchObject({ ok: false, code: 'stale_plan' })
 
-    expect(order).toMatchObject({ requiredSkill: 'mining', priority: 4, status: 'queued' })
+    const [changedWorld] = advanceSimulation(state, 1)
+    const staleWorld = commitOperationsPlan(
+      changedWorld,
+      changedWorld.worldRevision,
+      changedWorld.operationsPlan.revision,
+      'agent',
+    )[1]
+    expect(staleWorld).toMatchObject({ ok: false, code: 'stale_world' })
+    expect(changedWorld.operationsPlan.basedOnWorldRevision).not.toBe(changedWorld.worldRevision)
+  })
+})
+
+describe('committed Moonbase simulation', () => {
+  const commitGoldenPlan = () => {
+    const state = makePlan()
+    const [committed, result] = commitOperationsPlan(
+      state,
+      state.worldRevision,
+      state.operationsPlan.revision,
+      'agent',
+    )
+    expect(result.ok).toBe(true)
+    return committed
+  }
+
+  it('atomically assigns crew and reserves equipment without teleporting it', () => {
+    const state = makePlan()
+    const roverBefore = state.equipment.find((item) => item.id === 'equipment-rover-01')!
+    const committed = commitGoldenPlan()
+    const roverAfter = committed.equipment.find((item) => item.id === roverBefore.id)!
+
+    expect(committed.operationsPlan.status).toBe('committed')
+    expect(committed.operationsPlan.baseline?.worldRevision).toBe(committed.worldRevision)
+    expect(committed.lab).toMatchObject({ atmosphere: 'no', breached: true })
+    expect(roverAfter).toMatchObject({
+      location: roverBefore.location,
+      status: 'reserved',
+      reservedForWorkOrderId: 'work-clean-solar',
+    })
+    expect(committed.crew.find((member) => member.id === 'crew-nia-kimani')).toMatchObject({
+      status: 'assigned',
+      taskId: 'work-clean-solar',
+    })
   })
 
-  it('derives current risks rather than relying on stale alert text', () => {
-    const state = createInitialState()
-    state.resources.food = 0
-    const alerts = deriveAlerts(state)
-    expect(alerts.find((alert) => alert.id === 'alert-food')?.severity).toBe('critical')
+  it('executes retrieval, sealing, repressurization, research, and dust mitigation deterministically', () => {
+    const committed = commitGoldenPlan()
+    const [finished, result] = advanceSimulation(committed, { hours: 99 }, 'agent')
+
+    expect(result.boundedHours).toBe(12)
+    expect(result.advancedHours).toBe(10)
+    expect(result.stopReason).toBe('objective_complete')
+    expect(result.completedWorkOrderIds).toEqual([
+      'work-seal-lab',
+      'work-clean-solar',
+      'work-repressurize-lab',
+      'work-research-sintering',
+    ])
+    expect(finished.lab).toEqual({
+      moduleId: 'module-laboratory',
+      atmosphere: 'yes',
+      breached: false,
+      sealed: true,
+    })
+    expect(finished.dust).toMatchObject({ active: true, mitigated: true })
+    expect(finished.research).toMatchObject({
+      status: 'complete',
+      progressHours: 3,
+      unlocks: ['production-microwave-sintering'],
+    })
+    expect(finished.scenarioStatus).toBe('objective_complete')
+    expect(finished.reserves.minimumOxygenHours).toBeGreaterThanOrEqual(12)
+    expect(finished.power.status).not.toBe('critical')
+    expect(finished.power).toMatchObject({ demandKw: 18, status: 'surplus' })
+
+    const rover = finished.equipment.find((item) => item.id === 'equipment-rover-01')!
+    expect(rover).toMatchObject({ location: 'solar-skid', status: 'available', reservedForWorkOrderId: null })
+
+    const [unchanged, repeatedAdvance] = advanceSimulation(finished, { hours: 4 }, 'agent')
+    expect(repeatedAdvance).toMatchObject({ advancedHours: 0, stopReason: 'objective_complete' })
+    expect(unchanged.elapsedHours).toBe(finished.elapsedHours)
+  })
+
+  it('stops before a committed oxygen floor would be crossed', () => {
+    const committed = commitGoldenPlan()
+    committed.reserves.oxygenHours = 12.5
+    committed.reserves.minimumOxygenHours = 12.5
+    const [stopped, result] = advanceSimulation(committed, { hours: 4 }, 'agent')
+
+    expect(result).toMatchObject({ advancedHours: 0, stopped: true, stopReason: 'oxygen_floor' })
+    expect(stopped.reserves.oxygenHours).toBe(12.5)
+    expect(stopped.elapsedHours).toBe(committed.elapsedHours)
+  })
+
+  it('verifies the actual outcome and records the full Ground → Plan → Supervise → Verify loop', () => {
+    let state = recordLearningEvidence(
+      createInitialState(),
+      'ground',
+      'Inspected the breach, oxygen leak, dust forecast, crew, and equipment locations.',
+      'agent',
+    )
+    state = setPlanBrief(state, brief, 'agent')[0]
+    state = stage(state, [...coreActions, ...dustActions])
+    state = commitOperationsPlan(state, state.worldRevision, state.operationsPlan.revision, 'agent')[0]
+    state = advanceSimulation(state, { hours: 12 }, 'agent')[0]
+    const [verified, result] = verifyOperationsPlan(state, 'agent')
+
+    expect(result.status).toBe('success')
+    expect(result.checks.every((check) => check.passed)).toBe(true)
+    expect(result.residualRisks).toHaveLength(0)
+    expect(verified.learning.completedLoops).toBe(1)
+    expect(verified.learning.achieved).toEqual({ ground: true, plan: true, supervise: true, verify: true })
+    expect(verified.events[0]).toMatchObject({ phase: 'verified', actor: 'agent' })
+  })
+})
+
+describe('Moonbase Zustand store', () => {
+  beforeEach(() => useColonyStore.getState().resetColony())
+
+  it('exposes the same revisioned commands and performs a deterministic reset', () => {
+    const initial = useColonyStore.getState()
+    const edit = initial.setPlanBrief(brief)
+
+    expect(edit.ok).toBe(true)
+    expect(useColonyStore.getState().operationsPlan.revision).toBe(2)
+    useColonyStore.getState().resetMoonbase()
+    const reset = useColonyStore.getState()
+    expect(reset.seed).toBe(MOONBASE_SEED)
+    expect(reset.worldRevision).toBe(1)
+    expect(reset.operationsPlan.revision).toBe(1)
+    expect(reset.operationsPlan.actions).toHaveLength(0)
+    expect(typeof reset.commitPlan).toBe('function')
+  })
+
+  it('drives the same golden path through the public store action contract', () => {
+    useColonyStore.getState().recordLearningEvidence('ground', 'Inspected live Moonbase telemetry.', 'agent')
+    expect(useColonyStore.getState().setPlanBrief(brief, 'agent').ok).toBe(true)
+    for (const action of [...coreActions, ...dustActions]) {
+      expect(useColonyStore.getState().stagePlanAction(action, 'agent').ok).toBe(true)
+    }
+
+    const staged = useColonyStore.getState()
+    expect(staged.validatePlan().valid).toBe(true)
+    expect(staged.commitPlan(staged.worldRevision, staged.operationsPlan.revision, 'agent').ok).toBe(true)
+    const advance = useColonyStore.getState().advanceTime({ hours: 12 }, 'agent')
+    const verification = useColonyStore.getState().verifyPlan('agent')
+
+    expect(advance).toMatchObject({ advancedHours: 10, stopReason: 'objective_complete' })
+    expect(verification.status).toBe('success')
+    expect(useColonyStore.getState().learning.completedLoops).toBe(1)
   })
 })

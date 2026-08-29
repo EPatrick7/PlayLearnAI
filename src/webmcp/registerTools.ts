@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react'
-import { orderCatalog } from '../game/simulation'
 import { useColonyStore } from '../game/store'
-import type { ColonistStatus, SkillKey, WorkOrderStatus, WorkOrderType } from '../game/types'
+import { skillKeys, workOrderIds } from '../game/types'
+import type {
+  PlanActionInput,
+  Priority,
+  SkillKey,
+  StopCondition,
+  WorkOrderId,
+} from '../game/types'
 
 export type WebMcpStatus = 'registering' | 'ready' | 'unavailable' | 'error'
 
@@ -9,33 +15,111 @@ const textResult = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
 })
 
-const colonyBrief = () => {
+const effectiveGeneration = () => {
+  const { power } = useColonyStore.getState()
+  return power.solarGenerationKw * (1 - power.dustDeratePercent / 100)
+}
+
+const workOrderView = (order: ReturnType<typeof useColonyStore.getState>['workOrders'][number]) => ({
+  id: order.id,
+  label: order.label,
+  detail: order.detail,
+  status: order.status,
+  location: order.location,
+  priority: order.priority,
+  skill: { name: order.requiredSkill, minimum: order.minimumSkill },
+  requiredEquipment: order.requiredEquipment,
+  hazard: order.hazard,
+  prerequisites: order.prerequisiteIds,
+  progress: { hours: order.progressHours, requiredHours: order.durationHours },
+  assignedCrewIds: order.assignedCrewIds,
+  reservedEquipmentIds: order.reservedEquipmentIds,
+})
+
+const moonbaseBrief = () => {
   const state = useColonyStore.getState()
-  const activeOrders = state.workOrders.filter((order) => order.status === 'active')
   return {
-    colony: state.colonyName,
-    time: { day: state.day, hour: state.hour, season: state.season, weather: state.weather },
-    population: {
-      total: state.colonists.length,
-      idle: state.colonists.filter((colonist) => colonist.status === 'idle').length,
-      working: state.colonists.filter((colonist) => colonist.status === 'working').length,
-      resting: state.colonists.filter((colonist) => colonist.status === 'resting').length,
-      injured: state.colonists.filter((colonist) => colonist.status === 'injured').length,
+    base: state.baseName,
+    seed: state.seed,
+    time: { missionDay: state.missionDay, hour: state.hour, elapsedHours: state.elapsedHours },
+    worldRevision: state.worldRevision,
+    scenarioStatus: state.scenarioStatus,
+    objective: state.objective,
+    reserves: {
+      ...state.reserves,
+      declaredOxygenFloorHours: state.operationsPlan.objective
+        ? state.operationsPlan.constraints.oxygenFloorHours
+        : state.objective.recommendedOxygenFloorHours,
     },
-    resources: state.resources,
-    activeWork: activeOrders.map(({ id, label, priority, progress, target, workers }) => ({
-      id,
-      label,
-      priority,
-      progress: `${Math.round((progress / target) * 100)}%`,
-      workerCount: workers.length,
-    })),
+    power: {
+      ...state.power,
+      effectiveGenerationKw: effectiveGeneration(),
+      netKw: effectiveGeneration() - state.power.demandKw,
+    },
+    laboratory: state.lab,
+    dust: {
+      ...state.dust,
+      startsInHours: Math.max(0, state.dust.startsAtHour - state.elapsedHours),
+    },
+    research: state.research,
     alerts: state.alerts,
-    delegationLesson: {
-      phase: state.learning.phase,
+    workOrders: state.workOrders.map(workOrderView),
+    operationsPlan: {
+      id: state.operationsPlan.id,
+      status: state.operationsPlan.status,
+      revision: state.operationsPlan.revision,
+      basedOnWorldRevision: state.operationsPlan.basedOnWorldRevision,
+      actionCount: state.operationsPlan.actions.length,
+    },
+    workflow: {
+      phase: state.learning.currentPhase,
       coaching: state.learning.coaching,
     },
   }
+}
+
+interface StopConditionInput {
+  kind: StopCondition['kind']
+  thresholdHours?: number
+  thresholdKwh?: number
+  workOrderId?: WorkOrderId
+}
+
+const parseStopCondition = (input: StopConditionInput): StopCondition | string => {
+  if (input.kind === 'oxygen_below') {
+    if (typeof input.thresholdHours !== 'number') return 'oxygen_below requires thresholdHours.'
+    return { kind: input.kind, thresholdHours: input.thresholdHours }
+  }
+  if (input.kind === 'battery_below') {
+    if (typeof input.thresholdKwh !== 'number') return 'battery_below requires thresholdKwh.'
+    return { kind: input.kind, thresholdKwh: input.thresholdKwh }
+  }
+  if (input.kind === 'work_order_complete') {
+    if (!input.workOrderId) return 'work_order_complete requires workOrderId.'
+    return { kind: input.kind, workOrderId: input.workOrderId }
+  }
+  return { kind: input.kind }
+}
+
+interface RawPlanAction {
+  kind: PlanActionInput['kind']
+  crewId?: string
+  equipmentId?: string
+  workOrderId: WorkOrderId
+  priority?: Priority
+}
+
+const parsePlanAction = (input: RawPlanAction): PlanActionInput | string => {
+  if (input.kind === 'assign_crew') {
+    if (!input.crewId) return 'assign_crew requires crewId.'
+    return { kind: input.kind, crewId: input.crewId, workOrderId: input.workOrderId }
+  }
+  if (input.kind === 'reserve_equipment') {
+    if (!input.equipmentId) return 'reserve_equipment requires equipmentId.'
+    return { kind: input.kind, equipmentId: input.equipmentId, workOrderId: input.workOrderId }
+  }
+  if (typeof input.priority !== 'number') return 'set_priority requires priority.'
+  return { kind: input.kind, workOrderId: input.workOrderId, priority: input.priority }
 }
 
 export const useWebMcpTools = (): WebMcpStatus => {
@@ -53,294 +137,370 @@ export const useWebMcpTools = (): WebMcpStatus => {
         await Promise.all([
           modelContext.registerTool(
             {
-              name: 'get_colony_brief',
+              name: 'inspect_moonbase',
               description:
-                'Inspect the current Emberdeep colony situation before making changes. Returns time, population, resources, active work, risks, and the current learning-loop phase. Use this first when the user asks for a plan.',
-              inputSchema: { type: 'object', properties: {} },
-              execute: () => {
-                useColonyStore.getState().recordToolCall('get_colony_brief', 'inspect')
-                return textResult(colonyBrief())
-              },
-            },
-            { signal: controller.signal },
-          ),
-          modelContext.registerTool(
-            {
-              name: 'query_colonists',
-              description:
-                'Find colonists using structured constraints. Use this to compare candidates by relevant skill, fatigue, health, morale, and current assignment instead of guessing from the visual roster.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  status: {
-                    type: 'string',
-                    enum: ['working', 'idle', 'resting', 'injured'],
-                    description: 'Optional current status filter.',
-                  },
-                  skill: {
-                    type: 'string',
-                    enum: ['farming', 'woodcutting', 'mining', 'masonry', 'medicine', 'hauling'],
-                    description: 'Optional skill to rank from highest to lowest.',
-                  },
-                  maxFatigue: {
-                    type: 'number',
-                    minimum: 0,
-                    maximum: 100,
-                    description: 'Only return colonists at or below this fatigue.',
-                  },
-                  limit: { type: 'number', minimum: 1, maximum: 20, default: 8 },
-                },
-              },
-              execute: (rawInput) => {
-                const input = rawInput as {
-                  status?: ColonistStatus
-                  skill?: SkillKey
-                  maxFatigue?: number
-                  limit?: number
-                }
-                useColonyStore.getState().recordToolCall('query_colonists', 'inspect')
-                const limit = Math.min(20, Math.max(1, input.limit ?? 8))
-                let colonists = [...useColonyStore.getState().colonists]
-                if (input.status) colonists = colonists.filter((colonist) => colonist.status === input.status)
-                if (input.maxFatigue !== undefined) {
-                  colonists = colonists.filter((colonist) => colonist.fatigue <= input.maxFatigue!)
-                }
-                if (input.skill) colonists.sort((a, b) => b.skills[input.skill!] - a.skills[input.skill!])
-                return textResult({
-                  count: Math.min(colonists.length, limit),
-                  colonists: colonists.slice(0, limit).map((colonist) => ({
-                    id: colonist.id,
-                    name: colonist.name,
-                    title: colonist.title,
-                    status: colonist.status,
-                    health: colonist.health,
-                    morale: colonist.morale,
-                    fatigue: colonist.fatigue,
-                    assignedOrderId: colonist.assignedOrderId,
-                    relevantSkill: input.skill ? { name: input.skill, level: colonist.skills[input.skill] } : undefined,
-                  })),
-                })
-              },
-            },
-            { signal: controller.signal },
-          ),
-          modelContext.registerTool(
-            {
-              name: 'list_work_orders',
-              description:
-                'Inspect open or completed colony work orders, including IDs, priorities, required skills, assigned workers, and progress. Useful before assigning colonists or changing priorities.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  status: {
-                    type: 'string',
-                    enum: ['queued', 'active', 'complete', 'cancelled'],
-                    description: 'Optional status filter.',
-                  },
-                },
-              },
-              execute: (rawInput) => {
-                const input = rawInput as { status?: WorkOrderStatus }
-                useColonyStore.getState().recordToolCall('list_work_orders', 'inspect')
-                let orders = useColonyStore.getState().workOrders
-                if (input.status) orders = orders.filter((order) => order.status === input.status)
-                return textResult({
-                  orders: orders
-                    .sort((a, b) => b.priority - a.priority)
-                    .map((order) => ({
-                      id: order.id,
-                      label: order.label,
-                      type: order.type,
-                      status: order.status,
-                      priority: order.priority,
-                      requiredSkill: order.requiredSkill,
-                      progressPercent: Math.round((order.progress / order.target) * 100),
-                      workerIds: order.workers,
-                    })),
-                })
-              },
-            },
-            { signal: controller.signal },
-          ),
-          modelContext.registerTool(
-            {
-              name: 'create_work_order',
-              description:
-                'Create one bounded colony work order after inspecting current needs. Explain the rationale so the human can evaluate the decision. This changes shared game state immediately.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  type: {
-                    type: 'string',
-                    enum: Object.keys(orderCatalog),
-                    description: 'The concrete outcome the colony should produce.',
-                  },
-                  priority: { type: 'number', enum: [1, 2, 3, 4, 5], description: '1 is lowest; 5 is urgent.' },
-                  rationale: {
-                    type: 'string',
-                    minLength: 8,
-                    description: 'A concise reason tied to observed colony state.',
-                  },
-                },
-                required: ['type', 'priority', 'rationale'],
-              },
-              execute: (rawInput) => {
-                const input = rawInput as {
-                  type: WorkOrderType
-                  priority: 1 | 2 | 3 | 4 | 5
-                  rationale: string
-                }
-                const store = useColonyStore.getState()
-                store.recordToolCall('create_work_order', 'act')
-                const orderId = store.addOrder({ type: input.type, priority: input.priority })
-                return textResult({
-                  ok: true,
-                  orderId,
-                  rationale: input.rationale,
-                  next: 'Assign suitable, rested colonists or leave the order queued for human review.',
-                })
-              },
-            },
-            { signal: controller.signal },
-          ),
-          modelContext.registerTool(
-            {
-              name: 'assign_colonists',
-              description:
-                'Apply up to twelve explicit colonist-to-work-order assignments as one reviewable batch. Inspect colonists and work orders first; protect injured or exhausted workers. Use null workOrderId to rest or unassign someone.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  assignments: {
-                    type: 'array',
-                    minItems: 1,
-                    maxItems: 12,
-                    items: {
-                      type: 'object',
-                      properties: {
-                        colonistId: { type: 'string' },
-                        workOrderId: { type: ['string', 'null'] },
-                      },
-                      required: ['colonistId', 'workOrderId'],
-                    },
-                  },
-                  rationale: {
-                    type: 'string',
-                    minLength: 8,
-                    description: 'Why this batch balances skill, urgency, health, and fatigue.',
-                  },
-                },
-                required: ['assignments', 'rationale'],
-              },
-              execute: (rawInput) => {
-                const input = rawInput as {
-                  assignments: Array<{ colonistId: string; workOrderId: string | null }>
-                  rationale: string
-                }
-                const store = useColonyStore.getState()
-                store.recordToolCall('assign_colonists', 'act')
-                const result = store.updateAssignments(input.assignments)
-                return textResult({ ...result, rationale: input.rationale, next: 'Advance no more than a few hours, then verify.' })
-              },
-            },
-            { signal: controller.signal },
-          ),
-          modelContext.registerTool(
-            {
-              name: 'set_work_order_priority',
-              description:
-                'Change one open work order priority after explaining the observed tradeoff. This does not assign workers.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  workOrderId: { type: 'string' },
-                  priority: { type: 'number', enum: [1, 2, 3, 4, 5] },
-                  rationale: { type: 'string', minLength: 8 },
-                },
-                required: ['workOrderId', 'priority', 'rationale'],
-              },
-              execute: (rawInput) => {
-                const input = rawInput as {
-                  workOrderId: string
-                  priority: 1 | 2 | 3 | 4 | 5
-                  rationale: string
-                }
-                const store = useColonyStore.getState()
-                store.recordToolCall('set_work_order_priority', 'act')
-                const ok = store.setOrderPriority(input.workOrderId, input.priority)
-                return textResult({ ok, rationale: input.rationale })
-              },
-            },
-            { signal: controller.signal },
-          ),
-          modelContext.registerTool(
-            {
-              name: 'advance_colony_time',
-              description:
-                'Advance the shared simulation by one to four hours so assigned work can progress. Use a small observation window, then call verify_colony_outcome. Time advancement consumes food and increases worker fatigue.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  hours: { type: 'number', minimum: 1, maximum: 4 },
-                  expectedOutcome: {
-                    type: 'string',
-                    minLength: 8,
-                    description: 'A falsifiable expectation to check after time advances.',
-                  },
-                },
-                required: ['hours', 'expectedOutcome'],
-              },
-              execute: (rawInput) => {
-                const input = rawInput as { hours: number; expectedOutcome: string }
-                const store = useColonyStore.getState()
-                store.recordToolCall('advance_colony_time', 'act')
-                store.advanceHours(input.hours)
-                return textResult({
-                  advancedHours: input.hours,
-                  expectedOutcome: input.expectedOutcome,
-                  next: 'Call verify_colony_outcome and compare the evidence with the expectation.',
-                })
-              },
-            },
-            { signal: controller.signal },
-          ),
-          modelContext.registerTool(
-            {
-              name: 'verify_colony_outcome',
-              description:
-                'Close the delegation loop after an action. Returns current evidence—resources, risks, work progress, and worker strain—so you can state whether the intended outcome occurred and adjust safely.',
+                'Ground a Moonbase decision in live evidence without changing simulation state. Returns world revision, pressure, reserves, power, dust timing, research, alerts, work dependencies, and plan status. Use before staging a response.',
               inputSchema: {
                 type: 'object',
                 properties: {
                   focus: {
                     type: 'string',
-                    description: 'The outcome, resource, work order, or risk being verified.',
+                    description: 'Optional inspection intent recorded as workflow evidence.',
                   },
                 },
-                required: ['focus'],
               },
               execute: (rawInput) => {
-                const input = rawInput as { focus: string }
-                useColonyStore.getState().recordToolCall('verify_colony_outcome', 'verify')
-                const state = useColonyStore.getState()
+                const input = rawInput as { focus?: string }
+                useColonyStore.getState().recordLearningEvidence(
+                  'ground',
+                  input.focus ? `Agent inspected the moonbase for: ${input.focus}` : 'Agent inspected the live moonbase brief.',
+                  'agent',
+                )
+                return textResult(moonbaseBrief())
+              },
+            },
+            { signal: controller.signal },
+          ),
+          modelContext.registerTool(
+            {
+              name: 'query_crew_and_equipment',
+              description:
+                'Compare crew and localized equipment before staging assignments. Can rank one skill, cap fatigue, and focus on the requirements of one work order. This is read-only.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  skill: { type: 'string', enum: skillKeys },
+                  maxFatigue: { type: 'number', minimum: 0, maximum: 100 },
+                  workOrderId: { type: 'string', enum: workOrderIds },
+                  includeEquipment: { type: 'boolean', default: true },
+                },
+              },
+              execute: (rawInput) => {
+                const input = rawInput as {
+                  skill?: SkillKey
+                  maxFatigue?: number
+                  workOrderId?: WorkOrderId
+                  includeEquipment?: boolean
+                }
+                const store = useColonyStore.getState()
+                const order = input.workOrderId
+                  ? store.workOrders.find((candidate) => candidate.id === input.workOrderId)
+                  : undefined
+                const skill = input.skill ?? order?.requiredSkill
+                let crew = [...store.crew]
+                if (input.maxFatigue !== undefined) crew = crew.filter((member) => member.fatigue <= input.maxFatigue!)
+                if (skill) crew.sort((a, b) => b.skills[skill] - a.skills[skill])
+                const equipment = input.includeEquipment === false
+                  ? []
+                  : store.equipment.filter((item) => !order || order.requiredEquipment.includes(item.type))
+                store.recordLearningEvidence(
+                  'ground',
+                  `Agent compared ${crew.length} crew${order ? ` and gear for ${order.label}` : ' and localized gear'}.`,
+                  'agent',
+                )
                 return textResult({
-                  focus: input.focus,
-                  time: { day: state.day, hour: state.hour },
-                  resources: state.resources,
-                  alerts: state.alerts,
-                  openWork: state.workOrders
-                    .filter((order) => order.status === 'active' || order.status === 'queued')
-                    .map((order) => ({
-                      id: order.id,
-                      label: order.label,
-                      status: order.status,
-                      progressPercent: Math.round((order.progress / order.target) * 100),
-                      workers: order.workers.length,
-                    })),
-                  strainedWorkers: state.colonists
-                    .filter((colonist) => colonist.fatigue >= 75 || colonist.health < 70)
-                    .map(({ id, name, health, fatigue, status }) => ({ id, name, health, fatigue, status })),
-                  learningLoop: state.learning,
+                  worldRevision: store.worldRevision,
+                  workOrder: order ? workOrderView(order) : null,
+                  crew: crew.map((member) => ({
+                    id: member.id,
+                    name: member.name,
+                    role: member.role,
+                    trait: member.trait,
+                    status: member.status,
+                    health: member.health,
+                    fatigue: member.fatigue,
+                    location: member.location,
+                    taskId: member.taskId,
+                    relevantSkill: skill ? { name: skill, level: member.skills[skill] } : undefined,
+                  })),
+                  equipment,
+                })
+              },
+            },
+            { signal: controller.signal },
+          ),
+          modelContext.registerTool(
+            {
+              name: 'inspect_operations_plan',
+              description:
+                'Read the shared editable Operations Plan and a fresh validation preview. Use after a human edit and immediately before commit so plan and world revisions are current.',
+              inputSchema: { type: 'object', properties: {} },
+              execute: () => {
+                const store = useColonyStore.getState()
+                return textResult({
+                  worldRevision: store.worldRevision,
+                  plan: store.operationsPlan,
+                  validation: store.validatePlan(),
+                })
+              },
+            },
+            { signal: controller.signal },
+          ),
+          modelContext.registerTool(
+            {
+              name: 'stage_operations_plan',
+              description:
+                'Stage bounded typed actions in the shared draft; nothing executes until commit. Supply the revisions you inspected. replace mode clears the existing draft first. The returned preview exposes conflicts, safety warnings, projected oxygen, battery, and duration.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  expectedWorldRevision: { type: 'number', minimum: 1 },
+                  expectedPlanRevision: { type: 'number', minimum: 1 },
+                  mode: { type: 'string', enum: ['append', 'replace'], default: 'append' },
+                  brief: {
+                    type: 'object',
+                    properties: {
+                      oxygenFloorHours: { type: 'number', minimum: 1 },
+                      protectedCrewIds: { type: 'array', maxItems: 6, items: { type: 'string' } },
+                      horizonHours: { type: 'number', minimum: 1, maximum: 12 },
+                      stopCondition: {
+                        type: 'object',
+                        properties: {
+                          kind: {
+                            type: 'string',
+                            enum: ['objective_complete', 'oxygen_below', 'battery_below', 'critical_alert', 'work_order_complete'],
+                          },
+                          thresholdHours: { type: 'number' },
+                          thresholdKwh: { type: 'number' },
+                          workOrderId: { type: 'string', enum: workOrderIds },
+                        },
+                        required: ['kind'],
+                      },
+                    },
+                    required: ['oxygenFloorHours', 'horizonHours', 'stopCondition'],
+                  },
+                  actions: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 16,
+                    items: {
+                      type: 'object',
+                      properties: {
+                        kind: { type: 'string', enum: ['assign_crew', 'reserve_equipment', 'set_priority'] },
+                        crewId: { type: 'string' },
+                        equipmentId: { type: 'string' },
+                        workOrderId: { type: 'string', enum: workOrderIds },
+                        priority: { type: 'number', enum: [1, 2, 3, 4, 5] },
+                      },
+                      required: ['kind', 'workOrderId'],
+                    },
+                  },
+                },
+                required: ['expectedWorldRevision', 'expectedPlanRevision', 'actions'],
+              },
+              execute: (rawInput) => {
+                const input = rawInput as {
+                  expectedWorldRevision: number
+                  expectedPlanRevision: number
+                  mode?: 'append' | 'replace'
+                  brief?: {
+                    oxygenFloorHours: number
+                    protectedCrewIds?: string[]
+                    horizonHours: number
+                    stopCondition: StopConditionInput
+                  }
+                  actions: RawPlanAction[]
+                }
+                const current = useColonyStore.getState()
+                if (input.expectedWorldRevision !== current.worldRevision || input.expectedPlanRevision !== current.operationsPlan.revision) {
+                  return textResult({
+                    ok: false,
+                    code: 'stale_revision',
+                    currentWorldRevision: current.worldRevision,
+                    currentPlanRevision: current.operationsPlan.revision,
+                    next: 'Inspect the Operations Plan again before editing it.',
+                  })
+                }
+
+                const parsedActions = input.actions.map(parsePlanAction)
+                const actionError = parsedActions.find((action): action is string => typeof action === 'string')
+                if (actionError) return textResult({ ok: false, code: 'invalid_action', error: actionError })
+                const parsedStop = input.brief ? parseStopCondition(input.brief.stopCondition) : null
+                if (typeof parsedStop === 'string') return textResult({ ok: false, code: 'invalid_stop_condition', error: parsedStop })
+
+                if (input.mode === 'replace') useColonyStore.getState().clearPlan('agent')
+                if (input.brief && parsedStop) {
+                  useColonyStore.getState().setPlanBrief({
+                    objective: useColonyStore.getState().objective.id,
+                    constraints: {
+                      oxygenFloorHours: input.brief.oxygenFloorHours,
+                      protectedCrewIds: input.brief.protectedCrewIds ?? [],
+                    },
+                    horizonHours: input.brief.horizonHours,
+                    stopCondition: parsedStop,
+                  }, 'agent')
+                }
+                const editResults = parsedActions.map((action) =>
+                  useColonyStore.getState().stagePlanAction(action as PlanActionInput, 'agent'),
+                )
+                const store = useColonyStore.getState()
+                return textResult({
+                  ok: editResults.every((result) => result.ok),
+                  editResults,
+                  worldRevision: store.worldRevision,
+                  plan: store.operationsPlan,
+                  validation: store.validatePlan(),
+                  next: 'Review warnings and have the human amend the shared draft if needed. Re-inspect immediately before commit.',
+                })
+              },
+            },
+            { signal: controller.signal },
+          ),
+          modelContext.registerTool(
+            {
+              name: 'edit_operations_plan',
+              description:
+                'Perform the same draft edits available in the visible plan: remove specific action IDs, clear to a fresh draft, or rebase the draft onto the current world revision.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  expectedPlanRevision: { type: 'number', minimum: 1 },
+                  operation: { type: 'string', enum: ['remove_actions', 'clear', 'rebase'] },
+                  actionIds: { type: 'array', maxItems: 16, items: { type: 'string' } },
+                },
+                required: ['expectedPlanRevision', 'operation'],
+              },
+              execute: (rawInput) => {
+                const input = rawInput as {
+                  expectedPlanRevision: number
+                  operation: 'remove_actions' | 'clear' | 'rebase'
+                  actionIds?: string[]
+                }
+                const current = useColonyStore.getState()
+                if (input.expectedPlanRevision !== current.operationsPlan.revision) {
+                  return textResult({ ok: false, code: 'stale_plan', currentPlanRevision: current.operationsPlan.revision })
+                }
+                const results = input.operation === 'clear'
+                  ? [current.clearPlan('agent')]
+                  : input.operation === 'rebase'
+                    ? [current.rebasePlan('agent')]
+                    : (input.actionIds ?? []).map((id) => useColonyStore.getState().removePlanAction(id, 'agent'))
+                const store = useColonyStore.getState()
+                return textResult({
+                  ok: results.length > 0 && results.every((result) => result.ok),
+                  results,
+                  worldRevision: store.worldRevision,
+                  plan: store.operationsPlan,
+                  validation: store.validatePlan(),
+                })
+              },
+            },
+            { signal: controller.signal },
+          ),
+          modelContext.registerTool(
+            {
+              name: 'commit_operations_plan',
+              description:
+                'Atomically commit the validated shared draft using the exact world and plan revisions from the latest inspection. Stale or invalid plans fail without executing any action.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  expectedWorldRevision: { type: 'number', minimum: 1 },
+                  expectedPlanRevision: { type: 'number', minimum: 1 },
+                },
+                required: ['expectedWorldRevision', 'expectedPlanRevision'],
+              },
+              execute: (rawInput) => {
+                const input = rawInput as { expectedWorldRevision: number; expectedPlanRevision: number }
+                const result = useColonyStore.getState().commitPlan(
+                  input.expectedWorldRevision,
+                  input.expectedPlanRevision,
+                  'agent',
+                )
+                return textResult({
+                  ...result,
+                  currentPlan: useColonyStore.getState().operationsPlan,
+                  next: result.ok ? 'Advance a bounded observation window, then verify with fresh evidence.' : 'Inspect and amend the plan before retrying.',
+                })
+              },
+            },
+            { signal: controller.signal },
+          ),
+          modelContext.registerTool(
+            {
+              name: 'advance_until',
+              description:
+                'Advance a committed Moonbase plan by at most twelve simulated hours, stopping early on its oxygen floor, horizon, objective, new critical alert, or the supplied typed stop condition.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  expectedWorldRevision: { type: 'number', minimum: 1 },
+                  hours: { type: 'number', minimum: 1, maximum: 12 },
+                  stopCondition: {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        enum: ['objective_complete', 'oxygen_below', 'battery_below', 'critical_alert', 'work_order_complete'],
+                      },
+                      thresholdHours: { type: 'number' },
+                      thresholdKwh: { type: 'number' },
+                      workOrderId: { type: 'string', enum: workOrderIds },
+                    },
+                    required: ['kind'],
+                  },
+                },
+                required: ['expectedWorldRevision', 'hours'],
+              },
+              execute: (rawInput) => {
+                const input = rawInput as {
+                  expectedWorldRevision: number
+                  hours: number
+                  stopCondition?: StopConditionInput
+                }
+                const current = useColonyStore.getState()
+                if (input.expectedWorldRevision !== current.worldRevision) {
+                  return textResult({ ok: false, code: 'stale_world', currentWorldRevision: current.worldRevision })
+                }
+                if (current.operationsPlan.status === 'draft') {
+                  return textResult({ ok: false, code: 'plan_not_committed' })
+                }
+                const parsedStop = input.stopCondition ? parseStopCondition(input.stopCondition) : undefined
+                if (typeof parsedStop === 'string') return textResult({ ok: false, code: 'invalid_stop_condition', error: parsedStop })
+                const result = current.advanceTime({ hours: input.hours, stopCondition: parsedStop }, 'agent')
+                const next = useColonyStore.getState()
+                return textResult({
+                  ok: true,
+                  ...result,
+                  state: {
+                    time: { missionDay: next.missionDay, hour: next.hour, elapsedHours: next.elapsedHours },
+                    worldRevision: next.worldRevision,
+                    reserves: next.reserves,
+                    power: next.power,
+                    laboratory: next.lab,
+                    research: next.research,
+                    alerts: next.alerts,
+                  },
+                  next: 'Verify the actual result against the committed objective and constraints.',
+                })
+              },
+            },
+            { signal: controller.signal },
+          ),
+          modelContext.registerTool(
+            {
+              name: 'verify_operations_plan',
+              description:
+                'Compare fresh Moonbase state with the committed objective, oxygen floor, stop condition, laboratory pressure, and power constraint. Returns explicit checks and residual risks.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  expectedWorldRevision: { type: 'number', minimum: 1 },
+                },
+                required: ['expectedWorldRevision'],
+              },
+              execute: (rawInput) => {
+                const input = rawInput as { expectedWorldRevision: number }
+                const current = useColonyStore.getState()
+                if (input.expectedWorldRevision !== current.worldRevision) {
+                  return textResult({ ok: false, code: 'stale_world', currentWorldRevision: current.worldRevision })
+                }
+                const verification = current.verifyPlan('agent')
+                return textResult({
+                  ok: verification.status !== 'not_ready',
+                  verification,
+                  scenarioStatus: useColonyStore.getState().scenarioStatus,
+                  workflow: useColonyStore.getState().learning,
                 })
               },
             },
@@ -350,7 +510,7 @@ export const useWebMcpTools = (): WebMcpStatus => {
         setStatus('ready')
       } catch (error) {
         if ((error as DOMException).name !== 'AbortError') {
-          console.error('Unable to register WebMCP tools', error)
+          console.error('Unable to register Moonbase WebMCP tools', error)
           setStatus('error')
         }
       }

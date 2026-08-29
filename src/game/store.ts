@@ -1,102 +1,154 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { createInitialState } from './seed'
-import { advanceSimulation, assignColonists, createOrder, reprioritizeOrder } from './simulation'
+import {
+  advanceSimulation,
+  clearOperationsPlan,
+  commitOperationsPlan,
+  rebaseOperationsPlan,
+  recordLearningEvidence as recordLearningEvidenceInState,
+  removePlanAction as removePlanActionFromState,
+  setPlanBrief as setPlanBriefInState,
+  stagePlanAction as stagePlanActionInState,
+  validateOperationsPlan,
+  verifyOperationsPlan,
+} from './simulation'
 import type {
-  AssignmentInput,
-  ColonyState,
-  CreateOrderInput,
-  ToolCallKind,
+  AdvanceInput,
+  AdvanceResult,
+  CommitResult,
+  LearningPhase,
+  MoonbaseState,
+  PlanActionInput,
+  PlanBriefInput,
+  PlanEditResult,
+  PlanValidation,
+  VerificationResult,
 } from './types'
 
-interface ColonyActions {
+type InteractiveActor = 'manual' | 'agent'
+
+export interface MoonbaseActions {
   resetColony: () => void
-  advanceHours: (hours: number) => void
-  addOrder: (input: CreateOrderInput) => string
-  updateAssignments: (assignments: AssignmentInput[]) => { assigned: string[]; errors: string[] }
-  setOrderPriority: (orderId: string, priority: 1 | 2 | 3 | 4 | 5) => boolean
-  recordToolCall: (name: string, kind: ToolCallKind) => void
+  resetMoonbase: () => void
+  setPlanBrief: (input: PlanBriefInput, actor?: InteractiveActor) => PlanEditResult
+  stagePlanAction: (input: PlanActionInput, actor?: InteractiveActor) => PlanEditResult
+  removePlanAction: (actionId: string, actor?: InteractiveActor) => PlanEditResult
+  rebasePlan: (actor?: InteractiveActor) => PlanEditResult
+  clearPlan: (actor?: InteractiveActor) => PlanEditResult
+  validatePlan: () => PlanValidation
+  commitPlan: (
+    expectedWorldRevision: number,
+    expectedPlanRevision: number,
+    actor?: InteractiveActor,
+  ) => CommitResult
+  advanceTime: (input: AdvanceInput, actor?: InteractiveActor) => AdvanceResult
+  advanceHours: (hours: number, actor?: InteractiveActor) => AdvanceResult
+  verifyPlan: (actor?: InteractiveActor) => VerificationResult
+  recordLearningEvidence: (
+    phase: LearningPhase,
+    detail: string,
+    actor?: InteractiveActor,
+  ) => void
 }
 
-export type ColonyStore = ColonyState & ColonyActions
+export type MoonbaseStore = MoonbaseState & MoonbaseActions
+export type ColonyStore = MoonbaseStore
 
-export const useColonyStore = create<ColonyStore>()(
+const domainSnapshot = (state: MoonbaseStore): MoonbaseState => ({
+  baseName: state.baseName,
+  seed: state.seed,
+  missionDay: state.missionDay,
+  hour: state.hour,
+  elapsedHours: state.elapsedHours,
+  worldRevision: state.worldRevision,
+  scenarioStatus: state.scenarioStatus,
+  map: state.map,
+  objective: state.objective,
+  reserves: state.reserves,
+  power: state.power,
+  lab: state.lab,
+  dust: state.dust,
+  modules: state.modules,
+  crew: state.crew,
+  equipment: state.equipment,
+  workOrders: state.workOrders,
+  research: state.research,
+  alerts: state.alerts,
+  events: state.events,
+  learning: state.learning,
+  operationsPlan: state.operationsPlan,
+  lastAdvance: state.lastAdvance,
+  verification: state.verification,
+})
+
+export const useColonyStore = create<MoonbaseStore>()(
   persist(
     (set, get) => ({
       ...createInitialState(),
       resetColony: () => set(createInitialState()),
-      advanceHours: (hours) => set((state) => advanceSimulation(state, hours)),
-      addOrder: (input) => {
-        const [nextState, id] = createOrder(get(), input)
-        set(nextState)
-        return id
+      resetMoonbase: () => set(createInitialState()),
+      setPlanBrief: (input, actor = 'manual') => {
+        const [nextState, result] = setPlanBriefInState(get(), input, actor)
+        if (result.ok) set(nextState)
+        return result
       },
-      updateAssignments: (assignments) => {
-        const [nextState, result] = assignColonists(get(), assignments)
+      stagePlanAction: (input, actor = 'manual') => {
+        const [nextState, result] = stagePlanActionInState(get(), input, actor)
+        if (result.ok) set(nextState)
+        return result
+      },
+      removePlanAction: (actionId, actor = 'manual') => {
+        const [nextState, result] = removePlanActionFromState(get(), actionId, actor)
+        if (result.ok) set(nextState)
+        return result
+      },
+      rebasePlan: (actor = 'manual') => {
+        const [nextState, result] = rebaseOperationsPlan(get(), actor)
+        if (result.ok) set(nextState)
+        return result
+      },
+      clearPlan: (actor = 'manual') => {
+        const [nextState, result] = clearOperationsPlan(get(), actor)
+        if (result.ok) set(nextState)
+        return result
+      },
+      validatePlan: () => validateOperationsPlan(get()),
+      commitPlan: (expectedWorldRevision, expectedPlanRevision, actor = 'manual') => {
+        const [nextState, result] = commitOperationsPlan(
+          get(),
+          expectedWorldRevision,
+          expectedPlanRevision,
+          actor,
+        )
+        if (result.ok) set(nextState)
+        return result
+      },
+      advanceTime: (input, actor = 'manual') => {
+        const [nextState, result] = advanceSimulation(get(), input, actor)
         set(nextState)
         return result
       },
-      setOrderPriority: (orderId, priority) => {
-        const [nextState, updated] = reprioritizeOrder(get(), orderId, priority)
-        if (updated) set(nextState)
-        return updated
+      advanceHours: (hours, actor = 'manual') => {
+        const [nextState, result] = advanceSimulation(get(), { hours }, actor)
+        set(nextState)
+        return result
       },
-      recordToolCall: (name, kind) =>
-        set((state) => {
-          const learning = structuredClone(state.learning)
-          let scoreDelta = 1
-
-          if (kind === 'inspect' && learning.phase === 'inspect') {
-            scoreDelta = 6
-            learning.phase = 'act'
-            learning.coaching = 'Good context gathering. Now delegate a specific outcome with constraints and a reason.'
-          } else if (kind === 'act' && learning.phase === 'act') {
-            scoreDelta = 10
-            learning.phase = 'verify'
-            learning.coaching = 'The change is applied. Ask the agent to advance cautiously, then verify the outcome.'
-          } else if (kind === 'verify' && learning.phase === 'verify') {
-            scoreDelta = 14
-            learning.phase = 'inspect'
-            learning.completedLoops += 1
-            learning.coaching = 'Loop complete: inspect → act → verify. Reassess before issuing the next delegation.'
-          } else if (kind === 'act' && learning.phase === 'inspect') {
-            scoreDelta = 0
-            learning.coaching = 'Action without context is risky. Ask for a colony assessment before the next change.'
-          } else if (kind === 'inspect' && learning.phase === 'verify') {
-            scoreDelta = 4
-            learning.phase = 'inspect'
-            learning.completedLoops += 1
-            learning.coaching = 'You checked the result. Start the next loop by naming the new bottleneck.'
-          }
-
-          learning.score = Math.min(100, learning.score + scoreDelta)
-          learning.toolCalls.unshift({
-            id: `tool-${state.tick}-${learning.toolCalls.length}`,
-            tick: state.tick,
-            name,
-            kind,
-          })
-          learning.toolCalls = learning.toolCalls.slice(0, 10)
-          return { learning }
-        }),
+      verifyPlan: (actor = 'manual') => {
+        const [nextState, result] = verifyOperationsPlan(get(), actor)
+        set(nextState)
+        return result
+      },
+      recordLearningEvidence: (phase, detail, actor = 'manual') => {
+        set(recordLearningEvidenceInState(get(), phase, detail, actor))
+      },
     }),
     {
-      name: 'playlearnai-colony-v1',
-      partialize: (state) => ({
-        colonyName: state.colonyName,
-        day: state.day,
-        hour: state.hour,
-        tick: state.tick,
-        season: state.season,
-        weather: state.weather,
-        resources: state.resources,
-        capacity: state.capacity,
-        colonists: state.colonists,
-        workOrders: state.workOrders,
-        alerts: state.alerts,
-        events: state.events,
-        learning: state.learning,
-      }),
+      name: 'playlearnai-moonbase-poc-v1',
+      version: 1,
+      partialize: domainSnapshot,
     },
   ),
 )
+
+export const useMoonbaseStore = useColonyStore
