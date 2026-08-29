@@ -429,6 +429,7 @@ export function MoonbaseMap({
       gridColumn: `${cell.x + 1} / span 1`,
       gridRow: `${cell.y + 1} / span 1`,
       pointerEvents: 'auto',
+      zIndex: 50,
     }
   }
 

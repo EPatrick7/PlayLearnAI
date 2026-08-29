@@ -368,6 +368,12 @@ describe('freeform settlement builder', () => {
       [...moduleTargets].map((target) => `${target.style.gridColumn}|${target.style.gridRow}`),
     )
     expect(moduleTargetAreas.size).toBe(moduleTargets.length)
+    const highestModuleTargetLayer = Math.max(
+      ...[...moduleTargets].map((target) => Number(target.style.zIndex)),
+    )
+    expect([...operationalTokens].every(
+      (token) => Number(token.style.zIndex) > highestModuleTargetLayer,
+    )).toBe(true)
     const lifeSupportTarget = within(operationsMap).getByRole('button', { name: /Inspect Life Support/i })
     const laboratoryTarget = within(operationsMap).getByRole('button', { name: /Inspect Kepler Laboratory/i })
     expect(Number(lifeSupportTarget.style.zIndex)).toBeGreaterThan(
