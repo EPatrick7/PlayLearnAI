@@ -151,6 +151,28 @@ describe('freeform boundary painting', () => {
 })
 
 describe('free-standing workstation placement', () => {
+  it('rejects enormous footprints without allocating their declared area', () => {
+    const layout = createConstructionLayout()
+    const oversized = {
+      id: 'oversized-live-input',
+      type: 'storage-rack',
+      origin: { x: 0, y: 0 },
+      size: { width: 2 ** 32, height: 1 },
+      rotation: 0 as const,
+    }
+
+    expect(validateWorkstationPlacement(layout, oversized)).toMatchObject({
+      valid: false,
+      code: 'out_of_bounds',
+      cells: [],
+    })
+    expect(placeWorkstation(layout, oversized)).toMatchObject({
+      ok: false,
+      code: 'out_of_bounds',
+    })
+    expect(getWorkstationCells(oversized)).toEqual([])
+  })
+
   it('rotates multi-cell footprints and rejects boundary, overlap, and bounds conflicts', () => {
     let layout = createConstructionLayout()
     layout = layoutFrom(paintBoundaryCell(layout, { x: 4, y: 3 }, 'wall'))

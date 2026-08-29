@@ -219,6 +219,16 @@ export const getWorkstationCells = (
   workstation: Pick<WorkstationPlacement, 'origin' | 'size' | 'rotation'>,
 ): GridPoint[] => {
   const footprint = getWorkstationFootprintSize(workstation)
+  if (
+    !Number.isSafeInteger(footprint.width) ||
+    !Number.isSafeInteger(footprint.height) ||
+    footprint.width <= 0 ||
+    footprint.height <= 0 ||
+    footprint.width > CONSTRUCTION_GRID_WIDTH ||
+    footprint.height > CONSTRUCTION_GRID_HEIGHT
+  ) {
+    return []
+  }
   return Array.from({ length: footprint.width * footprint.height }, (_, index) => ({
     x: workstation.origin.x + (index % footprint.width),
     y: workstation.origin.y + Math.floor(index / footprint.width),
@@ -287,6 +297,17 @@ export const validateWorkstationPlacement = (
       cells: [],
       code: 'invalid_workstation',
       error: 'Workstations require an id, type, integer origin, positive integer size, and quarter-turn rotation.',
+    }
+  }
+
+  const footprint = getWorkstationFootprintSize(workstation)
+  if (footprint.width > layout.width || footprint.height > layout.height) {
+    return {
+      valid: false,
+      cells: [],
+      code: 'out_of_bounds',
+      error: `Workstation ${workstation.id} is larger than the ${layout.width}x${layout.height} grid.`,
+      conflictingCell: { ...workstation.origin },
     }
   }
 

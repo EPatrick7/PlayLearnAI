@@ -356,6 +356,13 @@ describe('freeform settlement builder', () => {
       layout.boundaries.length,
     )
     expect(operationsMap.querySelector('[data-freeform-workstation="life-support"]')).toBeVisible()
+    const operationalTokens = operationsMap.querySelectorAll<HTMLElement>(
+      '.crew-marker, .equipment-marker, .work-hotspot',
+    )
+    const operationalTokenCells = new Set(
+      [...operationalTokens].map((token) => `${token.style.gridColumn}|${token.style.gridRow}`),
+    )
+    expect(operationalTokenCells.size).toBe(operationalTokens.length)
     expect(operations.modules.find((module) => module.id === 'module-laboratory')?.position).toEqual({
       x: 9,
       y: 2,

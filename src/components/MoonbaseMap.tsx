@@ -362,11 +362,69 @@ export function MoonbaseMap({
   const moduleAt = (location: LocationId) =>
     modules.find((candidate) => candidate.location === location) ?? modules[0]
 
-  const markerPosition = (location: LocationId, index: number, lane = 0): CSSProperties => {
+  const customMarkerCells = new Map<string, GridPoint>()
+  if (constructionLayout) {
+    const occupied = new Set<string>()
+    const boundaryCells = new Set(
+      constructionLayout.boundaries.map((boundary) => `${boundary.x}:${boundary.y}`),
+    )
+    const roomCells = detectRooms(constructionLayout).flatMap((room) => room.cells)
+    const openCells = Array.from(
+      { length: constructionLayout.width * constructionLayout.height },
+      (_, index) => ({
+        x: index % constructionLayout.width,
+        y: Math.floor(index / constructionLayout.width),
+      }),
+    ).filter((cell) => !boundaryCells.has(`${cell.x}:${cell.y}`))
+    const fallbackCells = [...roomCells, ...openCells]
+
+    const allocateMarker = (
+      key: string,
+      location: LocationId,
+      preferredOffset: number,
+    ) => {
+      const preferred = getModuleWalkableCells(moduleAt(location))
+      const offset = preferred.length > 0 ? preferredOffset % preferred.length : 0
+      const candidates = [
+        ...preferred.slice(offset),
+        ...preferred.slice(0, offset),
+        ...fallbackCells,
+      ]
+      const seen = new Set<string>()
+      const cell = candidates.find((candidate) => {
+        const cellKey = `${candidate.x}:${candidate.y}`
+        if (seen.has(cellKey)) return false
+        seen.add(cellKey)
+        return !occupied.has(cellKey)
+      })
+      if (!cell) return
+      occupied.add(`${cell.x}:${cell.y}`)
+      customMarkerCells.set(key, cell)
+    }
+
+    crew.forEach((member, index) => allocateMarker(`crew:${member.id}`, member.location, index))
+    equipment.forEach((item, index) => allocateMarker(
+      `equipment:${item.id}`,
+      item.location,
+      crew.length + index,
+    ))
+    workOrders.forEach((order, index) => allocateMarker(
+      `work:${order.id}`,
+      order.location,
+      crew.length + equipment.length + index,
+    ))
+  }
+
+  const markerPosition = (
+    markerKey: string,
+    location: LocationId,
+    index: number,
+    lane = 0,
+  ): CSSProperties => {
     const module = moduleAt(location)
     const walkableCells = getModuleWalkableCells(module)
     const slot = Math.max(0, index + lane * 2)
-    const cell = walkableCells[slot % walkableCells.length]
+    const cell = customMarkerCells.get(markerKey) ?? walkableCells[slot % walkableCells.length]
     return {
       gridColumn: `${cell.x + 1} / span 1`,
       gridRow: `${cell.y + 1} / span 1`,
@@ -655,7 +713,7 @@ export function MoonbaseMap({
               onInspectModule(module.id)
               onSelectWorkOrder?.(order.id)
             }}
-            style={markerPosition(order.location, ordinal + locationPopulation(order.location), 2)}
+            style={markerPosition(`work:${order.id}`, order.location, ordinal + locationPopulation(order.location), 2)}
             title={`${order.label} — ${words(order.status)}`}
             type="button"
           >
@@ -688,7 +746,7 @@ export function MoonbaseMap({
               onInspectModule(module.id)
               onSelectCrew?.(member.id)
             }}
-            style={markerPosition(member.location, ordinal)}
+            style={markerPosition(`crew:${member.id}`, member.location, ordinal)}
             title={`${member.name} — ${words(member.status)}`}
             type="button"
           >
@@ -725,7 +783,7 @@ export function MoonbaseMap({
               onInspectModule(module.id)
               onSelectEquipment?.(item.id)
             }}
-            style={markerPosition(item.location, ordinal + locationPopulation(item.location), 1)}
+            style={markerPosition(`equipment:${item.id}`, item.location, ordinal + locationPopulation(item.location), 1)}
             title={`${item.name} — ${words(item.status)} at ${module.name}`}
             type="button"
           >
