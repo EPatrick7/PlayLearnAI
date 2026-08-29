@@ -658,7 +658,9 @@ export function MoonbaseMap({
               boxShadow: 'none',
               gridColumn: `${module.position.x + 1} / span ${module.position.width}`,
               gridRow: `${module.position.y + 1} / span ${module.position.height}`,
-              zIndex: 4,
+              zIndex: constructionLayout
+                ? 40 - Math.min(30, module.position.width * module.position.height)
+                : 4,
             }}
             type="button"
           >
