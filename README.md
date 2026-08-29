@@ -21,25 +21,25 @@ Resetting the scenario makes it easy to try a different crew assignment or respo
 
 WebMCP is optional for the manual path. After starting the app:
 
-1. Read the incident, pressure, reserve, power, crew, work, and equipment panels.
-2. Define the plan brief, then add crew assignments, equipment reservations, and work priorities.
-3. Preview and validate the plan. Resolve any conflicts before committing it.
-4. Advance the simulation in small steps or to a bounded stop condition.
-5. Watch the breach get sealed, the laboratory move through **No → Low → Yes** atmosphere, equipment travel to the work site, and oxygen, power, crew condition, work progress, and activity history change.
-6. Verify the outcome against the scenario objective and constraints, or reset and try another approach.
+1. Start on the colony map. Select a furnished module, crew pawn, gear token, or numbered work site to inspect it in place.
+2. Use the bottom **Work**, **Crew**, **Gear**, **Plan**, and **Log** dock to open only the command surface you need. On a small screen these open as scrollable bottom sheets, so the map remains the primary view.
+3. In **Work**, choose an order and stage crew and required gear. The map draws the proposed routes. You can also choose **Stage a response** to load the recommended response for review.
+4. In **Plan**, set the oxygen floor, protected crew, horizon, and stop condition. Review the full action queue and resource forecast, resolve any inline blocker, then commit.
+5. Use the persistent time controls to advance one hour or run to the bounded stop. Watch pawns and equipment relocate, work sites fill, the laboratory move through **No → Low → Yes**, and the dust front change the solar field.
+6. Choose **Verify** and compare the outcome against the objective, reserve floor, power state, and declared stop condition. Reset the deterministic seed to try another approach.
 
 The simulation remains playable in a normal browser when WebMCP is unavailable.
 
 ### Fast successful run
 
-For a deterministic smoke test, use a 12-hour horizon, a 12-hour oxygen floor, protect Jonah Reed, and stop on **Objective complete**. Stage:
+For a deterministic smoke test, choose **Stage a response** from the incident card or Work drawer. It prepares a 12-hour horizon, a 12-hour oxygen floor, and an **Objective complete** stop with:
 
 - Mateo + EVA Suit 01 + Engineering Kit 01 for the breach;
 - Soo-jin + Engineering Kit 02 for repressurization;
 - Leila for Regolith Sintering research; and
 - Nia + EVA Suit 02 + the Kestrel rover for the solar bank.
 
-The preview should report a valid 10-hour plan. Commit, choose **To stop**, then **Verify**; all five outcome checks should pass.
+The preview reports a valid 10-hour plan. Review it, commit, choose **To stop**, then **Verify**; all five outcome checks pass.
 
 ## Why WebMCP belongs here
 
