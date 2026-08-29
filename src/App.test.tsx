@@ -52,6 +52,20 @@ const dragConstructionTool = (start: GridPoint, end: GridPoint, pointerId = 1) =
 const clickConstructionCell = (point: GridPoint, pointerId = 1) =>
   dragConstructionTool(point, point, pointerId)
 
+const boundaryConnectionSignature = (root: HTMLElement) =>
+  [...root.querySelectorAll<HTMLElement>('[data-boundary-mask]')]
+    .filter((tile) => !tile.classList.contains('construction-preview'))
+    .map((tile) => [
+      tile.dataset.gridX,
+      tile.dataset.gridY,
+      tile.dataset.tileKind ?? tile.dataset.freeformBoundary,
+      tile.dataset.boundaryMask,
+      tile.dataset.boundaryConnection,
+      tile.classList.contains('door-horizontal') ? 'horizontal' :
+        tile.classList.contains('door-vertical') ? 'vertical' : 'wall',
+    ].join(':'))
+    .sort()
+
 const openCategory = (category: 'Structure' | 'Production' | 'Orders') => {
   const build = screen.getByRole('button', { name: /^Build/i })
   if (build.getAttribute('aria-pressed') !== 'true') fireEvent.click(build)
@@ -129,6 +143,16 @@ describe('freeform settlement builder', () => {
     expect(layout.boundaries.filter((cell) => cell.kind === 'door')).toHaveLength(1)
     expect(map.querySelectorAll('[data-tile-kind="wall"]')).toHaveLength(15)
     expect(map.querySelectorAll('[data-tile-kind="door"]')).toHaveLength(1)
+
+    const corner = map.querySelector('[data-tile-kind="wall"][data-grid-x="3"][data-grid-y="7"]')
+    const straight = map.querySelector('[data-tile-kind="wall"][data-grid-x="4"][data-grid-y="7"]')
+    const door = map.querySelector('[data-tile-kind="door"][data-grid-x="7"][data-grid-y="9"]')
+    expect(corner).toHaveAttribute('data-boundary-connection', 'corner-east-south')
+    expect(corner).toHaveAttribute('data-boundary-mask', '6')
+    expect(straight).toHaveAttribute('data-boundary-connection', 'straight-horizontal')
+    expect(straight).toHaveAttribute('data-boundary-mask', '10')
+    expect(door).toHaveAttribute('data-boundary-connection', 'straight-vertical')
+    expect(door).toHaveClass('door-vertical')
 
     const bunks = layout.workstations.filter((workstation) => workstation.type === 'bed')
     expect(bunks).toHaveLength(2)
@@ -344,6 +368,10 @@ describe('freeform settlement builder', () => {
     useColonyStore.getState().setConstructionLayout(layout)
     renderFreshApp()
 
+    const builderSignature = boundaryConnectionSignature(constructionMap())
+    expect(builderSignature).toHaveLength(layout.boundaries.length)
+    expect(detectRooms(layout)).toHaveLength(2)
+
     fireEvent.click(screen.getByRole('button', { name: 'Begin first shift' }))
 
     const operations = useColonyStore.getState()
@@ -355,6 +383,8 @@ describe('freeform settlement builder', () => {
     expect(operationsMap.querySelectorAll('[data-freeform-boundary]')).toHaveLength(
       layout.boundaries.length,
     )
+    expect(boundaryConnectionSignature(operationsMap)).toEqual(builderSignature)
+    expect(detectRooms(operations.settlement.layout)).toHaveLength(2)
     expect(operationsMap.querySelector('[data-freeform-workstation="life-support"]')).toBeVisible()
     const operationalTokens = operationsMap.querySelectorAll<HTMLElement>(
       '.crew-marker, .equipment-marker, .work-hotspot',

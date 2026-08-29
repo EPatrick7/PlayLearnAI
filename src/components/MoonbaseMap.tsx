@@ -9,6 +9,11 @@ import {
   WORKSTATION_SPECS,
   type WorkstationKind,
 } from '../game/constructionCatalog'
+import {
+  BOUNDARY_CONNECTION_BITS,
+  getBoundaryConnection,
+  getBoundaryDoorAxis,
+} from '../game/boundaryConnections'
 import type {
   CrewMember,
   Equipment,
@@ -104,15 +109,6 @@ const initials = (name: string) => name
   .slice(0, 2)
   .toUpperCase()
 
-const constructionDoorAxis = (layout: ConstructionLayout, point: GridPoint) => {
-  const hasBoundary = (x: number, y: number) => layout.boundaries.some(
-    (boundary) => boundary.x === x && boundary.y === y,
-  )
-  const horizontal = hasBoundary(point.x - 1, point.y) || hasBoundary(point.x + 1, point.y)
-  const vertical = hasBoundary(point.x, point.y - 1) || hasBoundary(point.x, point.y + 1)
-  return horizontal && !vertical ? 'horizontal' : 'vertical'
-}
-
 function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
   const rooms = detectRooms(layout)
   return (
@@ -129,19 +125,29 @@ function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
         />
       )))}
 
-      {layout.boundaries.map((boundary) => (
-        <span
-          aria-hidden="true"
-          className={`construction-boundary boundary-${boundary.kind} ${boundary.kind === 'door' ? `door-${constructionDoorAxis(layout, boundary)}` : ''}`}
-          data-freeform-boundary={boundary.kind}
-          data-grid-x={boundary.x}
-          data-grid-y={boundary.y}
-          key={`operations-boundary-${boundary.x}-${boundary.y}`}
-          style={{ gridColumn: `${boundary.x + 1}`, gridRow: `${boundary.y + 1}` }}
-        >
-          <i />
-        </span>
-      ))}
+      {layout.boundaries.map((boundary) => {
+        const connection = getBoundaryConnection(layout, boundary)
+        const variant = Math.abs(boundary.x * 17 + boundary.y * 31) % 3
+        return (
+          <span
+            aria-hidden="true"
+            className={`construction-boundary boundary-${boundary.kind} ${connection.className} boundary-variant-${variant} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+            data-boundary-connection={connection.name}
+            data-boundary-mask={connection.mask}
+            data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
+            data-connect-north={connection.mask & BOUNDARY_CONNECTION_BITS.north ? 'true' : undefined}
+            data-connect-south={connection.mask & BOUNDARY_CONNECTION_BITS.south ? 'true' : undefined}
+            data-connect-west={connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
+            data-freeform-boundary={boundary.kind}
+            data-grid-x={boundary.x}
+            data-grid-y={boundary.y}
+            key={`operations-boundary-${boundary.x}-${boundary.y}`}
+            style={{ gridColumn: `${boundary.x + 1}`, gridRow: `${boundary.y + 1}` }}
+          >
+            <i />
+          </span>
+        )
+      })}
 
       {layout.workstations.map((workstation) => {
         const kind = workstation.type as WorkstationKind

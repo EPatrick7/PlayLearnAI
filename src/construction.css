@@ -225,32 +225,80 @@
 }
 
 .construction-boundary {
+  --boundary-edge-east: rgba(25, 31, 30, 0.92);
+  --boundary-edge-north: rgba(235, 236, 222, 0.52);
+  --boundary-edge-south: rgba(22, 28, 27, 0.9);
+  --boundary-edge-west: rgba(220, 222, 209, 0.28);
+  --wall-face: #727b77;
+  --wall-face-low: #4c5652;
+  --wall-face-top: #aeb2a9;
   z-index: 6;
   pointer-events: none;
   overflow: hidden;
-  border: 1px solid #343c3a;
+  background:
+    radial-gradient(circle at 24% 31%, rgba(242, 239, 218, 0.11) 0 1px, transparent 1.5px),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.08), transparent 42%),
+    linear-gradient(180deg, var(--wall-face-top) 0 16%, var(--wall-face) 17% 72%, var(--wall-face-low) 73% 100%);
+  box-shadow: none;
 }
 
-.construction-boundary.boundary-wall {
+.construction-boundary::before {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
   background:
-    linear-gradient(90deg, transparent 0 11%, rgba(235, 235, 221, 0.12) 12% 14%, transparent 14% 86%, rgba(15, 20, 19, 0.2) 86%),
-    linear-gradient(180deg, #a7aaa2 0 18%, #747c78 19% 70%, #48514e 71% 100%);
-  box-shadow: 0 2px 0 rgba(244, 242, 226, 0.22) inset, 0 -3px 0 rgba(19, 24, 23, 0.3) inset;
+    linear-gradient(var(--boundary-edge-north), var(--boundary-edge-north)) top / 100% 2px no-repeat,
+    linear-gradient(var(--boundary-edge-east), var(--boundary-edge-east)) right / 2px 100% no-repeat,
+    linear-gradient(var(--boundary-edge-south), var(--boundary-edge-south)) bottom / 100% 3px no-repeat,
+    linear-gradient(var(--boundary-edge-west), var(--boundary-edge-west)) left / 2px 100% no-repeat;
+  content: "";
+}
+
+.construction-boundary::after {
+  position: absolute;
+  z-index: 1;
+  inset: 3px;
+  background:
+    linear-gradient(112deg, transparent 0 43%, rgba(244, 240, 217, 0.08) 44% 46%, transparent 47%),
+    repeating-linear-gradient(90deg, transparent 0 10px, rgba(21, 27, 26, 0.045) 10px 11px);
+  content: "";
+  opacity: 0.62;
+}
+
+.construction-boundary[data-connect-north="true"] { --boundary-edge-north: transparent; }
+.construction-boundary[data-connect-east="true"] { --boundary-edge-east: transparent; }
+.construction-boundary[data-connect-south="true"] { --boundary-edge-south: transparent; }
+.construction-boundary[data-connect-west="true"] { --boundary-edge-west: transparent; }
+
+.construction-boundary.boundary-variant-1 {
+  --wall-face: #78807c;
+  --wall-face-low: #515a56;
+  --wall-face-top: #b3b5ac;
+}
+
+.construction-boundary.boundary-variant-2 {
+  --wall-face: #6d7672;
+  --wall-face-low: #48524e;
+  --wall-face-top: #a8aca3;
 }
 
 .construction-boundary.boundary-wall > i {
   position: absolute;
-  inset: 18%;
-  border: 1px solid rgba(35, 42, 40, 0.58);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16), transparent 45%), #68706d;
-  box-shadow: 1px 1px 0 rgba(230, 230, 215, 0.14) inset, -1px -1px 0 rgba(10, 14, 13, 0.22) inset;
+  z-index: 3;
+  inset: 17%;
+  border: 1px solid rgba(34, 41, 39, 0.68);
+  border-radius: 2px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.14), transparent 42%),
+    rgba(91, 100, 96, 0.96);
 }
 
 .construction-boundary.boundary-wall > i::before,
 .construction-boundary.boundary-wall > i::after {
   position: absolute;
-  width: 3px;
-  height: 3px;
+  width: clamp(2px, 8%, 4px);
+  height: clamp(2px, 8%, 4px);
+  border-radius: 50%;
   background: #252c2b;
   box-shadow: 0 0 0 1px rgba(213, 215, 204, 0.15);
   content: "";
@@ -259,34 +307,127 @@
 .construction-boundary.boundary-wall > i::before { left: 2px; top: 2px; }
 .construction-boundary.boundary-wall > i::after { right: 2px; bottom: 2px; }
 
-.construction-boundary.boundary-door {
+.construction-boundary.boundary-wall[data-connect-north="true"] > i {
+  top: -1px;
+  border-top-color: transparent;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.construction-boundary.boundary-wall[data-connect-east="true"] > i {
+  right: -1px;
+  border-right-color: transparent;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.construction-boundary.boundary-wall[data-connect-south="true"] > i {
+  bottom: -1px;
+  border-bottom-color: transparent;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.construction-boundary.boundary-wall[data-connect-west="true"] > i {
+  left: -1px;
+  border-left-color: transparent;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.construction-boundary.boundary-connection-isolated { border-radius: 3px; }
+.construction-boundary.boundary-connection-end-north { border-radius: 0 0 3px 3px; }
+.construction-boundary.boundary-connection-end-east { border-radius: 3px 0 0 3px; }
+.construction-boundary.boundary-connection-end-south { border-radius: 3px 3px 0 0; }
+.construction-boundary.boundary-connection-end-west { border-radius: 0 3px 3px 0; }
+
+.construction-boundary[class*="boundary-connection-tee-"] > i,
+.construction-boundary.boundary-connection-cross > i {
   background:
-    repeating-linear-gradient(135deg, rgba(229, 183, 94, 0.16) 0 5px, transparent 5px 10px),
-    linear-gradient(180deg, #65706c, #3d4744);
-  box-shadow: 0 0 0 2px rgba(198, 204, 193, 0.14) inset;
+    radial-gradient(circle at 50% 50%, rgba(216, 186, 119, 0.2) 0 3px, transparent 3.5px),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.13), transparent 42%),
+    rgba(87, 97, 92, 0.98);
+}
+
+.construction-boundary.boundary-door {
+  --wall-face: #5d6864;
+  --wall-face-low: #38433f;
+  --wall-face-top: #8f9892;
+  background:
+    repeating-linear-gradient(135deg, rgba(224, 177, 83, 0.18) 0 4px, transparent 4px 9px),
+    linear-gradient(180deg, var(--wall-face-top) 0 16%, var(--wall-face) 17% 72%, var(--wall-face-low) 73% 100%);
 }
 
 .construction-boundary.boundary-door > i {
   position: absolute;
+  z-index: 3;
+  border: 1px solid #222a28;
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(135deg, rgba(230, 184, 91, 0.3) 0 3px, transparent 3px 8px),
+    linear-gradient(90deg, rgba(239, 225, 190, 0.14), transparent 48%),
+    #848b85;
+  box-shadow: 0 0 0 1px rgba(222, 218, 198, 0.16) inset;
+}
+
+.construction-boundary.boundary-door > i::before,
+.construction-boundary.boundary-door > i::after {
+  position: absolute;
+  content: "";
+}
+
+.construction-boundary.boundary-door > i::before {
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: rgba(29, 36, 34, 0.66);
+  box-shadow: 1px 0 rgba(233, 224, 199, 0.14);
+}
+
+.construction-boundary.boundary-door > i::after {
   left: 50%;
   top: 50%;
-  border: 2px solid #252d2b;
-  background:
-    linear-gradient(90deg, rgba(238, 217, 169, 0.17), transparent),
-    #8b918a;
-  box-shadow: 0 0 0 1px rgba(220, 216, 195, 0.2) inset;
+  width: 6px;
+  height: 3px;
+  border: 1px solid rgba(35, 39, 36, 0.78);
+  border-radius: 1px;
+  background: #d2ad5d;
+  transform: translate(-50%, -50%);
 }
 
 .construction-boundary.boundary-door.door-vertical > i {
-  width: 52%;
-  height: calc(100% - 4px);
-  transform: translate(-50%, -50%);
+  left: 23%;
+  right: 23%;
+  top: 3px;
+  bottom: 3px;
 }
 
 .construction-boundary.boundary-door.door-horizontal > i {
-  width: calc(100% - 4px);
-  height: 52%;
-  transform: translate(-50%, -50%);
+  left: 3px;
+  right: 3px;
+  top: 23%;
+  bottom: 23%;
+}
+
+.construction-boundary.boundary-door.door-vertical > i::before {
+  left: 0;
+  top: 50%;
+  width: 100%;
+  height: 1px;
+  box-shadow: 0 1px rgba(233, 224, 199, 0.14);
+}
+
+.construction-boundary.boundary-door.door-horizontal[data-connect-east="true"] > i { right: -1px; border-right-color: transparent; }
+.construction-boundary.boundary-door.door-horizontal[data-connect-west="true"] > i { left: -1px; border-left-color: transparent; }
+.construction-boundary.boundary-door.door-vertical[data-connect-north="true"] > i { top: -1px; border-top-color: transparent; }
+.construction-boundary.boundary-door.door-vertical[data-connect-south="true"] > i { bottom: -1px; border-bottom-color: transparent; }
+
+.construction-boundary.boundary-door::after {
+  inset: 4px;
+  border: 1px solid rgba(216, 173, 87, 0.16);
+  background: none;
+  opacity: 1;
 }
 
 .construction-workstation {
@@ -424,6 +565,53 @@
   background:
     repeating-linear-gradient(135deg, rgba(225, 94, 82, 0.38) 0 5px, transparent 5px 10px),
     rgba(105, 36, 31, 0.24);
+}
+
+.construction-preview.preview-wall,
+.construction-preview.preview-door {
+  --boundary-edge-east: rgba(79, 54, 15, 0.92);
+  --boundary-edge-north: rgba(255, 230, 166, 0.92);
+  --boundary-edge-south: rgba(63, 42, 12, 0.94);
+  --boundary-edge-west: rgba(255, 218, 136, 0.6);
+  --wall-face: rgba(199, 151, 57, 0.92);
+  --wall-face-low: rgba(119, 83, 25, 0.94);
+  --wall-face-top: rgba(239, 198, 110, 0.94);
+  border: 0;
+  background:
+    radial-gradient(circle at 24% 31%, rgba(255, 242, 203, 0.18) 0 1px, transparent 1.5px),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.16), transparent 42%),
+    linear-gradient(180deg, var(--wall-face-top) 0 16%, var(--wall-face) 17% 72%, var(--wall-face-low) 73% 100%);
+}
+
+.construction-preview.preview-wall.boundary-wall > i {
+  border-color: rgba(75, 51, 17, 0.76);
+  background:
+    linear-gradient(135deg, rgba(255, 245, 209, 0.18), transparent 42%),
+    rgba(170, 124, 43, 0.98);
+}
+
+.construction-preview.preview-door.boundary-door > i {
+  border-color: rgba(70, 47, 13, 0.84);
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 231, 169, 0.28) 0 3px, transparent 3px 8px),
+    #bd8f38;
+}
+
+.construction-preview.invalid.preview-wall,
+.construction-preview.invalid.preview-door {
+  --boundary-edge-east: rgba(66, 24, 20, 0.94);
+  --boundary-edge-north: rgba(255, 187, 177, 0.9);
+  --boundary-edge-south: rgba(58, 20, 17, 0.96);
+  --boundary-edge-west: rgba(247, 143, 132, 0.58);
+  --wall-face: rgba(161, 62, 53, 0.92);
+  --wall-face-low: rgba(92, 33, 28, 0.94);
+  --wall-face-top: rgba(216, 105, 94, 0.94);
+}
+
+.construction-preview.invalid.preview-wall.boundary-wall > i,
+.construction-preview.invalid.preview-door.boundary-door > i {
+  border-color: rgba(66, 24, 20, 0.84);
+  background: rgba(139, 49, 43, 0.98);
 }
 
 .construction-cursor {

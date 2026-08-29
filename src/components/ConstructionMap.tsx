@@ -32,6 +32,11 @@ import {
   type ConstructionTool,
   type WorkstationKind,
 } from '../game/constructionCatalog'
+import {
+  BOUNDARY_CONNECTION_BITS,
+  getBoundaryConnection,
+  getBoundaryDoorAxis,
+} from '../game/boundaryConnections'
 import { GameIcon } from './GameIcon'
 
 interface ConstructionMapProps {
@@ -92,14 +97,6 @@ const nextWorkstationId = (layout: ConstructionLayout, kind: WorkstationKind) =>
     id = `${kind}-${sequence}`
   }
   return id
-}
-
-const doorAxis = (layout: ConstructionLayout, point: GridPoint) => {
-  const horizontal = boundaryAt(layout, { x: point.x - 1, y: point.y }) ||
-    boundaryAt(layout, { x: point.x + 1, y: point.y })
-  const vertical = boundaryAt(layout, { x: point.x, y: point.y - 1 }) ||
-    boundaryAt(layout, { x: point.x, y: point.y + 1 })
-  return horizontal && !vertical ? 'horizontal' : 'vertical'
 }
 
 export function ConstructionMap({
@@ -211,6 +208,17 @@ export function ConstructionMap({
       error: validation.error ?? indoorError,
     }
   }, [cursor, dragEnd, dragStart, hoverCell, indoorFootprintError, layout, rotation, selectedTool])
+
+  const previewBoundaryLayout = useMemo<ConstructionLayout | null>(() => {
+    if (!preview || (selectedTool !== 'wall' && selectedTool !== 'door')) return null
+    const boundaries = new Map(
+      layout.boundaries.map((boundary) => [keyFor(boundary), boundary]),
+    )
+    preview.cells
+      .filter((cell) => isInConstructionBounds(cell, layout))
+      .forEach((cell) => boundaries.set(keyFor(cell), { ...cell, kind: selectedTool }))
+    return { ...layout, boundaries: [...boundaries.values()] }
+  }, [layout, preview, selectedTool])
 
   const commitAt = (point: GridPoint) => {
     if (!selectedTool) return
@@ -473,19 +481,29 @@ export function ConstructionMap({
           />
         )))}
 
-        {layout.boundaries.map((boundary) => (
-          <span
-            aria-hidden="true"
-            className={`construction-boundary boundary-${boundary.kind} ${boundary.kind === 'door' ? `door-${doorAxis(layout, boundary)}` : ''}`}
-            data-grid-x={boundary.x}
-            data-grid-y={boundary.y}
-            data-tile-kind={boundary.kind}
-            key={`boundary-${boundary.x}-${boundary.y}`}
-            style={{ gridColumn: `${boundary.x + 1}`, gridRow: `${boundary.y + 1}` }}
-          >
-            <i />
-          </span>
-        ))}
+        {layout.boundaries.map((boundary) => {
+          const connection = getBoundaryConnection(layout, boundary)
+          const variant = Math.abs(boundary.x * 17 + boundary.y * 31) % 3
+          return (
+            <span
+              aria-hidden="true"
+              className={`construction-boundary boundary-${boundary.kind} ${connection.className} boundary-variant-${variant} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+              data-boundary-connection={connection.name}
+              data-boundary-mask={connection.mask}
+              data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
+              data-connect-north={connection.mask & BOUNDARY_CONNECTION_BITS.north ? 'true' : undefined}
+              data-connect-south={connection.mask & BOUNDARY_CONNECTION_BITS.south ? 'true' : undefined}
+              data-connect-west={connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
+              data-grid-x={boundary.x}
+              data-grid-y={boundary.y}
+              data-tile-kind={boundary.kind}
+              key={`boundary-${boundary.x}-${boundary.y}`}
+              style={{ gridColumn: `${boundary.x + 1}`, gridRow: `${boundary.y + 1}` }}
+            >
+              <i />
+            </span>
+          )
+        })}
 
         {layout.workstations.map((workstation) => {
           const kind = workstation.type as WorkstationKind
@@ -535,17 +553,32 @@ export function ConstructionMap({
 
         {selectedTool && preview?.cells
           .filter((cell) => isInConstructionBounds(cell, layout))
-          .map((cell) => (
-            <span
-              aria-hidden="true"
-              className={`construction-preview ${preview.valid ? 'valid' : 'invalid'} preview-${selectedTool}`}
-              data-grid-x={cell.x}
-              data-grid-y={cell.y}
-              data-preview-kind={selectedTool}
-              key={`preview-${cell.x}-${cell.y}`}
-              style={{ gridColumn: `${cell.x + 1}`, gridRow: `${cell.y + 1}` }}
-            />
-          ))}
+          .map((cell) => {
+            const connection = previewBoundaryLayout
+              ? getBoundaryConnection(previewBoundaryLayout, cell)
+              : null
+            const boundaryPreview = connection && (selectedTool === 'wall' || selectedTool === 'door')
+            const variant = Math.abs(cell.x * 17 + cell.y * 31) % 3
+            return (
+              <span
+                aria-hidden="true"
+                className={`construction-preview ${preview.valid ? 'valid' : 'invalid'} preview-${selectedTool} ${boundaryPreview ? `construction-boundary boundary-${selectedTool} ${connection.className} boundary-variant-${variant} ${selectedTool === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}` : ''}`}
+                data-boundary-connection={connection?.name}
+                data-boundary-mask={connection?.mask}
+                data-connect-east={connection && connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
+                data-connect-north={connection && connection.mask & BOUNDARY_CONNECTION_BITS.north ? 'true' : undefined}
+                data-connect-south={connection && connection.mask & BOUNDARY_CONNECTION_BITS.south ? 'true' : undefined}
+                data-connect-west={connection && connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
+                data-grid-x={cell.x}
+                data-grid-y={cell.y}
+                data-preview-kind={selectedTool}
+                key={`preview-${cell.x}-${cell.y}`}
+                style={{ gridColumn: `${cell.x + 1}`, gridRow: `${cell.y + 1}` }}
+              >
+                {boundaryPreview && <i />}
+              </span>
+            )
+          })}
 
         <span aria-hidden="true" className="construction-cursor" style={cursorStyle} />
 
