@@ -363,6 +363,11 @@ describe('freeform settlement builder', () => {
       [...operationalTokens].map((token) => `${token.style.gridColumn}|${token.style.gridRow}`),
     )
     expect(operationalTokenCells.size).toBe(operationalTokens.length)
+    const moduleTargets = operationsMap.querySelectorAll<HTMLElement>('.module-select-target')
+    const moduleTargetAreas = new Set(
+      [...moduleTargets].map((target) => `${target.style.gridColumn}|${target.style.gridRow}`),
+    )
+    expect(moduleTargetAreas.size).toBe(moduleTargets.length)
     expect(operations.modules.find((module) => module.id === 'module-laboratory')?.position).toEqual({
       x: 9,
       y: 2,

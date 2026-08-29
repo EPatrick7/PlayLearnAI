@@ -159,6 +159,12 @@ const alignOperationsModulesToConstruction = (state: MoonbaseState) => {
   const exteriorY = Math.max(0, Math.min(layout.height - 2, semanticRooms[1].bounds.y))
   const habitat = shellForRoom(0)
   const laboratory = shellForRoom(1)
+  const habitatStorageCell = {
+    x: Math.min(layout.width - 1, habitat.x + Math.min(1, habitat.width - 1)),
+    y: Math.min(layout.height - 1, habitat.y + Math.min(1, habitat.height - 1)),
+    width: 1,
+    height: 1,
+  }
 
   state.modules.forEach((module) => {
     const position = module.type === 'habitat'
@@ -168,7 +174,7 @@ const alignOperationsModulesToConstruction = (state: MoonbaseState) => {
         : module.type === 'life_support'
           ? workstationPosition('life-support') ?? laboratory
           : module.type === 'storage'
-            ? workstationPosition('storage-rack') ?? habitat
+            ? workstationPosition('storage-rack') ?? habitatStorageCell
             : module.type === 'airlock' || module.type === 'corridor'
               ? { x: door.x, y: door.y, width: 1, height: 1 }
               : module.type === 'solar_battery_skid'
