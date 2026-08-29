@@ -46,6 +46,9 @@ export type SettlementPhase =
   | 'ready'
   | 'operations'
 
+export type CardinalSide = 'north' | 'east' | 'south' | 'west'
+export type BuildSiteKind = 'pressurized_bay' | 'exterior_power'
+
 export type AtmosphereState = 'yes' | 'low' | 'no'
 export type ScenarioStatus = 'active' | 'objective_complete' | 'failed'
 export type AlertSeverity = 'info' | 'warning' | 'critical'
@@ -73,6 +76,10 @@ export interface BuildSiteState {
   label: string
   x: number
   y: number
+  width: number
+  height: number
+  kind: BuildSiteKind
+  connectionSide: CardinalSide | null
   occupiedBy: BuildableModuleId | null
 }
 
@@ -91,6 +98,7 @@ export interface BuildBlueprint {
   cost: number
   width: number
   height: number
+  siteKind: BuildSiteKind
   atmosphere: AtmosphereState
   powerPriority: 1 | 2 | 3
 }
@@ -101,6 +109,7 @@ export type BuildResultCode =
   | 'unknown_blueprint'
   | 'unknown_site'
   | 'site_occupied'
+  | 'incompatible_site'
   | 'blueprint_unavailable'
   | 'insufficient_stock'
   | 'not_ready'

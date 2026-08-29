@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   availableBlueprintsFor,
   buildProgressFor,
@@ -24,19 +24,19 @@ const phaseCopy: Record<Exclude<SettlementPhase, 'expanding' | 'ready' | 'operat
   body: string
 }> = {
   landing: {
-    eyebrow: 'First landing · 1 of 5',
-    title: 'Give the habitat power',
-    body: 'Two settlers are living on reserve cells. Pick a place for the solar skid.',
+    eyebrow: 'First landing · step 1 of 5',
+    title: 'Land power',
+    body: 'Two settlers share one room. Place a solar skid on an exposed pad.',
   },
   power_online: {
-    eyebrow: 'Power online · 2 of 5',
-    title: 'Make breathable air',
-    body: 'The lights are steady. Add life support before the reserve tanks run low.',
+    eyebrow: 'Power online · step 2 of 5',
+    title: 'Make air',
+    body: 'Attach Life Support to one of the corridor bays.',
   },
   habitable: {
-    eyebrow: 'Air stable · 3 of 5',
-    title: 'Open the airlock',
-    body: 'Your habitat can breathe. Build an airlock so the crew can work outside safely.',
+    eyebrow: 'Air stable · step 3 of 5',
+    title: 'Open the surface',
+    body: 'Attach an airlock. Its outer hatch will face away from the corridor.',
   },
 }
 
@@ -47,11 +47,13 @@ const starterCrew = (crew: ReturnType<typeof useColonyStore.getState>['crew']) =
 export function SettlementBuilder() {
   const colony = useColonyStore()
   const [selectedBlueprintId, setSelectedBlueprintId] = useState<BuildableModuleId | null>(null)
+  const [previewSiteId, setPreviewSiteId] = useState<string | null>(null)
   const [selectedModuleId, setSelectedModuleId] = useState('')
   const [announcement, setAnnouncement] = useState('')
 
   const availableBlueprints = availableBlueprintsFor(colony)
   const selectedBlueprint = availableBlueprints.find((blueprint) => blueprint.id === selectedBlueprintId) ?? null
+  const previewSite = colony.settlement.buildSites.find((site) => site.id === previewSiteId) ?? null
   const progress = buildProgressFor(colony)
   const builtIds = useMemo(() => new Set(colony.settlement.builtModuleIds), [colony.settlement.builtModuleIds])
   const visibleModules = useMemo(
@@ -69,12 +71,21 @@ export function SettlementBuilder() {
 
   const selectBlueprint = (blueprintId: BuildableModuleId) => {
     setSelectedBlueprintId((current) => current === blueprintId ? null : blueprintId)
+    setPreviewSiteId(null)
     setAnnouncement('')
   }
 
-  const placeBlueprint = (siteId: string) => {
+  const previewBlueprint = (siteId: string) => {
     if (!selectedBlueprint) return
-    const result = colony.constructModule(selectedBlueprint.id, siteId)
+    const site = colony.settlement.buildSites.find((candidate) => candidate.id === siteId)
+    if (!site || site.kind !== selectedBlueprint.siteKind) return
+    setPreviewSiteId(siteId)
+    setAnnouncement(`${selectedBlueprint.name} previewed at ${site.label}.`)
+  }
+
+  const confirmBlueprint = () => {
+    if (!selectedBlueprint || !previewSiteId) return
+    const result = colony.constructModule(selectedBlueprint.id, previewSiteId)
     if (!result.ok) {
       setAnnouncement(result.error ?? 'That module could not be built there.')
       return
@@ -82,12 +93,32 @@ export function SettlementBuilder() {
     setSelectedModuleId(result.moduleId ?? '')
     setAnnouncement(`${selectedBlueprint.name} built. ${result.phase.replaceAll('_', ' ')}.`)
     setSelectedBlueprintId(null)
+    setPreviewSiteId(null)
   }
+
+  const cancelPlacement = () => {
+    setSelectedBlueprintId(null)
+    setPreviewSiteId(null)
+    setAnnouncement('')
+  }
+
+  useEffect(() => {
+    const cancelWithEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && selectedBlueprintId) {
+        setSelectedBlueprintId(null)
+        setPreviewSiteId(null)
+        setAnnouncement('')
+      }
+    }
+    window.addEventListener('keydown', cancelWithEscape)
+    return () => window.removeEventListener('keydown', cancelWithEscape)
+  }, [selectedBlueprintId])
 
   const resetSettlement = () => {
     if (window.confirm('Start a new landing? Your current settlement layout will be replaced.')) {
       colony.resetColony()
       setSelectedBlueprintId(null)
+      setPreviewSiteId(null)
       setSelectedModuleId('')
       setAnnouncement('New landing started.')
     }
@@ -105,8 +136,8 @@ export function SettlementBuilder() {
         eyebrow: `Shape your base · ${progress.built} of ${progress.total}`,
         title: expandingRemaining > 1 ? 'Choose your next room' : 'One room to go',
         body: expandingRemaining > 1
-          ? 'Add storage and a laboratory in either order. Their locations are up to you.'
-          : 'Place the last essential room wherever it fits your layout.',
+          ? 'Add Stores and Kepler Lab in either order. Choose which bays they occupy.'
+          : 'Attach the last room to either open corridor bay.',
       }
     : phase === 'ready'
       ? {
@@ -119,6 +150,18 @@ export function SettlementBuilder() {
   const singleNextBlueprint = availableBlueprints.length === 1 ? availableBlueprints[0] : null
   const solarBuilt = builtIds.has('module-solar-skid')
   const lifeSupportBuilt = builtIds.has('module-life-support')
+  const placementTitle = previewSite
+    ? `Build at ${previewSite.label}?`
+    : selectedBlueprint?.siteKind === 'exterior_power'
+      ? 'Choose an exterior pad'
+      : 'Choose a corridor bay'
+  const placementBody = previewSite
+    ? selectedBlueprint?.siteKind === 'exterior_power'
+      ? 'This tile ghost shows the exact panel and battery footprint.'
+      : 'This tile ghost shows the exact walls, door, floor, and furniture footprint.'
+    : selectedBlueprint?.siteKind === 'exterior_power'
+      ? 'Only the three exposed power pads are available.'
+      : 'Only connected bays glow. Every room gets a sealed door into the spine.'
 
   return (
     <div className="game-shell settlement-shell">
@@ -142,23 +185,31 @@ export function SettlementBuilder() {
       </header>
 
       <main className="world-stage settlement-stage">
-        <div aria-label="Settlement map viewport. Swipe horizontally to explore the moon." className="settlement-map-scroll" role="region" tabIndex={0}>
+        <div aria-label="Settlement map viewport. Drag to pan across the square-cell moon map." className="settlement-map-scroll" role="region" tabIndex={0}>
           <MoonbaseMap
             buildSites={colony.settlement.buildSites.map((site) => ({
               id: site.id,
               label: site.label,
               moduleId: site.occupiedBy,
-              position: { x: site.x, y: site.y, width: 5, height: 4 },
+              compatible: selectedBlueprint ? site.kind === selectedBlueprint.siteKind : false,
+              position: { x: site.x, y: site.y, width: site.width, height: site.height },
             }))}
             buildingLabel={selectedBlueprint?.name ?? null}
+            buildingPreview={selectedBlueprint ? {
+              name: selectedBlueprint.name,
+              type: selectedBlueprint.moduleType,
+              location: selectedBlueprint.location,
+              atmosphere: selectedBlueprint.atmosphere,
+            } : null}
             crew={visibleCrew}
             dustActive={false}
             equipment={[]}
             height={colony.map.height}
             modules={visibleModules}
-            onChooseBuildSite={placeBlueprint}
+            onChooseBuildSite={previewBlueprint}
             onInspectModule={setSelectedModuleId}
             plan={colony.operationsPlan}
+            previewSiteId={previewSiteId}
             selectedModuleId={selectedModuleId}
             width={colony.map.width}
             workOrders={[]}
@@ -168,9 +219,9 @@ export function SettlementBuilder() {
         <section aria-label="Settlement guide" className={`settlement-guide phase-${phase} ${selectedBlueprint ? 'placing' : ''}`}>
           <header>
             <span className="guide-pin"><GameIcon name={phase === 'ready' ? 'check' : selectedBlueprint ? 'map' : 'habitat'} /></span>
-            <span><small>{guide.eyebrow}</small><h1>{selectedBlueprint ? `Place ${selectedBlueprint.name}` : guide.title}</h1></span>
+            <span><small>{guide.eyebrow}</small><h1>{selectedBlueprint ? placementTitle : guide.title}</h1></span>
           </header>
-          <p>{selectedBlueprint ? 'Choose any glowing construction plot on the moon.' : guide.body}</p>
+          <p>{selectedBlueprint ? placementBody : guide.body}</p>
 
           {phase === 'ready' ? (
             <button className="begin-shift" onClick={startFirstShift} type="button"><GameIcon name="play" /><span><strong>Begin first shift</strong><small>Open colony operations</small></span></button>
@@ -184,15 +235,24 @@ export function SettlementBuilder() {
               <span><strong>Place {singleNextBlueprint.name}</strong><small>{singleNextBlueprint.cost} build kits</small></span>
               <GameIcon name="chevron" />
             </button>
+          ) : selectedBlueprint && previewSite ? (
+            <div className="placement-actions">
+              <button className="choose-next-build confirm-build" onClick={confirmBlueprint} type="button">
+                <GameIcon name="work" />
+                <span><strong>Build {selectedBlueprint.name}</strong><small>{selectedBlueprint.cost} kits · {selectedBlueprint.width}×{selectedBlueprint.height} tiles</small></span>
+                <GameIcon name="check" />
+              </button>
+              <button className="cancel-placement" onClick={() => setPreviewSiteId(null)} type="button">Choose a different site</button>
+            </div>
           ) : selectedBlueprint ? (
-            <button className="cancel-placement" onClick={() => setSelectedBlueprintId(null)} type="button">Cancel placement</button>
+            <button className="cancel-placement" onClick={cancelPlacement} type="button">Cancel placement</button>
           ) : null}
         </section>
 
-        {(phase === 'expanding' || selectedBlueprint) && phase !== 'ready' && (
-          <section aria-label="Build blueprints" className={`blueprint-tray ${selectedBlueprint ? 'placing' : ''}`}>
+        {phase === 'expanding' && !selectedBlueprint && (
+          <section aria-label="Build blueprints" className="blueprint-tray">
             <header>
-              <span><GameIcon name="gear" /><strong>{selectedBlueprint ? 'Choose a build site' : 'Build'}</strong></span>
+              <span><GameIcon name="gear" /><strong>Build</strong></span>
               <small>{colony.reserves.constructionStock} kits left</small>
             </header>
             <div>

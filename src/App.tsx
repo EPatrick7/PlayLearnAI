@@ -14,6 +14,7 @@ import type {
 } from './game/types'
 import { useWebMcpTools } from './webmcp/registerTools'
 import './styles.css'
+import './tilemap.css'
 
 type DockTab = 'work' | 'crew' | 'gear' | 'plan' | 'log'
 type Selection =

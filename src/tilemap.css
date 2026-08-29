@@ -1,0 +1,1170 @@
+/*
+ * Cell-addressed colony map skin.
+ *
+ * The React renderer owns geometry; this file only gives each grid cell a
+ * legible physical role. Everything remains square and aligned to the map's
+ * 24 x 18 construction grid.
+ */
+
+.moonbase-map {
+  --tile-ink: #171c1d;
+  --tile-seam: #384142;
+  --tile-seam-light: #818988;
+  --tile-wall-top: #a9aaa1;
+  --tile-wall-mid: #777e7a;
+  --tile-wall-low: #4b5351;
+  --tile-floor-top: #6e7773;
+  --tile-floor-low: #59625f;
+  --tile-pressure: #68baa9;
+  --tile-vacuum: #353c3b;
+  --tile-cyan: #9bd8e4;
+  --tile-amber: #e3b75e;
+  --tile-red: #ec7767;
+  --tile-shadow: rgba(10, 13, 13, 0.62);
+}
+
+.module-tile,
+.module-connector,
+.build-site-tile,
+.tile-fixture {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.module-tile {
+  --module-accent: #a8b0ab;
+  display: block;
+  overflow: hidden;
+  isolation: isolate;
+  color: var(--module-accent);
+  pointer-events: none;
+}
+
+/* Shared shell cells sit above the corridor floor they replace. */
+.module-tile.tile-wall { z-index: 3 !important; }
+.module-tile.tile-door { z-index: 4 !important; }
+
+.tile-module-habitat { --module-accent: #d1b77d; }
+.tile-module-corridor { --module-accent: #9eaaa5; }
+.tile-module-life_support { --module-accent: #6ac2ae; }
+.tile-module-storage { --module-accent: #d09d5b; }
+.tile-module-laboratory { --module-accent: #8abed0; }
+.tile-module-airlock { --module-accent: #c9c7ad; }
+.tile-module-solar_battery_skid { --module-accent: #81b6c9; }
+.tile-module-landing_pad { --module-accent: #c6b77c; }
+
+.module-tile > .tile-surface {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--tile-seam);
+}
+
+/* Room floors are individual, readable cells instead of one prefab panel. */
+.module-tile.tile-floor > .tile-surface {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent 42%),
+    radial-gradient(circle at 18% 20%, rgba(217, 224, 216, 0.22) 0 1px, transparent 1.5px),
+    linear-gradient(180deg, var(--tile-floor-top), var(--tile-floor-low));
+  box-shadow:
+    1px 1px 0 rgba(211, 218, 208, 0.12) inset,
+    -2px -2px 0 rgba(22, 28, 28, 0.16) inset;
+}
+
+.module-tile.tile-floor.tile-pressurized > .tile-surface {
+  background:
+    linear-gradient(rgba(75, 166, 146, 0.11), rgba(75, 166, 146, 0.025)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent 42%),
+    radial-gradient(circle at 18% 20%, rgba(217, 224, 216, 0.22) 0 1px, transparent 1.5px),
+    linear-gradient(180deg, var(--tile-floor-top), var(--tile-floor-low));
+}
+
+.module-tile.tile-floor.tile-vacuum > .tile-surface {
+  border-color: #303736;
+  background:
+    repeating-linear-gradient(135deg, transparent 0 10px, rgba(221, 180, 102, 0.035) 10px 11px),
+    linear-gradient(180deg, #4d5553, var(--tile-vacuum));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.14) inset;
+}
+
+/* Every shell segment consumes exactly one map cell. */
+.module-tile.tile-wall > .tile-surface {
+  border-color: #353c3b;
+  background:
+    linear-gradient(90deg, transparent 0 12%, rgba(230, 231, 219, 0.12) 12% 14%, transparent 14% 86%, rgba(17, 22, 22, 0.18) 86%),
+    linear-gradient(180deg, var(--tile-wall-top) 0 18%, var(--tile-wall-mid) 19% 70%, var(--tile-wall-low) 71% 100%);
+  box-shadow:
+    0 2px 0 rgba(240, 240, 226, 0.24) inset,
+    0 -3px 0 rgba(20, 25, 25, 0.27) inset,
+    2px 0 0 rgba(238, 237, 222, 0.08) inset;
+}
+
+.module-tile.tile-wall > .tile-wall-cap {
+  position: absolute;
+  z-index: 2;
+  inset: 18%;
+  border: 1px solid rgba(35, 42, 41, 0.58);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), transparent 45%),
+    #69716e;
+  box-shadow:
+    1px 1px 0 rgba(230, 230, 215, 0.15) inset,
+    -1px -1px 0 rgba(10, 14, 14, 0.22) inset;
+}
+
+.module-tile.tile-wall > .tile-wall-cap::before,
+.module-tile.tile-wall > .tile-wall-cap::after {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: #252c2c;
+  box-shadow: 0 0 0 1px rgba(213, 215, 204, 0.16);
+  content: "";
+}
+
+.module-tile.tile-wall > .tile-wall-cap::before { left: 2px; top: 2px; }
+.module-tile.tile-wall > .tile-wall-cap::after { right: 2px; bottom: 2px; }
+
+.module-tile.tile-wall.tile-edge-north > .tile-surface {
+  border-top-color: #bfc1b5;
+}
+
+.module-tile.tile-wall.tile-edge-east > .tile-surface {
+  border-right-color: #252b2b;
+  box-shadow:
+    -3px 0 0 rgba(236, 235, 220, 0.08) inset,
+    4px 0 5px rgba(14, 17, 17, 0.28);
+}
+
+.module-tile.tile-wall.tile-edge-south > .tile-surface {
+  border-bottom-color: #252b2a;
+  box-shadow:
+    0 -3px 0 rgba(236, 235, 220, 0.07) inset,
+    0 5px 5px rgba(12, 15, 15, 0.33);
+}
+
+.module-tile.tile-wall.tile-edge-west > .tile-surface {
+  border-left-color: #939a94;
+}
+
+/* A corridor is a run of service-floor cells with physical edge rails. */
+.module-tile.tile-corridor > .tile-surface {
+  background:
+    repeating-linear-gradient(90deg, transparent 0 22%, rgba(187, 198, 191, 0.09) 22% 25%),
+    linear-gradient(180deg, #6f7875, #4f5956);
+  box-shadow:
+    0 1px 0 rgba(237, 239, 226, 0.12) inset,
+    0 -2px 0 rgba(18, 23, 23, 0.2) inset;
+}
+
+.module-tile.tile-corridor > .tile-wall-cap {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border-color: transparent;
+  border-style: solid;
+  border-width: 0;
+  box-shadow: none;
+}
+
+.module-tile.tile-corridor.tile-edge-north > .tile-wall-cap {
+  border-top: clamp(3px, 0.35vw, 6px) solid #858c87;
+  box-shadow: 0 1px 0 #b9bbb0 inset, 0 3px 3px rgba(19, 23, 23, 0.3);
+}
+
+.module-tile.tile-corridor.tile-edge-east > .tile-wall-cap {
+  border-right: clamp(3px, 0.35vw, 6px) solid #48504e;
+}
+
+.module-tile.tile-corridor.tile-edge-south > .tile-wall-cap {
+  border-bottom: clamp(3px, 0.35vw, 6px) solid #48504e;
+  box-shadow: 0 -1px 0 #969b94 inset, 0 4px 3px rgba(16, 20, 20, 0.34);
+}
+
+.module-tile.tile-corridor.tile-edge-west > .tile-wall-cap {
+  border-left: clamp(3px, 0.35vw, 6px) solid #858c87;
+}
+
+/* Full-cell doors replace a wall tile, making their footprint unambiguous. */
+.module-tile.tile-door > .tile-surface {
+  border-color: #252b2b;
+  background:
+    repeating-linear-gradient(135deg, rgba(229, 183, 94, 0.16) 0 5px, transparent 5px 10px),
+    linear-gradient(180deg, #626c69, #414a48);
+  box-shadow: 0 0 0 2px rgba(196, 201, 190, 0.15) inset;
+}
+
+.tile-door-frame,
+.tile-door-frame > i {
+  position: absolute;
+  display: block;
+  box-sizing: border-box;
+}
+
+.tile-door-frame {
+  z-index: 4;
+  border: 2px solid #272f2e;
+  background: #88908c;
+  box-shadow: 0 0 0 1px rgba(213, 215, 204, 0.17);
+}
+
+.tile-door-east .tile-door-frame,
+.tile-door-west .tile-door-frame {
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 52%;
+  transform: translateX(-50%);
+}
+
+.tile-door-north .tile-door-frame,
+.tile-door-south .tile-door-frame {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 52%;
+  transform: translateY(-50%);
+}
+
+.tile-door-east .tile-door-leaf,
+.tile-door-west .tile-door-leaf {
+  left: 3px;
+  right: 3px;
+  height: calc(50% - 4px);
+  border: 1px solid #363e3d;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.14), transparent),
+    #707976;
+}
+
+.tile-door-east .leaf-a,
+.tile-door-west .leaf-a { top: 2px; }
+.tile-door-east .leaf-b,
+.tile-door-west .leaf-b { bottom: 2px; }
+
+.tile-door-east .tile-door-threshold,
+.tile-door-west .tile-door-threshold {
+  left: 1px;
+  right: 1px;
+  top: 50%;
+  height: 3px;
+  background: var(--tile-amber);
+  transform: translateY(-50%);
+}
+
+.tile-door-north .tile-door-leaf,
+.tile-door-south .tile-door-leaf {
+  top: 3px;
+  bottom: 3px;
+  width: calc(50% - 4px);
+  border: 1px solid #363e3d;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent),
+    #707976;
+}
+
+.tile-door-north .leaf-a,
+.tile-door-south .leaf-a { left: 2px; }
+.tile-door-north .leaf-b,
+.tile-door-south .leaf-b { right: 2px; }
+
+.tile-door-north .tile-door-threshold,
+.tile-door-south .tile-door-threshold {
+  top: 1px;
+  bottom: 1px;
+  left: 50%;
+  width: 3px;
+  background: var(--tile-amber);
+  transform: translateX(-50%);
+}
+
+/* Room dividers stay inside a floor cell and deliberately leave a walk gap. */
+.tile-interior-partition {
+  position: absolute;
+  z-index: 5;
+  background: linear-gradient(90deg, #9da19a, #4e5754);
+  box-shadow: 1px 1px 2px var(--tile-shadow);
+}
+
+.tile-partition-east .tile-interior-partition {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: clamp(3px, 0.32vw, 5px);
+}
+
+.tile-partition-west .tile-interior-partition {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: clamp(3px, 0.32vw, 5px);
+}
+
+.tile-partition-north .tile-interior-partition {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: clamp(3px, 0.32vw, 5px);
+}
+
+.tile-partition-south .tile-interior-partition {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: clamp(3px, 0.32vw, 5px);
+}
+
+.tile-partition-east .tile-interior-partition.has-opening,
+.tile-partition-west .tile-interior-partition.has-opening {
+  background: linear-gradient(to bottom, #7f8783 0 27%, transparent 27% 73%, #59615e 73%);
+  box-shadow: none;
+}
+
+.tile-partition-north .tile-interior-partition.has-opening,
+.tile-partition-south .tile-interior-partition.has-opening {
+  background: linear-gradient(to right, #7f8783 0 27%, transparent 27% 73%, #59615e 73%);
+  box-shadow: none;
+}
+
+/* One-cell pressure bridges occupy the deliberate gap between room shells. */
+.module-connector.connector-tile {
+  display: block;
+  overflow: hidden;
+  isolation: isolate;
+  pointer-events: none;
+}
+
+.connector-tile .connector-floor {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border: 1px solid #3e4745;
+  background:
+    linear-gradient(rgba(91, 184, 165, 0.1), rgba(91, 184, 165, 0.02)),
+    linear-gradient(180deg, #69736f, #4d5754);
+}
+
+.connector-tile .connector-wall {
+  position: absolute;
+  z-index: 2;
+  display: block;
+  background: linear-gradient(90deg, #9b9e96, #505956);
+  box-shadow: 0 2px 2px var(--tile-shadow);
+}
+
+.connector-horizontal .connector-wall {
+  left: 0;
+  right: 0;
+  height: clamp(3px, 0.35vw, 6px);
+}
+
+.connector-horizontal .wall-a { top: 0; }
+.connector-horizontal .wall-b { bottom: 0; }
+
+.connector-vertical .connector-wall {
+  top: 0;
+  bottom: 0;
+  width: clamp(3px, 0.35vw, 6px);
+}
+
+.connector-vertical .wall-a { left: 0; }
+.connector-vertical .wall-b { right: 0; }
+
+.connector-door-seam {
+  position: absolute;
+  z-index: 3;
+  display: block;
+  background: var(--tile-amber);
+  opacity: 0.72;
+}
+
+.connector-horizontal .connector-door-seam {
+  left: 50%;
+  top: 12%;
+  bottom: 12%;
+  width: 2px;
+}
+
+.connector-vertical .connector-door-seam {
+  left: 12%;
+  right: 12%;
+  top: 50%;
+  height: 2px;
+}
+
+/* Exterior working surfaces still use the same cell grid. */
+.module-tile.tile-solar > .tile-surface {
+  border-color: #313b3b;
+  background:
+    radial-gradient(circle at 15% 18%, #9ca39c 0 1px, transparent 1.5px),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 38%),
+    #485250;
+  box-shadow: 0 0 0 2px rgba(18, 24, 24, 0.16) inset;
+}
+
+.tile-service-rail {
+  position: absolute;
+  z-index: 1;
+  left: 8%;
+  right: 8%;
+  top: 50%;
+  height: 3px;
+  background: #262e2e;
+  box-shadow: 0 -1px 0 rgba(198, 203, 194, 0.23);
+}
+
+.module-tile.tile-landing-pad > .tile-surface {
+  border-color: #4c504d;
+  background:
+    linear-gradient(45deg, transparent 46%, rgba(230, 204, 134, 0.09) 47% 53%, transparent 54%),
+    linear-gradient(-45deg, transparent 46%, rgba(230, 204, 134, 0.055) 47% 53%, transparent 54%),
+    linear-gradient(180deg, #5d615b, #444945);
+  box-shadow:
+    1px 1px 0 rgba(231, 226, 205, 0.08) inset,
+    -1px -1px 0 rgba(10, 13, 13, 0.2) inset;
+}
+
+.tile-pad-marking {
+  position: absolute;
+  z-index: 1;
+  inset: 18%;
+  border: 1px dashed rgba(227, 188, 96, 0.34);
+}
+
+/* Multi-cell furniture and workstations ---------------------------------- */
+
+.tile-fixture {
+  --fixture-accent: #aab4ae;
+  margin: clamp(2px, 0.22vw, 5px);
+  display: block;
+  overflow: visible;
+  isolation: isolate;
+  color: var(--fixture-accent);
+  filter: drop-shadow(3px 4px 3px rgba(10, 13, 13, 0.46));
+  pointer-events: none;
+}
+
+.tile-fixture > .fixture-shadow {
+  position: absolute;
+  z-index: 0;
+  left: 8%;
+  right: -4%;
+  top: 15%;
+  bottom: -7%;
+  background: rgba(8, 11, 11, 0.35);
+  filter: blur(3px);
+}
+
+.tile-fixture > .fixture-body {
+  position: absolute;
+  z-index: 1;
+  inset: 4%;
+  overflow: hidden;
+  border: 1px solid #303838;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.13), transparent 36%),
+    #596360;
+  box-shadow:
+    1px 1px 0 rgba(228, 229, 215, 0.16) inset,
+    -2px -2px 0 rgba(15, 19, 19, 0.2) inset;
+}
+
+.tile-fixture .fixture-body > .game-icon {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 50%;
+  width: clamp(9px, 1vw, 15px);
+  height: clamp(9px, 1vw, 15px);
+  color: var(--fixture-accent);
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.55));
+  opacity: 0.92;
+  transform: translate(-50%, -50%);
+}
+
+.tile-fixture .fixture-segments {
+  position: absolute;
+  z-index: 2;
+  inset: 12%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(1px, 0.12vw, 3px);
+}
+
+.tile-fixture .fixture-segment {
+  min-width: 0;
+  min-height: 0;
+  display: block;
+  border: 1px solid rgba(25, 31, 31, 0.56);
+  background: rgba(215, 220, 209, 0.1);
+  box-shadow: 1px 1px 0 rgba(226, 229, 215, 0.09) inset;
+}
+
+.tile-fixture.fixture-bed { --fixture-accent: #d9c79d; }
+
+.tile-fixture.fixture-bed > .fixture-body {
+  border-width: 2px;
+  background:
+    linear-gradient(90deg, #a9a18b 0 21%, #66706d 22% 100%);
+}
+
+.tile-fixture.fixture-bed .fixture-segments {
+  left: 25%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tile-fixture.fixture-bed .fixture-segment {
+  border-color: rgba(43, 52, 51, 0.65);
+  background: linear-gradient(180deg, #8b9b96, #65736f);
+}
+
+.tile-fixture.fixture-mess-table { --fixture-accent: #d6b46d; }
+
+.tile-fixture.fixture-mess-table > .fixture-body {
+  inset: 15% 5%;
+  background: #756c58;
+  box-shadow:
+    0 0 0 2px #4d5049 inset,
+    0 0 0 4px rgba(204, 183, 133, 0.08) inset;
+}
+
+.tile-fixture.fixture-mess-table .fixture-segments {
+  inset: 20% 9%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tile-fixture.fixture-hab-console,
+.tile-fixture.fixture-life-console,
+.tile-fixture.fixture-lab-console { --fixture-accent: #8fd7df; }
+
+.tile-fixture.fixture-hab-console > .fixture-body,
+.tile-fixture.fixture-life-console > .fixture-body,
+.tile-fixture.fixture-lab-console > .fixture-body {
+  border-color: #263c40;
+  background:
+    linear-gradient(180deg, #3b636a 0 42%, #293b3e 43%),
+    #2f4448;
+}
+
+.tile-fixture.fixture-hab-console .fixture-segments,
+.tile-fixture.fixture-life-console .fixture-segments,
+.tile-fixture.fixture-lab-console .fixture-segments {
+  inset: 11% 10% 52%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tile-fixture.fixture-hab-console .fixture-segment,
+.tile-fixture.fixture-life-console .fixture-segment,
+.tile-fixture.fixture-lab-console .fixture-segment {
+  border-color: #4d848b;
+  background: #78c7d1;
+  box-shadow: 0 0 5px rgba(118, 206, 217, 0.45);
+}
+
+.tile-fixture.fixture-life-tanks { --fixture-accent: #9ed9d0; }
+
+.tile-fixture.fixture-life-tanks > .fixture-body {
+  inset: 3% 14%;
+  border-color: #365650;
+  background: #4e6a65;
+}
+
+.tile-fixture.fixture-life-tanks .fixture-segments {
+  inset: 6% 17%;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+}
+
+.tile-fixture.fixture-life-tanks .fixture-segment {
+  border-color: #31554f;
+  background: linear-gradient(90deg, #7fb8ad, #4f7770 65%, #334d49);
+}
+
+.tile-fixture.fixture-scrubber { --fixture-accent: #7fc0ad; }
+
+.tile-fixture.fixture-scrubber > .fixture-body {
+  background:
+    repeating-linear-gradient(90deg, #394946 0 3px, #6b827b 3px 5px),
+    #4e625d;
+}
+
+.tile-fixture.fixture-lab-bench,
+.tile-fixture.fixture-analysis-bench { --fixture-accent: #8cc9db; }
+
+.tile-fixture.fixture-lab-bench > .fixture-body,
+.tile-fixture.fixture-analysis-bench > .fixture-body {
+  inset: 12% 3%;
+  border-color: #344b50;
+  background:
+    linear-gradient(180deg, #77939a 0 30%, #45585c 31% 100%);
+}
+
+.tile-fixture.fixture-lab-bench .fixture-segments,
+.tile-fixture.fixture-analysis-bench .fixture-segments {
+  inset: 17% 7% 49%;
+}
+
+.tile-fixture.fixture-lab-bench .fixture-segment,
+.tile-fixture.fixture-analysis-bench .fixture-segment {
+  border-color: #345e68;
+  background: #75adba;
+}
+
+.tile-fixture.fixture-microscope { --fixture-accent: #b4deea; }
+
+.tile-fixture.fixture-microscope > .fixture-body {
+  inset: 15%;
+  border-color: #385158;
+  background:
+    radial-gradient(circle at 55% 38%, #9dd6df 0 10%, #3a555a 11% 24%, transparent 25%),
+    #586a6d;
+}
+
+.tile-fixture.fixture-storage-rack { --fixture-accent: #ddb568; }
+
+.tile-fixture.fixture-storage-rack > .fixture-body {
+  inset: 5% 2%;
+  border: 2px solid #3e3b33;
+  background: #5d5a50;
+}
+
+.tile-fixture.fixture-storage-rack .fixture-segments {
+  inset: 9% 4%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.tile-fixture.fixture-storage-rack .fixture-segment {
+  border-color: #5d4930;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.15), transparent 45%),
+    #9b7441;
+}
+
+.tile-fixture.fixture-airlock-chamber { --fixture-accent: #e0c36e; }
+
+.tile-fixture.fixture-airlock-chamber > .fixture-body {
+  inset: 2%;
+  border: clamp(2px, 0.28vw, 4px) double #303736;
+  background:
+    repeating-linear-gradient(135deg, rgba(226, 183, 91, 0.18) 0 6px, transparent 6px 12px),
+    #5c6663;
+}
+
+.tile-fixture.fixture-suit-rack { --fixture-accent: #d5d7cc; }
+
+.tile-fixture.fixture-suit-rack > .fixture-body {
+  background:
+    linear-gradient(90deg, transparent 0 30%, #ccd0c5 31% 69%, transparent 70%),
+    #4c5754;
+}
+
+.tile-fixture.fixture-solar-bank { --fixture-accent: #8ed6e6; }
+
+.tile-fixture.fixture-solar-bank > .fixture-body {
+  inset: 3%;
+  border: 2px solid #263a40;
+  background: #274b58;
+  box-shadow:
+    0 0 0 2px rgba(118, 189, 207, 0.16) inset,
+    3px 4px 0 rgba(20, 25, 25, 0.34);
+}
+
+.tile-fixture.fixture-solar-bank .fixture-segments {
+  inset: 7%;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.tile-fixture.fixture-solar-bank .fixture-segment {
+  border-color: #1d3942;
+  background:
+    linear-gradient(135deg, rgba(165, 222, 233, 0.24), transparent 44%),
+    #386c7a;
+}
+
+.tile-fixture.fixture-battery-bank { --fixture-accent: #efc964; }
+
+.tile-fixture.fixture-battery-bank > .fixture-body {
+  border-color: #594c29;
+  background: #514a37;
+}
+
+.tile-fixture.fixture-battery-bank .fixture-segments {
+  inset: 7% 18%;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+}
+
+.tile-fixture.fixture-battery-bank .fixture-segment {
+  border-color: #6c5726;
+  background: linear-gradient(90deg, #d4aa49, #715f35);
+}
+
+.tile-fixture.fixture-landing-target {
+  --fixture-accent: rgba(237, 202, 115, 0.82);
+  margin: 0;
+  filter: none;
+}
+
+.tile-fixture.fixture-landing-target > .fixture-shadow { display: none; }
+
+.tile-fixture.fixture-landing-target > .fixture-body {
+  inset: 9%;
+  border: clamp(2px, 0.24vw, 4px) solid currentColor;
+  border-radius: 50%;
+  background:
+    linear-gradient(90deg, transparent 48.5%, currentColor 49% 51%, transparent 51.5%),
+    linear-gradient(transparent 48.5%, currentColor 49% 51%, transparent 51.5%),
+    radial-gradient(circle, transparent 0 28%, currentColor 29% 31%, transparent 32%);
+  box-shadow: none;
+  opacity: 0.72;
+}
+
+.tile-fixture.fixture-landing-target .fixture-body > .game-icon,
+.tile-fixture.fixture-landing-target .fixture-segments {
+  display: none;
+}
+
+/* Damage and map state --------------------------------------------------- */
+
+.module-tile.tile-selected > .tile-surface,
+.module-tile.tile-planned > .tile-surface {
+  filter: brightness(1.08);
+}
+
+.module-tile.tile-planned > .tile-surface {
+  box-shadow: 0 0 0 2px rgba(133, 207, 222, 0.38) inset;
+}
+
+.module-tile.tile-breached > .tile-surface {
+  border-color: var(--tile-red);
+  background:
+    repeating-linear-gradient(135deg, rgba(236, 119, 103, 0.22) 0 5px, transparent 5px 10px),
+    #483c3a;
+  box-shadow: 0 0 12px rgba(236, 119, 103, 0.45) inset;
+}
+
+.tile-breach-tear {
+  position: absolute;
+  z-index: 7;
+  inset: 12%;
+  display: block;
+  filter: drop-shadow(0 0 4px rgba(236, 119, 103, 0.75));
+}
+
+.tile-breach-tear > i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 72%;
+  display: block;
+  background: #1d2020;
+  box-shadow: 0 0 0 1px var(--tile-red);
+  transform-origin: center;
+}
+
+.tile-breach-tear > i:nth-child(1) { transform: translate(-50%, -50%) rotate(27deg); }
+.tile-breach-tear > i:nth-child(2) { height: 48%; transform: translate(-105%, -76%) rotate(-36deg); }
+.tile-breach-tear > i:nth-child(3) { height: 42%; transform: translate(55%, -16%) rotate(61deg); }
+
+/* Transparent, accessible interaction planes ---------------------------- */
+
+.base-module.module-select-target {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  color: #eef1e9;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none;
+  text-align: left;
+  transform: none;
+  transition: none;
+  cursor: pointer;
+}
+
+.base-module.module-select-target:hover,
+.base-module.module-select-target.selected,
+.base-module.module-select-target.planned {
+  filter: none;
+  transform: none;
+}
+
+.base-module.module-select-target:hover {
+  outline: 1px solid rgba(170, 220, 229, 0.56);
+  outline-offset: -1px;
+}
+
+.base-module.module-select-target.selected,
+.base-module.module-select-target:focus-visible {
+  outline: 2px solid var(--tile-cyan);
+  outline-offset: -2px;
+}
+
+.base-module.module-select-target .module-caption {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.base-module.module-select-target .module-caption .module-code {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  max-width: calc(100% - 6px);
+  padding: 2px 3px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+  border: 1px solid rgba(183, 195, 189, 0.22);
+  border-radius: 0;
+  color: #d9e1dc;
+  background: rgba(24, 30, 30, 0.72);
+  box-shadow: none;
+  font: 800 6px/1 ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.base-module.module-select-target .module-caption > strong {
+  position: absolute;
+  left: 3px;
+  bottom: 4px;
+  max-width: calc(100% - 6px);
+  padding: 2px 4px;
+  overflow: hidden;
+  border: 1px solid rgba(196, 203, 194, 0.18);
+  border-radius: 0;
+  color: #f0f1e9;
+  background: rgba(20, 25, 25, 0.84);
+  box-shadow: none;
+  opacity: 0;
+  font: 700 8px/1.15 Inter, sans-serif;
+  text-overflow: ellipsis;
+  transform: translateY(3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: nowrap;
+}
+
+.base-module.module-select-target:hover .module-caption > strong,
+.base-module.module-select-target:focus-visible .module-caption > strong,
+.base-module.module-select-target.selected .module-caption > strong {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.base-module.module-select-target .module-condition {
+  position: absolute;
+  z-index: 7;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 0;
+  background: rgba(7, 10, 10, 0.55);
+  pointer-events: none;
+}
+
+.base-module.module-select-target .module-condition > span {
+  height: 100%;
+  display: block;
+}
+
+.base-module.module-select-target .atmosphere-badge {
+  position: absolute;
+  z-index: 8;
+  right: 3px;
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  padding: 2px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(111, 190, 172, 0.44);
+  border-radius: 0;
+  color: var(--tile-pressure);
+  background: rgba(25, 39, 36, 0.82);
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.base-module.module-select-target .atmosphere-badge .game-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.base-module.module-select-target .atmosphere-badge small { display: none; }
+
+.base-module.module-select-target .atmosphere-badge.atmosphere-no {
+  border-color: rgba(220, 112, 96, 0.5);
+  color: var(--tile-red);
+  background: rgba(57, 31, 29, 0.84);
+}
+
+.base-module.module-select-target .atmosphere-badge.atmosphere-low {
+  border-color: rgba(227, 183, 94, 0.5);
+  color: var(--tile-amber);
+  background: rgba(58, 47, 27, 0.84);
+}
+
+.base-module.module-select-target .planned-tag {
+  position: absolute;
+  z-index: 8;
+  right: 3px;
+  bottom: 4px;
+  top: auto;
+  padding: 2px 3px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid rgba(155, 216, 228, 0.48);
+  border-radius: 0;
+  color: #d5f0f5;
+  background: rgba(38, 73, 80, 0.88);
+  font: 800 6px/1 ui-monospace, monospace;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.base-module.module-select-target .breach-graphic {
+  display: none;
+}
+
+/* Tile-by-tile construction ghosts -------------------------------------- */
+
+.build-site-tile {
+  display: block;
+  overflow: hidden;
+  border: 1px solid rgba(207, 199, 176, 0.13);
+  background:
+    linear-gradient(135deg, rgba(232, 218, 177, 0.045), transparent 50%),
+    rgba(26, 30, 29, 0.12);
+  box-shadow: 0 0 0 1px rgba(13, 16, 15, 0.12) inset;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.build-site-tile.previewed {
+  opacity: 0.14;
+  animation: none;
+}
+
+.module-tile.tile-ghost,
+.tile-fixture.fixture-ghost {
+  opacity: 0.78;
+  filter: saturate(0.72) drop-shadow(0 0 4px rgba(144, 220, 232, 0.42));
+}
+
+.module-tile.tile-ghost > .tile-surface {
+  border: 1px dashed rgba(157, 225, 236, 0.9);
+  box-shadow: 0 0 0 1px rgba(62, 154, 172, 0.2) inset;
+}
+
+.tile-fixture.fixture-ghost > .fixture-body {
+  border-style: dashed;
+}
+
+.build-site-tile.build-site-edge {
+  border-color: rgba(221, 209, 175, 0.26);
+  background:
+    repeating-linear-gradient(135deg, rgba(218, 204, 165, 0.08) 0 5px, transparent 5px 10px),
+    rgba(34, 38, 36, 0.2);
+}
+
+.build-site-tile.build-site-interior {
+  background:
+    linear-gradient(rgba(220, 211, 187, 0.04), rgba(220, 211, 187, 0.015)),
+    rgba(18, 22, 21, 0.14);
+}
+
+.build-site-tile.placement-ready {
+  border-color: rgba(238, 193, 94, 0.58);
+  background:
+    repeating-linear-gradient(135deg, rgba(228, 179, 76, 0.16) 0 5px, transparent 5px 10px),
+    rgba(69, 53, 24, 0.22);
+  box-shadow: 0 0 0 1px rgba(246, 204, 113, 0.2) inset;
+  opacity: 1;
+  animation: tile-blueprint-pulse 1.65s ease-in-out infinite;
+}
+
+.build-site-tile.placement-ready.previewed {
+  opacity: 0.14;
+  animation: none;
+}
+
+.build-site.build-site-select-target {
+  position: relative;
+  z-index: 4;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  color: rgba(235, 226, 202, 0.72);
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none;
+  transform: none;
+  transition: none;
+}
+
+.build-site.build-site-select-target:disabled {
+  opacity: 1;
+  filter: none;
+  cursor: default;
+}
+
+.build-site.build-site-select-target.placement-ready {
+  border: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  animation: none;
+  cursor: crosshair;
+}
+
+.build-site.build-site-select-target.placement-ready:hover,
+.build-site.build-site-select-target.placement-ready:focus-visible {
+  outline: 2px solid #f0c469;
+  outline-offset: -2px;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none;
+  transform: none;
+}
+
+.build-site.build-site-select-target .build-site-corners {
+  display: none;
+}
+
+.build-site.build-site-select-target .build-site-label {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  top: auto;
+  min-width: 0;
+  max-width: calc(100% - 8px);
+  padding: 3px 5px;
+  display: inline-grid;
+  grid-template-columns: 13px minmax(0, 1fr);
+  gap: 3px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(198, 193, 174, 0.24);
+  border-radius: 0;
+  color: inherit;
+  background: rgba(24, 29, 28, 0.77);
+  box-shadow: none;
+  transform: none;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+.build-site.build-site-select-target.placement-ready .build-site-label {
+  border-color: rgba(239, 197, 104, 0.56);
+  color: #f1cc7c;
+  background: rgba(51, 41, 23, 0.88);
+}
+
+.build-site.build-site-select-target .build-site-label .game-icon {
+  width: 12px;
+  height: 12px;
+  grid-row: auto;
+}
+
+.build-site.build-site-select-target .build-site-label strong {
+  overflow: hidden;
+  font: 800 7px/1.1 ui-monospace, monospace;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.build-site.build-site-select-target .build-site-label small {
+  display: none;
+}
+
+@keyframes tile-blueprint-pulse {
+  0%, 100% { filter: brightness(0.9); }
+  50% { filter: brightness(1.22); }
+}
+
+@media (max-width: 720px) {
+  .tile-fixture {
+    margin: 1px;
+  }
+
+  .tile-fixture .fixture-body > .game-icon {
+    width: 8px;
+    height: 8px;
+  }
+
+  .base-module.module-select-target .module-caption .module-code {
+    left: 1px;
+    top: 1px;
+    padding: 1px 2px;
+    font-size: 5px;
+  }
+
+  .base-module.module-select-target .module-caption .module-code .game-icon,
+  .base-module.module-select-target .atmosphere-badge,
+  .base-module.module-select-target .planned-tag {
+    display: none;
+  }
+
+  .base-module.module-select-target .module-caption > strong {
+    left: 1px;
+    right: 1px;
+    bottom: 2px;
+    max-width: none;
+    padding: 1px 2px;
+    font-size: 6px;
+  }
+
+  .build-site.build-site-select-target .build-site-label {
+    left: 2px;
+    bottom: 2px;
+    max-width: calc(100% - 4px);
+    padding: 2px 3px;
+    grid-template-columns: 9px minmax(0, 1fr);
+  }
+
+  .build-site.build-site-select-target .build-site-label .game-icon {
+    width: 8px;
+    height: 8px;
+  }
+
+  .build-site.build-site-select-target .build-site-label strong {
+    font-size: 5px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .build-site-tile.placement-ready {
+    animation: none;
+  }
+
+  .base-module.module-select-target .module-caption > strong {
+    transition: none;
+  }
+}

@@ -10,12 +10,22 @@ const settlementMap = () => screen.getByRole('group', {
   name: /top-down interactive map of shackleton base/i,
 })
 
-const selectGuidedBlueprint = (name: RegExp) => {
+const selectBlueprint = (name: RegExp) => {
   fireEvent.click(screen.getByRole('button', { name }))
 }
 
-const placeSelectedBlueprint = (name: RegExp) => {
+const previewAt = (name: RegExp) => {
   fireEvent.click(within(settlementMap()).getByRole('button', { name }))
+}
+
+const confirmBuild = (name: RegExp) => {
+  fireEvent.click(screen.getByRole('button', { name }))
+}
+
+const completeGuidedBuild = (blueprint: RegExp, site: RegExp, confirmation: RegExp) => {
+  selectBlueprint(blueprint)
+  previewAt(site)
+  confirmBuild(confirmation)
 }
 
 beforeEach(() => {
@@ -28,13 +38,36 @@ afterEach(() => {
 })
 
 describe('tiny-start settlement UI', () => {
-  it('lands with only the habitat, pad, two crew, and one guided build action', () => {
+  it('renders a semantic 24×18 tile map with a one-cell habitat shell and simple landing UI', () => {
     renderFreshApp()
 
     const map = settlementMap()
+    expect(map).toHaveAttribute('aria-roledescription', 'colony tile map')
+    expect(map).toHaveAttribute('data-grid-width', '24')
+    expect(map).toHaveAttribute('data-grid-height', '18')
     expect(map).toHaveAccessibleName(
-      /2 base areas, 2 crew, 0 equipment items, 0 work orders, and 5 vacant build sites/i,
+      /2 base areas, 2 crew, 0 equipment items, and 0 work orders/i,
     )
+    expect(within(map).queryByRole('button', { name: /build socket/i })).not.toBeInTheDocument()
+
+    const habitatTiles = [
+      ...map.querySelectorAll<HTMLElement>(
+        '[data-module-id="module-habitat"][data-tile-kind]',
+      ),
+    ]
+    expect(habitatTiles).toHaveLength(6 * 7)
+    for (const tile of habitatTiles) {
+      const x = Number(tile.dataset.localX)
+      const y = Number(tile.dataset.localY)
+      const perimeter = x === 0 || x === 5 || y === 0 || y === 6
+      expect(perimeter ? ['wall', 'door'] : ['floor']).toContain(tile.dataset.tileKind)
+    }
+
+    const habitatDoors = habitatTiles.filter((tile) => tile.dataset.tileKind === 'door')
+    expect(habitatDoors).toHaveLength(1)
+    expect(habitatDoors[0]).toHaveAttribute('data-grid-x', '6')
+    expect(habitatDoors[0]).toHaveAttribute('data-grid-y', '9')
+    expect(habitatDoors[0]).toHaveAttribute('data-door-side', 'east')
 
     const visibleModules = within(map).getAllByRole('button', { name: /^Inspect / })
     expect(visibleModules).toHaveLength(2)
@@ -50,84 +83,110 @@ describe('tiny-start settlement UI', () => {
 
     const guidedBuildActions = screen.getAllByRole('button', { name: /^Place / })
     expect(guidedBuildActions).toHaveLength(1)
-    expect(guidedBuildActions[0]).toHaveAccessibleName(/Place Solar \/ Battery Skid.*3 build kits/i)
+    expect(guidedBuildActions[0]).toHaveAccessibleName(/Place Solar \/ Battery Skid/i)
     expect(screen.getByLabelText('0 of 5 essential modules built')).toBeVisible()
-
     expect(screen.queryByRole('navigation', { name: 'Colony commands' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Current objective' })).not.toBeInTheDocument()
   })
 
-  it('places the selected solar blueprint at a named site and advances the settlement', () => {
+  it('enables only compatible sockets and commits Solar after preview confirmation', () => {
     renderFreshApp()
+    selectBlueprint(/^Place Solar \/ Battery Skid/)
 
-    selectGuidedBlueprint(/^Place Solar \/ Battery Skid/)
+    const map = settlementMap()
+    const compatibleSites = within(map).getAllByRole('button', {
+      name: /^Preview Solar \/ Battery Skid at /,
+    })
+    expect(compatibleSites).toHaveLength(3)
+    expect(compatibleSites.every((site) => !site.hasAttribute('disabled'))).toBe(true)
+    expect(map).toHaveAccessibleName(/3 compatible build sockets/i)
+    expect(within(map).queryByRole('button', {
+      name: /cannot fit Solar \/ Battery Skid$/,
+    })).not.toBeInTheDocument()
 
-    const blueprintTray = screen.getByRole('region', { name: 'Build blueprints' })
+    const beforePreview = useColonyStore.getState()
+    previewAt(/^Preview Solar \/ Battery Skid at West Ridge$/)
+
+    expect(useColonyStore.getState().worldRevision).toBe(beforePreview.worldRevision)
+    expect(useColonyStore.getState().reserves.constructionStock).toBe(14)
     expect(
-      within(blueprintTray).getByRole('button', { name: /^Solar \/ Battery Skid/ }),
-    ).toHaveAttribute('aria-pressed', 'true')
+      useColonyStore.getState().settlement.buildSites.find((site) => site.id === 'site-power-west'),
+    ).toMatchObject({ occupiedBy: null })
+    expect(
+      within(map).getByRole('button', {
+        name: /Solar \/ Battery Skid preview at West Ridge\. Selected build socket\./i,
+      }),
+    ).toBeEnabled()
 
-    placeSelectedBlueprint(/^Build Solar \/ Battery Skid at East Ridge$/)
+    confirmBuild(/^Build Solar \/ Battery Skid/)
 
-    const state = useColonyStore.getState()
-    expect(state.settlement.phase).toBe('power_online')
-    expect(state.reserves.constructionStock).toBe(11)
-    expect(state.settlement.buildSites.find((site) => site.id === 'site-east-ridge')).toMatchObject({
-      label: 'East Ridge',
+    const powered = useColonyStore.getState()
+    expect(powered.settlement.phase).toBe('power_online')
+    expect(powered.reserves.constructionStock).toBe(11)
+    expect(powered.settlement.buildSites.find((site) => site.id === 'site-power-west')).toMatchObject({
+      label: 'West Ridge',
       occupiedBy: 'solar_battery_skid',
     })
-    expect(state.modules.find((module) => module.id === 'module-solar-skid')?.position).toEqual({
-      x: 14,
+    expect(powered.modules.find((module) => module.id === 'module-solar-skid')?.position).toEqual({
+      x: 2,
       y: 1,
       width: 5,
       height: 4,
     })
-
-    expect(settlementMap()).toHaveAccessibleName(
-      /3 base areas, 2 crew, 0 equipment items, 0 work orders, and 4 vacant build sites/i,
-    )
-    expect(
-      within(settlementMap()).getByRole('button', { name: /Inspect Solar \/ Battery Skid/i }),
-    ).toBeVisible()
     expect(screen.getByLabelText('1 of 5 essential modules built')).toBeVisible()
-    expect(screen.getByText(/Solar \/ Battery Skid built\. power online\./i)).toBeVisible()
     expect(screen.getByRole('button', { name: /^Place Life Support/ })).toBeEnabled()
   })
 
-  it('builds all five essentials through the UI before revealing colony operations', () => {
+  it('builds connected rooms, renders a 2×2 workstation, and then reveals operations', () => {
     renderFreshApp()
 
-    selectGuidedBlueprint(/^Place Solar \/ Battery Skid/)
-    placeSelectedBlueprint(/^Build Solar \/ Battery Skid at East Ridge$/)
-
-    selectGuidedBlueprint(/^Place Life Support/)
-    placeSelectedBlueprint(/^Build Life Support at South Shelf$/)
-
-    selectGuidedBlueprint(/^Place South Airlock/)
-    placeSelectedBlueprint(/^Build South Airlock at North Shelf$/)
+    completeGuidedBuild(
+      /^Place Solar \/ Battery Skid/,
+      /^Preview Solar \/ Battery Skid at East Ridge$/,
+      /^Build Solar \/ Battery Skid/,
+    )
+    completeGuidedBuild(
+      /^Place Life Support/,
+      /^Preview Life Support at Northwest Bay$/,
+      /^Build Life Support/,
+    )
+    completeGuidedBuild(
+      /^Place South Airlock/,
+      /^Preview South Airlock at Padside Bay$/,
+      /^Build South Airlock/,
+    )
 
     const blueprintTray = screen.getByRole('region', { name: 'Build blueprints' })
     fireEvent.click(within(blueprintTray).getByRole('button', { name: /^Stores/ }))
-    placeSelectedBlueprint(/^Build Stores at East Apron$/)
+    previewAt(/^Preview Stores at Southwest Bay$/)
+    confirmBuild(/^Build Stores/)
 
-    selectGuidedBlueprint(/^Place Kepler Laboratory/)
-    placeSelectedBlueprint(/^Build Kepler Laboratory at North Ridge$/)
+    completeGuidedBuild(
+      /^Place Kepler Laboratory/,
+      /^Preview Kepler Laboratory at Northeast Bay$/,
+      /^Build Kepler Laboratory/,
+    )
 
     const ready = useColonyStore.getState()
     expect(ready.settlement.phase).toBe('ready')
-    expect(ready.settlement.buildSites.every((site) => site.occupiedBy !== null)).toBe(true)
+    expect(ready.settlement.buildSites.filter((site) => site.occupiedBy !== null)).toHaveLength(5)
     expect(ready.reserves.constructionStock).toBe(0)
     expect(screen.getByLabelText('5 of 5 essential modules built')).toBeVisible()
+
+    const labBench = settlementMap().querySelector<HTMLElement>(
+      '[data-module-id="module-laboratory"][data-fixture="lab-bench"]',
+    )
+    expect(labBench).toHaveAttribute('data-fixture-id', 'module-laboratory-wet-bench')
+    expect(labBench?.style.gridColumn).toMatch(/span 2/)
+    expect(labBench?.style.gridRow).toMatch(/span 2/)
+
     expect(screen.queryByRole('navigation', { name: 'Colony commands' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Current objective' })).not.toBeInTheDocument()
 
-    const beginFirstShift = screen.getByRole('button', { name: /Begin first shift/i })
-    expect(beginFirstShift).toBeEnabled()
-    fireEvent.click(beginFirstShift)
+    fireEvent.click(screen.getByRole('button', { name: /Begin first shift/i }))
 
     expect(useColonyStore.getState().settlement.phase).toBe('operations')
     expect(screen.getByRole('navigation', { name: 'Colony commands' })).toBeVisible()
     expect(screen.getByRole('region', { name: 'Current objective' })).toBeVisible()
-    expect(screen.queryByRole('region', { name: 'Settlement guide' })).not.toBeInTheDocument()
   })
 })

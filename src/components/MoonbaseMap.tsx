@@ -9,6 +9,8 @@ import type {
   WorkOrderId,
 } from '../game/types'
 import { GameIcon, type GameIconName } from './GameIcon'
+import { ModuleConnectors, ModuleTilemap } from './ModuleTilemap'
+import { getModuleWalkableCells } from './moduleTileGeometry'
 
 export interface MoonbaseMapProps {
   width: number
@@ -31,9 +33,12 @@ export interface MoonbaseMapProps {
     id: string
     label: string
     moduleId: string | null
+    compatible?: boolean
     position: { x: number; y: number; width: number; height: number }
   }>
   buildingLabel?: string | null
+  buildingPreview?: Pick<ModuleState, 'name' | 'type' | 'location' | 'atmosphere'> | null
+  previewSiteId?: string | null
   onChooseBuildSite?: (siteId: string) => void
 }
 
@@ -87,109 +92,6 @@ const initials = (name: string) => name
   .join('')
   .slice(0, 2)
   .toUpperCase()
-
-function ModuleInterior({ module }: { module: ModuleState }) {
-  const fixture = (name: GameIconName, className: string, key?: string) => (
-    <span className={`room-fixture ${className}`} key={key}>
-      <GameIcon name={name} size="100%" />
-    </span>
-  )
-
-  let fixtures
-  switch (module.type) {
-    case 'habitat':
-      fixtures = (
-        <>
-          {fixture('bed', 'fixture-bed bed-a')}
-          {fixture('bed', 'fixture-bed bed-b')}
-          {fixture('bed', 'fixture-bed bed-c')}
-          {fixture('table', 'fixture-table')}
-          {fixture('console', 'fixture-console')}
-        </>
-      )
-      break
-    case 'corridor':
-      fixtures = (
-        <>
-          <span className="corridor-rail rail-a" />
-          <span className="corridor-rail rail-b" />
-          {fixture('door', 'fixture-door door-west')}
-          {fixture('door', 'fixture-door door-east')}
-        </>
-      )
-      break
-    case 'life_support':
-      fixtures = (
-        <>
-          {fixture('tank', 'fixture-tank tank-a')}
-          {fixture('tank', 'fixture-tank tank-b')}
-          {fixture('oxygen', 'fixture-oxygen')}
-          {fixture('console', 'fixture-console')}
-          <span className="pipe-run pipe-a" />
-          <span className="pipe-run pipe-b" />
-        </>
-      )
-      break
-    case 'storage':
-      fixtures = (
-        <>
-          {['a', 'b', 'c', 'd', 'e'].map((suffix) => fixture('crate', `fixture-crate crate-${suffix}`, suffix))}
-          {fixture('engineeringKit', 'fixture-loose-kit')}
-        </>
-      )
-      break
-    case 'laboratory':
-      fixtures = (
-        <>
-          {fixture('microscope', 'fixture-microscope')}
-          {fixture('console', 'fixture-console console-a')}
-          {fixture('console', 'fixture-console console-b')}
-          <span className="lab-bench bench-a" />
-          <span className="lab-bench bench-b" />
-          <span className="sample-rack" />
-        </>
-      )
-      break
-    case 'airlock':
-      fixtures = (
-        <>
-          {fixture('door', 'fixture-door door-north')}
-          {fixture('door', 'fixture-door door-south')}
-          {fixture('evaSuit', 'fixture-suit suit-a')}
-          {fixture('evaSuit', 'fixture-suit suit-b')}
-          <span className="airlock-threshold" />
-        </>
-      )
-      break
-    case 'solar_battery_skid':
-      fixtures = (
-        <>
-          {['a', 'b', 'c', 'd'].map((suffix) => fixture('solar', `fixture-panel panel-${suffix}`, suffix))}
-          {fixture('battery', 'fixture-battery battery-a')}
-          {fixture('battery', 'fixture-battery battery-b')}
-        </>
-      )
-      break
-    case 'landing_pad':
-      fixtures = (
-        <>
-          <span className="pad-ring ring-outer" />
-          <span className="pad-ring ring-inner" />
-          <span className="pad-crosshair crosshair-a" />
-          <span className="pad-crosshair crosshair-b" />
-          {fixture('landingPad', 'fixture-pad-mark')}
-        </>
-      )
-      break
-  }
-
-  return (
-    <span aria-hidden="true" className={`module-interior interior-${module.type}`}>
-      <span className="module-floor-grid" />
-      {fixtures}
-    </span>
-  )
-}
 
 function MapTerrain({ width, height, dustActive }: { width: number; height: number; dustActive: boolean }) {
   const viewWidth = width * 100
@@ -343,6 +245,8 @@ export function MoonbaseMap({
   onSelectWorkOrder,
   buildSites = [],
   buildingLabel = null,
+  buildingPreview = null,
+  previewSiteId = null,
   onChooseBuildSite,
 }: MoonbaseMapProps) {
   const activePlan = plan.status !== 'completed'
@@ -364,12 +268,12 @@ export function MoonbaseMap({
 
   const markerPosition = (location: LocationId, index: number, lane = 0): CSSProperties => {
     const module = moduleAt(location)
-    const columnsInside = Math.max(1, module.position.width - 1)
-    const rowsInside = Math.max(1, module.position.height - 1)
+    const walkableCells = getModuleWalkableCells(module)
     const slot = Math.max(0, index + lane * 2)
+    const cell = walkableCells[slot % walkableCells.length]
     return {
-      gridColumn: `${module.position.x + 1 + (slot % columnsInside)} / span 1`,
-      gridRow: `${module.position.y + 1 + (Math.floor(slot / columnsInside) % rowsInside)} / span 1`,
+      gridColumn: `${cell.x + 1} / span 1`,
+      gridRow: `${cell.y + 1} / span 1`,
       pointerEvents: 'auto',
     }
   }
@@ -436,12 +340,34 @@ export function MoonbaseMap({
 
   const routes = [...routesById.values()].filter((route) => route.sourceLocation !== route.destinationLocation)
   const vacantBuildSites = buildSites.filter((site) => !site.moduleId)
-  const accessibleSummary = `${modules.length} base areas, ${crew.length} crew, ${equipment.length} equipment items, ${workOrders.length} work orders, and ${vacantBuildSites.length} vacant build sites.${dustActive ? ' Dust front active.' : ''}`
+  const compatibleBuildSites = buildingLabel
+    ? vacantBuildSites.filter((site) => site.compatible !== false)
+    : []
+  const inspectableModules = modules.filter((module) => module.type !== 'corridor')
+  const previewSite = vacantBuildSites.find((site) => site.id === previewSiteId && site.compatible !== false)
+  const ghostModule: ModuleState | null = previewSite && buildingPreview ? {
+    id: 'module-build-preview',
+    name: buildingPreview.name,
+    type: buildingPreview.type,
+    location: buildingPreview.location,
+    position: previewSite.position,
+    atmosphere: buildingPreview.atmosphere,
+    condition: 100,
+    powerPriority: 1,
+    breached: false,
+  } : null
+  const placementSummary = buildingLabel
+    ? ` ${compatibleBuildSites.length} compatible build sockets.`
+    : ''
+  const accessibleSummary = `${inspectableModules.length} base areas, ${crew.length} crew, ${equipment.length} equipment items, and ${workOrders.length} work orders.${placementSummary}${dustActive ? ' Dust front active.' : ''}`
 
   return (
     <div
       aria-label={`Top-down interactive map of Shackleton Base. ${accessibleSummary}`}
+      aria-roledescription="colony tile map"
       className={`moonbase-map ${dustActive ? 'dust-active' : ''}`}
+      data-grid-height={height}
+      data-grid-width={width}
       role="group"
       style={{
         gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))`,
@@ -452,31 +378,99 @@ export function MoonbaseMap({
       <div className="map-grid" aria-hidden="true" />
       <MapRoutes height={height} modules={modules} routes={routes} width={width} />
 
-      {vacantBuildSites.map((site) => (
-        <button
-          aria-label={buildingLabel
-            ? `Build ${buildingLabel} at ${site.label}`
-            : `Empty build site: ${site.label}. Choose a blueprint first.`}
-          className={`build-site ${buildingLabel ? 'placement-ready' : ''}`}
-          disabled={!buildingLabel}
-          key={site.id}
-          onClick={() => onChooseBuildSite?.(site.id)}
-          style={{
-            gridColumn: `${site.position.x + 1} / span ${site.position.width}`,
-            gridRow: `${site.position.y + 1} / span ${site.position.height}`,
-          }}
-          type="button"
-        >
-          <span aria-hidden="true" className="build-site-corners"><i /><i /><i /><i /></span>
-          <span className="build-site-label">
-            <GameIcon name="plus" size={16} />
-            <strong>{buildingLabel ? `Build here` : site.label}</strong>
-            <small>{buildingLabel ?? 'Open terrain'}</small>
-          </span>
-        </button>
+      {vacantBuildSites.flatMap((site) => {
+        const compatible = Boolean(buildingLabel && site.compatible !== false)
+        const previewed = compatible && previewSiteId === site.id
+        return Array.from({ length: site.position.width * site.position.height }, (_, index) => {
+          const localX = index % site.position.width
+          const localY = Math.floor(index / site.position.width)
+          const gridX = site.position.x + localX
+          const gridY = site.position.y + localY
+          const perimeter =
+            localX === 0 ||
+            localY === 0 ||
+            localX === site.position.width - 1 ||
+            localY === site.position.height - 1
+          return (
+            <span
+              aria-hidden="true"
+              className={[
+                'build-site-tile',
+                perimeter ? 'build-site-edge' : 'build-site-interior',
+                compatible ? 'placement-ready' : '',
+                previewed ? 'previewed' : '',
+              ].filter(Boolean).join(' ')}
+              data-build-site-id={site.id}
+              data-grid-x={gridX}
+              data-grid-y={gridY}
+              key={`${site.id}-tile-${localX}-${localY}`}
+              style={{
+                gridColumn: `${gridX + 1}`,
+                gridRow: `${gridY + 1}`,
+                zIndex: 1,
+              }}
+            />
+          )
+        })
+      })}
+
+      {compatibleBuildSites.map((site) => {
+        const previewed = previewSiteId === site.id
+        return (
+          <button
+            aria-label={previewed
+              ? `${buildingLabel} preview at ${site.label}. Selected build socket.`
+              : `Preview ${buildingLabel} at ${site.label}`}
+            className={[
+              'build-site',
+              'build-site-select-target',
+              'placement-ready',
+              previewed ? 'previewed' : '',
+            ].filter(Boolean).join(' ')}
+            data-grid-height={site.position.height}
+            data-grid-width={site.position.width}
+            data-grid-x={site.position.x}
+            data-grid-y={site.position.y}
+            key={site.id}
+            onClick={() => onChooseBuildSite?.(site.id)}
+            style={{
+              gridColumn: `${site.position.x + 1} / span ${site.position.width}`,
+              gridRow: `${site.position.y + 1} / span ${site.position.height}`,
+            }}
+            type="button"
+          >
+            <span className="build-site-label">
+              <GameIcon name={previewed ? 'check' : 'plus'} size={16} />
+              <strong>{previewed ? 'Selected' : site.label}</strong>
+              <small>{previewed ? 'Confirm below' : buildingLabel}</small>
+            </span>
+          </button>
+        )
+      })}
+
+      {ghostModule && (
+        <ModuleTilemap
+          ghost
+          module={ghostModule}
+          modules={modules}
+          planned={false}
+          selected={false}
+        />
+      )}
+
+      <ModuleConnectors modules={modules} />
+
+      {modules.map((module) => (
+        <ModuleTilemap
+          key={`${module.id}-tilemap`}
+          module={module}
+          modules={modules}
+          planned={plannedLocations.has(module.location)}
+          selected={selectedModuleId === module.id}
+        />
       ))}
 
-      {modules.map((module) => {
+      {inspectableModules.map((module) => {
         const exterior = isExterior(module)
         const planned = plannedLocations.has(module.location)
         const moduleCrew = crew.filter((member) => member.location === module.location)
@@ -492,6 +486,7 @@ export function MoonbaseMap({
             aria-pressed={selected}
             className={[
               'base-module',
+              'module-select-target',
               `module-${module.type}`,
               exterior ? 'exterior' : `atmosphere-${module.atmosphere}`,
               module.breached ? 'breached' : '',
@@ -501,22 +496,15 @@ export function MoonbaseMap({
             key={module.id}
             onClick={() => onInspectModule(module.id)}
             style={{
+              background: 'transparent',
+              border: 0,
+              boxShadow: 'none',
               gridColumn: `${module.position.x + 1} / span ${module.position.width}`,
               gridRow: `${module.position.y + 1} / span ${module.position.height}`,
+              zIndex: 4,
             }}
             type="button"
           >
-            <span aria-hidden="true" className="module-hull-detail">
-              <span className="hull-edge hull-edge-north" />
-              <span className="hull-edge hull-edge-east" />
-              <span className="hull-edge hull-edge-south" />
-              <span className="hull-edge hull-edge-west" />
-              <span className="module-door door-left" />
-              <span className="module-door door-right" />
-            </span>
-            <span aria-hidden="true" className={`atmosphere-wash atmosphere-wash-${module.atmosphere}`} />
-            <ModuleInterior module={module} />
-
             <span className="module-caption">
               <span className="module-code"><GameIcon name={presentation.icon} size={11} />{presentation.code}</span>
               <strong>{module.name}</strong>

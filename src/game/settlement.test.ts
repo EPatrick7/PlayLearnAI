@@ -19,11 +19,11 @@ import type { MoonbaseState, PlanActionInput } from './types'
 
 const establishBase = () => {
   let state = createInitialState()
-  state = constructModule(state, 'solar_battery_skid', 'site-east-ridge', 'agent')[0]
-  state = constructModule(state, 'life_support', 'site-south-shelf', 'agent')[0]
-  state = constructModule(state, 'airlock', 'site-north-shelf', 'agent')[0]
-  state = constructModule(state, 'laboratory', 'site-north-ridge', 'agent')[0]
-  state = constructModule(state, 'storage', 'site-east-apron', 'agent')[0]
+  state = constructModule(state, 'solar_battery_skid', 'site-power-east', 'agent')[0]
+  state = constructModule(state, 'life_support', 'site-bay-northwest', 'agent')[0]
+  state = constructModule(state, 'airlock', 'site-bay-southeast', 'agent')[0]
+  state = constructModule(state, 'laboratory', 'site-bay-northeast', 'agent')[0]
+  state = constructModule(state, 'storage', 'site-bay-southwest', 'agent')[0]
   return state
 }
 
@@ -51,14 +51,23 @@ const stageIncident = (source: MoonbaseState) => {
 }
 
 describe('tiny-start settlement construction', () => {
-  it('starts with two revealed structures, five vacant sites, and the solar blueprint', () => {
+  it('starts with a typed seven-socket layout and only the solar blueprint', () => {
     const state = createInitialState()
 
     expect(state.settlement).toMatchObject({
       phase: 'landing',
-      builtModuleIds: ['module-habitat', 'module-landing-pad'],
+      builtModuleIds: ['module-habitat', 'module-corridor', 'module-landing-pad'],
     })
-    expect(state.settlement.buildSites).toHaveLength(5)
+    expect(state.map).toEqual({ width: 24, height: 18 })
+    expect(state.settlement.buildSites.map((site) => [site.id, site.kind])).toEqual([
+      ['site-power-west', 'exterior_power'],
+      ['site-power-east', 'exterior_power'],
+      ['site-power-south', 'exterior_power'],
+      ['site-bay-northwest', 'pressurized_bay'],
+      ['site-bay-northeast', 'pressurized_bay'],
+      ['site-bay-southwest', 'pressurized_bay'],
+      ['site-bay-southeast', 'pressurized_bay'],
+    ])
     expect(state.settlement.buildSites.every((site) => site.occupiedBy === null)).toBe(true)
     expect(state.reserves.constructionStock).toBe(14)
     expect(buildBlueprints.reduce((total, blueprint) => total + blueprint.cost, 0)).toBe(14)
@@ -73,13 +82,13 @@ describe('tiny-start settlement construction', () => {
     const [powered, solarResult] = constructModule(
       initial,
       'solar_battery_skid',
-      'site-east-ridge',
+      'site-power-west',
       'manual',
     )
 
     expect(solarResult).toMatchObject({ ok: true, code: 'built', phase: 'power_online' })
     expect(powered.modules.find((module) => module.id === 'module-solar-skid')?.position).toEqual({
-      x: 14,
+      x: 2,
       y: 1,
       width: 5,
       height: 4,
@@ -92,13 +101,13 @@ describe('tiny-start settlement construction', () => {
       'life_support',
     ])
 
-    const [habitable] = constructModule(powered, 'life_support', 'site-south-shelf')
+    const [habitable] = constructModule(powered, 'life_support', 'site-bay-northwest')
     expect(habitable.settlement.phase).toBe('habitable')
     expect(availableBlueprintsFor(habitable).map((blueprint) => blueprint.id)).toEqual([
       'airlock',
     ])
 
-    const [expanding] = constructModule(habitable, 'airlock', 'site-north-shelf')
+    const [expanding] = constructModule(habitable, 'airlock', 'site-bay-southeast')
     expect(expanding.settlement.phase).toBe('expanding')
     expect(availableBlueprintsFor(expanding).map((blueprint) => blueprint.id)).toEqual([
       'storage',
@@ -112,14 +121,29 @@ describe('tiny-start settlement construction', () => {
     expect(availableBlueprintsFor(ready)).toEqual([])
   })
 
-  it('rejects locked blueprints and occupied sites without mutating the source', () => {
+  it('rejects incompatible, locked, and occupied sockets without mutating the source', () => {
     const initial = createInitialState()
-    const [unchanged, locked] = constructModule(initial, 'life_support', 'site-north-ridge')
+
+    const initialSnapshot = structuredClone(initial)
+    const [incompatibleState, incompatible] = constructModule(
+      initial,
+      'solar_battery_skid',
+      'site-bay-northwest',
+    )
+    expect(incompatible).toMatchObject({
+      ok: false,
+      code: 'incompatible_site',
+      siteId: 'site-bay-northwest',
+    })
+    expect(incompatibleState).toBe(initial)
+    expect(incompatibleState).toEqual(initialSnapshot)
+
+    const [unchanged, locked] = constructModule(initial, 'life_support', 'site-bay-northwest')
     expect(locked).toMatchObject({ ok: false, code: 'blueprint_unavailable' })
     expect(unchanged).toBe(initial)
 
-    const [powered] = constructModule(initial, 'solar_battery_skid', 'site-north-ridge')
-    const [stillPowered, occupied] = constructModule(powered, 'life_support', 'site-north-ridge')
+    const [powered] = constructModule(initial, 'solar_battery_skid', 'site-power-east')
+    const [stillPowered, occupied] = constructModule(powered, 'life_support', 'site-power-east')
     expect(occupied).toMatchObject({ ok: false, code: 'site_occupied' })
     expect(stillPowered).toBe(powered)
     expect(stillPowered.reserves.constructionStock).toBe(11)
@@ -160,18 +184,18 @@ describe('tiny-start settlement construction', () => {
   it('persists site occupancy and safely replaces a legacy v1 save', async () => {
     localStorage.clear()
     useColonyStore.getState().resetColony()
-    const built = useColonyStore.getState().constructModule('solar_battery_skid', 'site-east-ridge')
+    const built = useColonyStore.getState().constructModule('solar_battery_skid', 'site-power-east')
     expect(built.ok).toBe(true)
 
     const saved = JSON.parse(localStorage.getItem('playlearnai-moonbase-poc-v1') ?? '{}') as {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(2)
+    expect(saved.version).toBe(3)
     expect(saved.state?.settlement).toMatchObject({
       phase: 'power_online',
       buildSites: expect.arrayContaining([
-        expect.objectContaining({ id: 'site-east-ridge', occupiedBy: 'solar_battery_skid' }),
+        expect.objectContaining({ id: 'site-power-east', occupiedBy: 'solar_battery_skid' }),
       ]),
     })
 
@@ -181,7 +205,7 @@ describe('tiny-start settlement construction', () => {
     const migrated = await migrate!(legacy, 1) as MoonbaseState
     expect(migrated.settlement).toMatchObject({
       phase: 'landing',
-      builtModuleIds: ['module-habitat', 'module-landing-pad'],
+      builtModuleIds: ['module-habitat', 'module-corridor', 'module-landing-pad'],
     })
     expect(migrated.settlement.buildSites.every((site) => site.occupiedBy === null)).toBe(true)
   })

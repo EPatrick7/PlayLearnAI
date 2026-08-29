@@ -3402,6 +3402,35 @@ button:disabled {
   z-index: 1;
   inset: 0;
   overflow: hidden;
+  background:
+    linear-gradient(rgba(35, 38, 36, 0.16), rgba(13, 16, 15, 0.28)),
+    url("./assets/lunar-regolith.webp") center / 640px 640px;
+}
+
+.settlement-map-scroll > .moonbase-map {
+  --map-cell-size: min(calc(100vw / 24), calc((100dvh - 62px) / 18));
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--map-cell-size) * 24);
+  height: calc(var(--map-cell-size) * 18);
+  transform: translate(-50%, -50%);
+}
+
+.world-stage:not(.settlement-stage) > .moonbase-map {
+  --map-cell-size: min(calc(100vw / 24), calc((100dvh - 62px) / 18));
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--map-cell-size) * 24);
+  height: calc(var(--map-cell-size) * 18);
+  transform: translate(-50%, -50%);
+}
+
+.world-stage:not(.settlement-stage) {
+  background:
+    linear-gradient(rgba(35, 38, 36, 0.16), rgba(13, 16, 15, 0.28)),
+    url("./assets/lunar-regolith.webp") center / 640px 640px;
 }
 
 .settlement-map-scroll:focus-visible {
@@ -3543,6 +3572,15 @@ button:disabled {
 
 .cancel-placement:hover { color: var(--settlement-cream); border-color: rgba(236, 225, 199, 0.38); }
 
+.placement-actions {
+  display: grid;
+  gap: 7px;
+}
+
+.placement-actions .cancel-placement {
+  width: 100%;
+}
+
 .blueprint-tray {
   position: absolute;
   z-index: 35;
@@ -3676,23 +3714,26 @@ button:disabled {
   .settlement-vitals > span strong { font-size: 8px; }
   .settlement-vitals > span .game-icon { width: 13px; height: 13px; }
   .settlement-reset { width: 34px; height: 34px; }
-  .settlement-stage { height: calc(100dvh - 58px); }
+  .settlement-stage { height: calc(100vh - 58px); }
 
   .settlement-map-scroll {
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
+    overflow: auto;
+    overscroll-behavior: contain;
     scrollbar-width: none;
-    touch-action: pan-x;
+    touch-action: pan-x pan-y;
   }
 
   .settlement-map-scroll::-webkit-scrollbar { display: none; }
 
   .settlement-map-scroll > .moonbase-map {
+    --map-cell-size: 40px;
     position: relative;
     inset: auto;
-    width: max(860px, calc((100dvh - 58px) * 1.3333));
-    height: 100%;
+    left: auto;
+    top: auto;
+    width: calc(var(--map-cell-size) * 24);
+    height: calc(var(--map-cell-size) * 18);
+    transform: none;
   }
 
   .settlement-guide {
@@ -3736,7 +3777,9 @@ button:disabled {
   }
 
   .settlement-guide.placing {
-    display: none;
+    top: auto;
+    bottom: 8px;
+    display: block;
   }
 }
 

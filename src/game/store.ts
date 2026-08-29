@@ -168,10 +168,10 @@ export const useColonyStore = create<MoonbaseStore>()(
     }),
     {
       name: 'playlearnai-moonbase-poc-v1',
-      version: 2,
+      version: 3,
       partialize: domainSnapshot,
       migrate: (persistedState, version) => {
-        if (version < 2) return createInitialState()
+        if (version < 3) return createInitialState()
         const state = persistedState as Partial<MoonbaseState>
         return state.settlement ? state as MoonbaseState : createInitialState()
       },

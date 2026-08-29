@@ -17,6 +17,7 @@ export const buildBlueprints: readonly BuildBlueprint[] = [
     cost: 3,
     width: 5,
     height: 4,
+    siteKind: 'exterior_power',
     atmosphere: 'no',
     powerPriority: 1,
   },
@@ -27,8 +28,9 @@ export const buildBlueprints: readonly BuildBlueprint[] = [
     location: 'life-support',
     moduleType: 'life_support',
     cost: 4,
-    width: 4,
-    height: 4,
+    width: 5,
+    height: 6,
+    siteKind: 'pressurized_bay',
     atmosphere: 'yes',
     powerPriority: 1,
   },
@@ -39,8 +41,9 @@ export const buildBlueprints: readonly BuildBlueprint[] = [
     location: 'airlock',
     moduleType: 'airlock',
     cost: 2,
-    width: 3,
-    height: 3,
+    width: 5,
+    height: 6,
+    siteKind: 'pressurized_bay',
     atmosphere: 'yes',
     powerPriority: 1,
   },
@@ -51,8 +54,9 @@ export const buildBlueprints: readonly BuildBlueprint[] = [
     location: 'storage',
     moduleType: 'storage',
     cost: 2,
-    width: 4,
-    height: 3,
+    width: 5,
+    height: 6,
+    siteKind: 'pressurized_bay',
     atmosphere: 'yes',
     powerPriority: 3,
   },
@@ -64,7 +68,8 @@ export const buildBlueprints: readonly BuildBlueprint[] = [
     moduleType: 'laboratory',
     cost: 3,
     width: 5,
-    height: 4,
+    height: 6,
+    siteKind: 'pressurized_bay',
     atmosphere: 'no',
     powerPriority: 2,
   },
@@ -194,10 +199,22 @@ export const constructModule = (
     return [source, buildResult(source, 'insufficient_stock', false, { error: `${blueprint.name} needs ${blueprint.cost} construction stock.` })]
   }
   if (
+    site.kind !== blueprint.siteKind ||
+    (blueprint.siteKind === 'pressurized_bay' && site.connectionSide === null)
+  ) {
+    const expected = blueprint.siteKind === 'exterior_power' ? 'an exterior power pad' : 'a corridor-connected room bay'
+    return [source, buildResult(source, 'incompatible_site', false, {
+      siteId,
+      error: `${blueprint.name} needs ${expected}; ${site.label} is not compatible.`,
+    })]
+  }
+  if (
     site.x < 0 ||
     site.y < 0 ||
-    site.x + blueprint.width > source.map.width ||
-    site.y + blueprint.height > source.map.height
+    site.x + site.width > source.map.width ||
+    site.y + site.height > source.map.height ||
+    blueprint.width > site.width ||
+    blueprint.height > site.height
   ) {
     return [source, buildResult(source, 'unknown_site', false, { siteId, error: `${site.label} cannot fit ${blueprint.name}.` })]
   }
@@ -212,8 +229,8 @@ export const constructModule = (
   module.position = {
     x: nextSite.x,
     y: nextSite.y,
-    width: blueprint.width,
-    height: blueprint.height,
+    width: nextSite.width,
+    height: nextSite.height,
   }
   nextSite.occupiedBy = blueprint.id
   state.settlement.builtModuleIds = [...new Set([...state.settlement.builtModuleIds, module.id])]
