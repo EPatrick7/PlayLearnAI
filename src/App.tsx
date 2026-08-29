@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { GameIcon, type GameIconName } from './components/GameIcon'
 import { MoonbaseMap } from './components/MoonbaseMap'
+import { SettlementBuilder } from './components/SettlementBuilder'
 import { useColonyStore } from './game/store'
 import type {
   Equipment,
@@ -114,6 +115,10 @@ function App() {
     window.addEventListener('keydown', closeDrawer)
     return () => window.removeEventListener('keydown', closeDrawer)
   }, [])
+
+  if (colony.settlement.phase !== 'operations') {
+    return <SettlementBuilder />
+  }
 
   const openTab = (tab: DockTab) => {
     if (drawerOpen && activeTab === tab) {

@@ -2,6 +2,10 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { createInitialState } from './seed'
 import {
+  beginOperations as beginOperationsInState,
+  constructModule as constructModuleInState,
+} from './settlement'
+import {
   advanceSimulation,
   clearOperationsPlan,
   commitOperationsPlan,
@@ -16,6 +20,8 @@ import {
 import type {
   AdvanceInput,
   AdvanceResult,
+  BuildResult,
+  BuildableModuleId,
   CommitResult,
   LearningPhase,
   MoonbaseState,
@@ -31,6 +37,12 @@ type InteractiveActor = 'manual' | 'agent'
 export interface MoonbaseActions {
   resetColony: () => void
   resetMoonbase: () => void
+  constructModule: (
+    blueprintId: BuildableModuleId,
+    siteId: string,
+    actor?: InteractiveActor,
+  ) => BuildResult
+  beginOperations: (actor?: InteractiveActor) => BuildResult
   setPlanBrief: (input: PlanBriefInput, actor?: InteractiveActor) => PlanEditResult
   stagePlanAction: (input: PlanActionInput, actor?: InteractiveActor) => PlanEditResult
   removePlanAction: (actionId: string, actor?: InteractiveActor) => PlanEditResult
@@ -64,6 +76,7 @@ const domainSnapshot = (state: MoonbaseStore): MoonbaseState => ({
   worldRevision: state.worldRevision,
   scenarioStatus: state.scenarioStatus,
   map: state.map,
+  settlement: state.settlement,
   objective: state.objective,
   reserves: state.reserves,
   power: state.power,
@@ -88,6 +101,16 @@ export const useColonyStore = create<MoonbaseStore>()(
       ...createInitialState(),
       resetColony: () => set(createInitialState()),
       resetMoonbase: () => set(createInitialState()),
+      constructModule: (blueprintId, siteId, actor = 'manual') => {
+        const [nextState, result] = constructModuleInState(get(), blueprintId, siteId, actor)
+        if (result.ok) set(nextState)
+        return result
+      },
+      beginOperations: (actor = 'manual') => {
+        const [nextState, result] = beginOperationsInState(get(), actor)
+        if (result.ok) set(nextState)
+        return result
+      },
       setPlanBrief: (input, actor = 'manual') => {
         const [nextState, result] = setPlanBriefInState(get(), input, actor)
         if (result.ok) set(nextState)
@@ -145,8 +168,13 @@ export const useColonyStore = create<MoonbaseStore>()(
     }),
     {
       name: 'playlearnai-moonbase-poc-v1',
-      version: 1,
+      version: 2,
       partialize: domainSnapshot,
+      migrate: (persistedState, version) => {
+        if (version < 2) return createInitialState()
+        const state = persistedState as Partial<MoonbaseState>
+        return state.settlement ? state as MoonbaseState : createInitialState()
+      },
     },
   ),
 )

@@ -1,5 +1,6 @@
 import type {
   ActivityEntry,
+  BuildSiteState,
   CrewMember,
   Equipment,
   ModuleState,
@@ -8,6 +9,14 @@ import type {
 } from './types'
 
 export const MOONBASE_SEED = 240826
+
+export const INITIAL_BUILD_SITES: BuildSiteState[] = [
+  { id: 'site-north-ridge', label: 'North Ridge', x: 2, y: 0, occupiedBy: null },
+  { id: 'site-north-shelf', label: 'North Shelf', x: 8, y: 1, occupiedBy: null },
+  { id: 'site-east-ridge', label: 'East Ridge', x: 14, y: 1, occupiedBy: null },
+  { id: 'site-east-apron', label: 'East Apron', x: 13, y: 5, occupiedBy: null },
+  { id: 'site-south-shelf', label: 'South Shelf', x: 8, y: 10, occupiedBy: null },
+]
 
 const modules: ModuleState[] = [
   {
@@ -335,7 +344,7 @@ const initialEvents = (): ActivityEntry[] => [
   {
     id: 'event-0003',
     elapsedHours: 0,
-    missionDay: 41,
+    missionDay: 1,
     hour: 6,
     worldRevision: 1,
     planRevision: 1,
@@ -347,7 +356,7 @@ const initialEvents = (): ActivityEntry[] => [
   {
     id: 'event-0002',
     elapsedHours: 0,
-    missionDay: 41,
+    missionDay: 1,
     hour: 6,
     worldRevision: 1,
     planRevision: 1,
@@ -359,13 +368,13 @@ const initialEvents = (): ActivityEntry[] => [
   {
     id: 'event-0001',
     elapsedHours: 0,
-    missionDay: 41,
+    missionDay: 1,
     hour: 6,
     worldRevision: 1,
     planRevision: 1,
     phase: 'system',
     actor: 'system',
-    message: 'Morning operations handover complete. Six crew await a bounded response plan.',
+    message: 'First-shift handover complete. Six crew await a bounded response plan.',
     targetIds: [],
   },
 ]
@@ -373,12 +382,17 @@ const initialEvents = (): ActivityEntry[] => [
 export const createInitialState = (): MoonbaseState => ({
   baseName: 'Shackleton Relay',
   seed: MOONBASE_SEED,
-  missionDay: 41,
+  missionDay: 1,
   hour: 6,
   elapsedHours: 0,
   worldRevision: 1,
   scenarioStatus: 'active',
   map: { width: 24, height: 18 },
+  settlement: {
+    phase: 'landing',
+    buildSites: structuredClone(INITIAL_BUILD_SITES),
+    builtModuleIds: ['module-habitat', 'module-landing-pad'],
+  },
   objective: {
     id: 'restore_lab_and_research_sintering',
     summary: 'Restore Kepler Laboratory and complete Regolith Sintering research without crossing the declared oxygen floor.',

@@ -27,6 +27,14 @@ export interface MoonbaseMapProps {
   onSelectCrew?: (crewId: string) => void
   onSelectEquipment?: (equipmentId: string) => void
   onSelectWorkOrder?: (workOrderId: WorkOrderId) => void
+  buildSites?: Array<{
+    id: string
+    label: string
+    moduleId: string | null
+    position: { x: number; y: number; width: number; height: number }
+  }>
+  buildingLabel?: string | null
+  onChooseBuildSite?: (siteId: string) => void
 }
 
 interface ModulePresentation {
@@ -224,7 +232,7 @@ function MapTerrain({ width, height, dustActive }: { width: number; height: numb
         </linearGradient>
       </defs>
 
-      <rect fill="url(#lunar-ground)" height={viewHeight} width={viewWidth} />
+      <rect fill="url(#lunar-ground)" fillOpacity=".42" height={viewHeight} width={viewWidth} />
       <path className="terrain-ridge ridge-north" d={`M0 180 C310 80 480 250 760 135 S1300 110 1580 210 S2050 155 ${viewWidth} 70`} />
       <path className="terrain-ridge ridge-south" d={`M0 ${viewHeight - 180} C360 ${viewHeight - 360} 590 ${viewHeight - 90} 920 ${viewHeight - 230} S1650 ${viewHeight - 130} ${viewWidth} ${viewHeight - 280}`} />
       <ellipse cx={viewWidth * 0.11} cy={viewHeight * 0.16} fill="url(#crater-well)" rx="145" ry="92" />
@@ -333,6 +341,9 @@ export function MoonbaseMap({
   onSelectCrew,
   onSelectEquipment,
   onSelectWorkOrder,
+  buildSites = [],
+  buildingLabel = null,
+  onChooseBuildSite,
 }: MoonbaseMapProps) {
   const activePlan = plan.status !== 'completed'
   const plannedWorkIds = new Set<WorkOrderId>(
@@ -424,7 +435,8 @@ export function MoonbaseMap({
   })
 
   const routes = [...routesById.values()].filter((route) => route.sourceLocation !== route.destinationLocation)
-  const accessibleSummary = `${modules.length} base areas, ${crew.length} crew, ${equipment.length} equipment items, and ${workOrders.length} work orders.${dustActive ? ' Dust front active.' : ''}`
+  const vacantBuildSites = buildSites.filter((site) => !site.moduleId)
+  const accessibleSummary = `${modules.length} base areas, ${crew.length} crew, ${equipment.length} equipment items, ${workOrders.length} work orders, and ${vacantBuildSites.length} vacant build sites.${dustActive ? ' Dust front active.' : ''}`
 
   return (
     <div
@@ -439,6 +451,30 @@ export function MoonbaseMap({
       <MapTerrain dustActive={dustActive} height={height} width={width} />
       <div className="map-grid" aria-hidden="true" />
       <MapRoutes height={height} modules={modules} routes={routes} width={width} />
+
+      {vacantBuildSites.map((site) => (
+        <button
+          aria-label={buildingLabel
+            ? `Build ${buildingLabel} at ${site.label}`
+            : `Empty build site: ${site.label}. Choose a blueprint first.`}
+          className={`build-site ${buildingLabel ? 'placement-ready' : ''}`}
+          disabled={!buildingLabel}
+          key={site.id}
+          onClick={() => onChooseBuildSite?.(site.id)}
+          style={{
+            gridColumn: `${site.position.x + 1} / span ${site.position.width}`,
+            gridRow: `${site.position.y + 1} / span ${site.position.height}`,
+          }}
+          type="button"
+        >
+          <span aria-hidden="true" className="build-site-corners"><i /><i /><i /><i /></span>
+          <span className="build-site-label">
+            <GameIcon name="plus" size={16} />
+            <strong>{buildingLabel ? `Build here` : site.label}</strong>
+            <small>{buildingLabel ?? 'Open terrain'}</small>
+          </span>
+        </button>
+      ))}
 
       {modules.map((module) => {
         const exterior = isExterior(module)

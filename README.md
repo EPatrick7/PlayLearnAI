@@ -2,9 +2,20 @@
 
 A browser-based lunar operations game about learning to supervise AI agents through shared, live tools.
 
-This proof of concept puts the player in charge of a small Moon base during a pressure breach. The page is the shared source of truth: a person can operate the response manually, while a compatible browser agent can inspect and change the same simulation through WebMCP. The point is not to ask an AI for a one-shot answer. It is to practice grounding a decision in evidence, making a bounded plan, supervising execution, and verifying the result.
+This proof of concept starts the player with one lunar habitat, two settlers, and an empty field of construction plots. The player chooses the layout of a small Moon base before its first pressure-breach shift begins. The page is the shared source of truth: a person can operate the response manually, while a compatible browser agent can inspect and change the same simulation through WebMCP. The point is not to ask an AI for a one-shot answer. It is to practice grounding a decision in evidence, making a bounded plan, supervising execution, and verifying the result.
 
 PlayLearnAI is being built for the [OpenAI WebMCP Challenge](https://openai.com/webmcp-challenge/).
+
+## The first-landing loop
+
+The opening deliberately reveals one concept at a time:
+
+1. Place the solar and battery skid to bring the settlement off reserve power.
+2. Add life support and an airlock for a safe, habitable outpost.
+3. Choose where storage and the laboratory belong. Five persistent build sites make the resulting layout the player's own.
+4. Begin the first shift to reveal the full crew, resources, work system, and laboratory incident.
+
+The top-down map uses an original hand-painted regolith texture and code-native module art. On phones, it becomes a horizontally swipeable playfield so buildings retain useful proportions.
 
 ## The pressure-breach loop
 
@@ -21,12 +32,13 @@ Resetting the scenario makes it easy to try a different crew assignment or respo
 
 WebMCP is optional for the manual path. After starting the app:
 
-1. Start on the colony map. Select a furnished module, crew pawn, gear token, or numbered work site to inspect it in place.
-2. Use the bottom **Work**, **Crew**, **Gear**, **Plan**, and **Log** dock to open only the command surface you need. On a small screen these open as scrollable bottom sheets, so the map remains the primary view.
-3. In **Work**, choose an order and stage crew and required gear. The map draws the proposed routes. You can also choose **Stage a response** to load the recommended response for review.
-4. In **Plan**, set the oxygen floor, protected crew, horizon, and stop condition. Review the full action queue and resource forecast, resolve any inline blocker, then commit.
-5. Use the persistent time controls to advance one hour or run to the bounded stop. Watch pawns and equipment relocate, work sites fill, the laboratory move through **No → Low → Yes**, and the dust front change the solar field.
-6. Choose **Verify** and compare the outcome against the objective, reserve floor, power state, and declared stop condition. Reset the deterministic seed to try another approach.
+1. Follow the single first-landing prompt, choose a glowing site, and place each essential module. Only construction stock, newly relevant power/air status, two settlers, and the current building choice are shown.
+2. Choose **Begin first shift** after all five modules are placed. The operations HUD, full crew, incident, work orders, and command dock appear at that point.
+3. Select a furnished module, crew pawn, gear token, or numbered work site to inspect it in place.
+4. In **Work**, choose an order and stage crew and required gear. The map draws the proposed routes. You can also choose **Stage a response** to load the recommended response for review.
+5. In **Plan**, set the oxygen floor, protected crew, horizon, and stop condition. Review the full action queue and resource forecast, resolve any inline blocker, then commit.
+6. Use the persistent time controls to advance one hour or run to the bounded stop. Watch pawns and equipment relocate, work sites fill, the laboratory move through **No → Low → Yes**, and the dust front change the solar field.
+7. Choose **Verify** and compare the outcome against the objective, reserve floor, power state, and declared stop condition. Reset the deterministic seed to try another approach.
 
 The simulation remains playable in a normal browser when WebMCP is unavailable.
 
@@ -56,7 +68,8 @@ Manual controls and agent tools operate on the same browser-local game state and
 
 The current POC is intentionally narrow:
 
-- one fixed lunar-base scenario with six named crew and an active laboratory pressure breach;
+- a persisted first-landing builder with two visible settlers, five player-chosen construction sites, and progressive system disclosure;
+- one fixed lunar-base operations scenario with six named crew and an active laboratory pressure breach;
 - engineering, science, medicine, and operations skills plus crew health, fatigue, morale, location, and work state;
 - physical EVA suits, engineering and medical kits, and a rover with location, condition, reservation, transit, and deployment state;
 - oxygen, food, water, construction stock, solar generation, demand, battery charge, and a dust forecast that can reduce power;
@@ -67,7 +80,7 @@ The current POC is intentionally narrow:
 - bounded time advancement with visible consequences and evidence-based verification; and
 - browser-local progress plus deterministic scenario reset.
 
-Given the same reset state and the same actions, the simulation produces the same result. Use the reset control to discard the current run and restore the original breach scenario.
+Given the same reset state and the same actions, the simulation produces the same result. Use the reset control to discard the current run and return to the empty first-landing layout.
 
 ## Later vertical-slice targets
 
@@ -75,7 +88,7 @@ The larger game design is not represented as implemented POC functionality. Plan
 
 - incoming and returning flights competing for landing access;
 - cargo recovery and physical pallet hauling;
-- broader corridor and habitat construction planning; and
+- free-form corridors, habitat expansion, and utility routing; and
 - additional research and production chains, settlement growth, and the full campaign progression described in the game design.
 
 Those systems are deliberately outside this first playable loop. See [the game design document](docs/GAME_DESIGN.md) for the target experience and explicit jam cuts.

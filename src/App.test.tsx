@@ -6,9 +6,16 @@ import { useColonyStore } from './game/store'
 
 const renderFreshApp = () => render(<App />)
 
-const stageRecommendedResponse = () => {
-  fireEvent.click(screen.getByRole('button', { name: /stage a response/i }))
-  return screen.getByRole('region', { name: 'plan command panel' })
+const settlementMap = () => screen.getByRole('group', {
+  name: /top-down interactive map of shackleton base/i,
+})
+
+const selectGuidedBlueprint = (name: RegExp) => {
+  fireEvent.click(screen.getByRole('button', { name }))
+}
+
+const placeSelectedBlueprint = (name: RegExp) => {
+  fireEvent.click(within(settlementMap()).getByRole('button', { name }))
 }
 
 beforeEach(() => {
@@ -20,100 +27,107 @@ afterEach(() => {
   cleanup()
 })
 
-describe('Moonbase game UI', () => {
-  it('loads map-first with interactive crew and dock controls while the command sheet stays hidden', () => {
+describe('tiny-start settlement UI', () => {
+  it('lands with only the habitat, pad, two crew, and one guided build action', () => {
     renderFreshApp()
 
-    const map = screen.getByRole('group', {
-      name: /top-down interactive map of shackleton base/i,
-    })
-    const laboratory = within(map).getByRole('button', {
-      name: /inspect kepler laboratory.*hull breach open/i,
-    })
-    const mateo = within(map).getByRole('button', {
-      name: /select mateo alvarez, structural engineer/i,
-    })
-
-    expect(map).toBeVisible()
-    expect(laboratory).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(mateo)
-    expect(mateo).toHaveAttribute('aria-pressed', 'true')
-
-    const crewStrip = screen.getByRole('region', { name: 'Colony crew' })
-    expect(within(crewStrip).getAllByRole('button')).toHaveLength(6)
-
-    const dock = screen.getByRole('navigation', { name: 'Colony commands' })
-    const dockButtons = within(dock).getAllByRole('button')
-    expect(dockButtons).toHaveLength(5)
-    for (const command of ['Work', 'Crew', 'Gear', 'Plan']) {
-      expect(within(dock).getByRole('button', { name: command })).toBeEnabled()
-    }
-    expect(within(dock).getByRole('button', { name: /^Log/ })).toBeEnabled()
-    expect(dockButtons.every((button) => button.getAttribute('aria-expanded') === 'false')).toBe(true)
-
-    expect(screen.queryByRole('region', { name: /command panel/i })).not.toBeInTheDocument()
-    expect(document.querySelector('[aria-label="work command panel"]')).toHaveAttribute(
-      'aria-hidden',
-      'true',
+    const map = settlementMap()
+    expect(map).toHaveAccessibleName(
+      /2 base areas, 2 crew, 0 equipment items, 0 work orders, and 5 vacant build sites/i,
     )
 
-    fireEvent.click(within(dock).getByRole('button', { name: 'Crew' }))
-    expect(screen.getByRole('region', { name: 'crew command panel' })).toBeVisible()
-    expect(within(dock).getByRole('button', { name: 'Crew' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
+    const visibleModules = within(map).getAllByRole('button', { name: /^Inspect / })
+    expect(visibleModules).toHaveLength(2)
+    expect(visibleModules[0]).toHaveAccessibleName(/Inspect Habitat Aster/i)
+    expect(visibleModules[1]).toHaveAccessibleName(/Inspect Shackleton Pad/i)
+
+    const visibleCrew = within(map).getAllByRole('button', {
+      name: /^Select .+,.+ idle in Habitat Aster/i,
+    })
+    expect(visibleCrew).toHaveLength(2)
+    expect(visibleCrew[0]).toHaveAccessibleName(/Amina Okafor/i)
+    expect(visibleCrew[1]).toHaveAccessibleName(/Mateo Alvarez/i)
+
+    const guidedBuildActions = screen.getAllByRole('button', { name: /^Place / })
+    expect(guidedBuildActions).toHaveLength(1)
+    expect(guidedBuildActions[0]).toHaveAccessibleName(/Place Solar \/ Battery Skid.*3 build kits/i)
+    expect(screen.getByLabelText('0 of 5 essential modules built')).toBeVisible()
+
+    expect(screen.queryByRole('navigation', { name: 'Colony commands' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Current objective' })).not.toBeInTheDocument()
   })
 
-  it('stages the nine-action recommended response as a valid, committable plan', () => {
+  it('places the selected solar blueprint at a named site and advances the settlement', () => {
     renderFreshApp()
 
-    const planPanel = stageRecommendedResponse()
-    const commit = within(planPanel).getByRole('button', { name: /commit plan/i })
+    selectGuidedBlueprint(/^Place Solar \/ Battery Skid/)
 
-    expect(within(planPanel).getByText('9 total')).toBeVisible()
+    const blueprintTray = screen.getByRole('region', { name: 'Build blueprints' })
     expect(
-      within(planPanel).getAllByRole('button', { name: 'Remove staged action' }),
-    ).toHaveLength(9)
-    expect(within(planPanel).getByText('Ready to commit')).toBeVisible()
-    expect(commit).toBeEnabled()
+      within(blueprintTray).getByRole('button', { name: /^Solar \/ Battery Skid/ }),
+    ).toHaveAttribute('aria-pressed', 'true')
+
+    placeSelectedBlueprint(/^Build Solar \/ Battery Skid at East Ridge$/)
 
     const state = useColonyStore.getState()
-    expect(state.operationsPlan.actions).toHaveLength(9)
-    expect(state.validatePlan().valid).toBe(true)
+    expect(state.settlement.phase).toBe('power_online')
+    expect(state.reserves.constructionStock).toBe(11)
+    expect(state.settlement.buildSites.find((site) => site.id === 'site-east-ridge')).toMatchObject({
+      label: 'East Ridge',
+      occupiedBy: 'solar_battery_skid',
+    })
+    expect(state.modules.find((module) => module.id === 'module-solar-skid')?.position).toEqual({
+      x: 14,
+      y: 1,
+      width: 5,
+      height: 4,
+    })
+
+    expect(settlementMap()).toHaveAccessibleName(
+      /3 base areas, 2 crew, 0 equipment items, 0 work orders, and 4 vacant build sites/i,
+    )
+    expect(
+      within(settlementMap()).getByRole('button', { name: /Inspect Solar \/ Battery Skid/i }),
+    ).toBeVisible()
+    expect(screen.getByLabelText('1 of 5 essential modules built')).toBeVisible()
+    expect(screen.getByText(/Solar \/ Battery Skid built\. power online\./i)).toBeVisible()
+    expect(screen.getByRole('button', { name: /^Place Life Support/ })).toBeEnabled()
   })
 
-  it('enables execution only after commit and keeps the run inside its declared bound', () => {
+  it('builds all five essentials through the UI before revealing colony operations', () => {
     renderFreshApp()
 
-    const advanceOneHour = screen.getByRole('button', { name: '+1h' })
-    const advanceToStop = screen.getByRole('button', { name: 'To stop' })
-    expect(advanceOneHour).toBeDisabled()
-    expect(advanceToStop).toBeDisabled()
+    selectGuidedBlueprint(/^Place Solar \/ Battery Skid/)
+    placeSelectedBlueprint(/^Build Solar \/ Battery Skid at East Ridge$/)
 
-    const planPanel = stageRecommendedResponse()
-    fireEvent.click(within(planPanel).getByRole('button', { name: /commit plan/i }))
+    selectGuidedBlueprint(/^Place Life Support/)
+    placeSelectedBlueprint(/^Build Life Support at South Shelf$/)
 
-    expect(screen.getByText('Plan live')).toBeVisible()
-    expect(advanceOneHour).toBeEnabled()
-    expect(advanceToStop).toBeEnabled()
-    expect(useColonyStore.getState().operationsPlan).toMatchObject({
-      status: 'committed',
-      horizonHours: 12,
-      stopCondition: { kind: 'objective_complete' },
-    })
+    selectGuidedBlueprint(/^Place South Airlock/)
+    placeSelectedBlueprint(/^Build South Airlock at North Shelf$/)
 
-    fireEvent.click(advanceToStop)
+    const blueprintTray = screen.getByRole('region', { name: 'Build blueprints' })
+    fireEvent.click(within(blueprintTray).getByRole('button', { name: /^Stores/ }))
+    placeSelectedBlueprint(/^Build Stores at East Apron$/)
 
-    const finished = useColonyStore.getState()
-    expect(finished.lastAdvance).toMatchObject({
-      boundedHours: 12,
-      advancedHours: 10,
-      stopReason: 'objective_complete',
-    })
-    expect(finished.elapsedHours).toBeLessThanOrEqual(finished.operationsPlan.horizonHours)
-    expect(finished.scenarioStatus).toBe('objective_complete')
-    expect(screen.getByText('Objective secured')).toBeVisible()
-    expect(advanceToStop).toBeDisabled()
+    selectGuidedBlueprint(/^Place Kepler Laboratory/)
+    placeSelectedBlueprint(/^Build Kepler Laboratory at North Ridge$/)
+
+    const ready = useColonyStore.getState()
+    expect(ready.settlement.phase).toBe('ready')
+    expect(ready.settlement.buildSites.every((site) => site.occupiedBy !== null)).toBe(true)
+    expect(ready.reserves.constructionStock).toBe(0)
+    expect(screen.getByLabelText('5 of 5 essential modules built')).toBeVisible()
+    expect(screen.queryByRole('navigation', { name: 'Colony commands' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Current objective' })).not.toBeInTheDocument()
+
+    const beginFirstShift = screen.getByRole('button', { name: /Begin first shift/i })
+    expect(beginFirstShift).toBeEnabled()
+    fireEvent.click(beginFirstShift)
+
+    expect(useColonyStore.getState().settlement.phase).toBe('operations')
+    expect(screen.getByRole('navigation', { name: 'Colony commands' })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Current objective' })).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Settlement guide' })).not.toBeInTheDocument()
   })
 })

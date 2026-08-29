@@ -31,6 +31,21 @@ export type ModuleType =
   | 'solar_battery_skid'
   | 'landing_pad'
 
+export type BuildableModuleId =
+  | 'solar_battery_skid'
+  | 'life_support'
+  | 'airlock'
+  | 'storage'
+  | 'laboratory'
+
+export type SettlementPhase =
+  | 'landing'
+  | 'power_online'
+  | 'habitable'
+  | 'expanding'
+  | 'ready'
+  | 'operations'
+
 export type AtmosphereState = 'yes' | 'low' | 'no'
 export type ScenarioStatus = 'active' | 'objective_complete' | 'failed'
 export type AlertSeverity = 'info' | 'warning' | 'critical'
@@ -51,6 +66,54 @@ export interface MapPosition {
   y: number
   width: number
   height: number
+}
+
+export interface BuildSiteState {
+  id: string
+  label: string
+  x: number
+  y: number
+  occupiedBy: BuildableModuleId | null
+}
+
+export interface SettlementState {
+  phase: SettlementPhase
+  buildSites: BuildSiteState[]
+  builtModuleIds: string[]
+}
+
+export interface BuildBlueprint {
+  id: BuildableModuleId
+  name: string
+  moduleId: string
+  location: LocationId
+  moduleType: ModuleType
+  cost: number
+  width: number
+  height: number
+  atmosphere: AtmosphereState
+  powerPriority: 1 | 2 | 3
+}
+
+export type BuildResultCode =
+  | 'built'
+  | 'operations_started'
+  | 'unknown_blueprint'
+  | 'unknown_site'
+  | 'site_occupied'
+  | 'blueprint_unavailable'
+  | 'insufficient_stock'
+  | 'not_ready'
+  | 'already_operational'
+
+export interface BuildResult {
+  ok: boolean
+  code: BuildResultCode
+  phase: SettlementPhase
+  worldRevision: number
+  moduleId?: string
+  siteId?: string
+  error?: string
 }
 
 export interface ModuleState {
@@ -384,6 +447,7 @@ export interface MoonbaseState {
   worldRevision: number
   scenarioStatus: ScenarioStatus
   map: { width: 24; height: 18 }
+  settlement: SettlementState
   objective: ScenarioObjective
   reserves: ReserveState
   power: PowerState
