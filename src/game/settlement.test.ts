@@ -191,7 +191,7 @@ describe('tiny-start settlement construction', () => {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(3)
+    expect(saved.version).toBe(4)
     expect(saved.state?.settlement).toMatchObject({
       phase: 'power_online',
       buildSites: expect.arrayContaining([
@@ -208,5 +208,27 @@ describe('tiny-start settlement construction', () => {
       builtModuleIds: ['module-habitat', 'module-corridor', 'module-landing-pad'],
     })
     expect(migrated.settlement.buildSites.every((site) => site.occupiedBy === null)).toBe(true)
+
+    const legacyV3 = JSON.parse(JSON.stringify(saved.state)) as Record<string, unknown>
+    delete (legacyV3.settlement as Record<string, unknown>).layout
+    const migratedV3 = await migrate!(legacyV3, 3) as MoonbaseState
+    expect(migratedV3.worldRevision).toBe(saved.state?.worldRevision)
+    expect(migratedV3.settlement).toMatchObject({
+      phase: 'power_online',
+      buildSites: expect.arrayContaining([
+        expect.objectContaining({ id: 'site-power-east', occupiedBy: 'solar_battery_skid' }),
+      ]),
+    })
+    expect(migratedV3.settlement.layout.boundaries).toHaveLength(16)
+
+    const merge = useColonyStore.persist.getOptions().merge
+    expect(merge).toBeTypeOf('function')
+    const malformedCurrentVersion = structuredClone(saved.state!) as unknown as Record<string, unknown>
+    delete (malformedCurrentVersion.settlement as Record<string, unknown>).layout
+    const recovered = merge!(malformedCurrentVersion, useColonyStore.getState())
+    expect(recovered.settlement.layout.boundaries).toHaveLength(16)
+
+    const future = await migrate!(saved.state, 5) as MoonbaseState
+    expect(future).toMatchObject({ worldRevision: 1, settlement: { phase: 'landing' } })
   })
 })

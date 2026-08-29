@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { createInitialState } from './seed'
+import { isConstructionLayout, type ConstructionLayout } from './construction'
+import { createStarterConstruction } from './constructionCatalog'
 import {
   beginOperations as beginOperationsInState,
   constructModule as constructModuleInState,
@@ -37,6 +39,7 @@ type InteractiveActor = 'manual' | 'agent'
 export interface MoonbaseActions {
   resetColony: () => void
   resetMoonbase: () => void
+  setConstructionLayout: (layout: ConstructionLayout) => void
   constructModule: (
     blueprintId: BuildableModuleId,
     siteId: string,
@@ -101,6 +104,10 @@ export const useColonyStore = create<MoonbaseStore>()(
       ...createInitialState(),
       resetColony: () => set(createInitialState()),
       resetMoonbase: () => set(createInitialState()),
+      setConstructionLayout: (layout) => set((state) => ({
+        settlement: { ...state.settlement, layout },
+        worldRevision: state.worldRevision + 1,
+      })),
       constructModule: (blueprintId, siteId, actor = 'manual') => {
         const [nextState, result] = constructModuleInState(get(), blueprintId, siteId, actor)
         if (result.ok) set(nextState)
@@ -168,12 +175,38 @@ export const useColonyStore = create<MoonbaseStore>()(
     }),
     {
       name: 'playlearnai-moonbase-poc-v1',
-      version: 3,
+      version: 4,
       partialize: domainSnapshot,
       migrate: (persistedState, version) => {
-        if (version < 3) return createInitialState()
+        if (version > 4) return createInitialState()
         const state = persistedState as Partial<MoonbaseState>
-        return state.settlement ? state as MoonbaseState : createInitialState()
+        if (!state.settlement) return createInitialState()
+        if (version < 4) {
+          return {
+            ...state,
+            settlement: {
+              ...state.settlement,
+              layout: createStarterConstruction(),
+            },
+          } as MoonbaseState
+        }
+        return isConstructionLayout(state.settlement.layout)
+          ? state as MoonbaseState
+          : createInitialState()
+      },
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<MoonbaseState>
+        if (!persisted.settlement || !isConstructionLayout(persisted.settlement.layout)) {
+          return currentState
+        }
+        return {
+          ...currentState,
+          ...persisted,
+          settlement: {
+            ...currentState.settlement,
+            ...persisted.settlement,
+          },
+        }
       },
     },
   ),

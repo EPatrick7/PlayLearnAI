@@ -1,4 +1,14 @@
 import type { CSSProperties } from 'react'
+import {
+  detectRooms,
+  getWorkstationFootprintSize,
+  type ConstructionLayout,
+  type GridPoint,
+} from '../game/construction'
+import {
+  WORKSTATION_SPECS,
+  type WorkstationKind,
+} from '../game/constructionCatalog'
 import type {
   CrewMember,
   Equipment,
@@ -40,6 +50,7 @@ export interface MoonbaseMapProps {
   buildingPreview?: Pick<ModuleState, 'name' | 'type' | 'location' | 'atmosphere'> | null
   previewSiteId?: string | null
   onChooseBuildSite?: (siteId: string) => void
+  constructionLayout?: ConstructionLayout | null
 }
 
 interface ModulePresentation {
@@ -92,6 +103,90 @@ const initials = (name: string) => name
   .join('')
   .slice(0, 2)
   .toUpperCase()
+
+const constructionDoorAxis = (layout: ConstructionLayout, point: GridPoint) => {
+  const hasBoundary = (x: number, y: number) => layout.boundaries.some(
+    (boundary) => boundary.x === x && boundary.y === y,
+  )
+  const horizontal = hasBoundary(point.x - 1, point.y) || hasBoundary(point.x + 1, point.y)
+  const vertical = hasBoundary(point.x, point.y - 1) || hasBoundary(point.x, point.y + 1)
+  return horizontal && !vertical ? 'horizontal' : 'vertical'
+}
+
+function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
+  const rooms = detectRooms(layout)
+  return (
+    <>
+      {rooms.flatMap((room) => room.cells.map((cell) => (
+        <span
+          aria-hidden="true"
+          className="construction-room-floor"
+          data-grid-x={cell.x}
+          data-grid-y={cell.y}
+          data-operations-room-id={room.id}
+          key={`operations-${room.id}-${cell.x}-${cell.y}`}
+          style={{ gridColumn: `${cell.x + 1}`, gridRow: `${cell.y + 1}` }}
+        />
+      )))}
+
+      {layout.boundaries.map((boundary) => (
+        <span
+          aria-hidden="true"
+          className={`construction-boundary boundary-${boundary.kind} ${boundary.kind === 'door' ? `door-${constructionDoorAxis(layout, boundary)}` : ''}`}
+          data-freeform-boundary={boundary.kind}
+          data-grid-x={boundary.x}
+          data-grid-y={boundary.y}
+          key={`operations-boundary-${boundary.x}-${boundary.y}`}
+          style={{ gridColumn: `${boundary.x + 1}`, gridRow: `${boundary.y + 1}` }}
+        >
+          <i />
+        </span>
+      ))}
+
+      {layout.workstations.map((workstation) => {
+        const kind = workstation.type as WorkstationKind
+        const spec = WORKSTATION_SPECS[kind]
+        if (!spec) return null
+        const footprint = getWorkstationFootprintSize(workstation)
+        return (
+          <span
+            aria-label={`${workstation.label}, ${footprint.width} by ${footprint.height} tiles`}
+            className={`construction-workstation workstation-${kind}`}
+            data-freeform-workstation={kind}
+            data-grid-height={footprint.height}
+            data-grid-width={footprint.width}
+            data-grid-x={workstation.origin.x}
+            data-grid-y={workstation.origin.y}
+            key={`operations-workstation-${workstation.id}`}
+            role="img"
+            style={{
+              gridColumn: `${workstation.origin.x + 1} / span ${footprint.width}`,
+              gridRow: `${workstation.origin.y + 1} / span ${footprint.height}`,
+            }}
+          >
+            <span className="workstation-art"><GameIcon name={spec.icon} /></span>
+            <strong>{spec.shortLabel}</strong>
+            <small>{footprint.width}×{footprint.height}</small>
+          </span>
+        )
+      })}
+
+      {rooms.map((room) => {
+        const labelCell = room.cells[Math.floor(room.cells.length / 2)]
+        return (
+          <span
+            aria-hidden="true"
+            className="construction-room-label"
+            key={`operations-label-${room.id}`}
+            style={{ gridColumn: `${labelCell.x + 1}`, gridRow: `${labelCell.y + 1}` }}
+          >
+            Room {room.id.replace('room-', '')} · {room.area}
+          </span>
+        )
+      })}
+    </>
+  )
+}
 
 function MapTerrain({ width, height, dustActive }: { width: number; height: number; dustActive: boolean }) {
   const viewWidth = width * 100
@@ -248,6 +343,7 @@ export function MoonbaseMap({
   buildingPreview = null,
   previewSiteId = null,
   onChooseBuildSite,
+  constructionLayout = null,
 }: MoonbaseMapProps) {
   const activePlan = plan.status !== 'completed'
   const plannedWorkIds = new Set<WorkOrderId>(
@@ -359,13 +455,15 @@ export function MoonbaseMap({
   const placementSummary = buildingLabel
     ? ` ${compatibleBuildSites.length} compatible build sockets.`
     : ''
-  const accessibleSummary = `${inspectableModules.length} base areas, ${crew.length} crew, ${equipment.length} equipment items, and ${workOrders.length} work orders.${placementSummary}${dustActive ? ' Dust front active.' : ''}`
+  const customRoomCount = constructionLayout ? detectRooms(constructionLayout).length : null
+  const accessibleSummary = `${customRoomCount === null ? `${inspectableModules.length} base areas` : `${customRoomCount} player-built rooms`}, ${crew.length} crew, ${equipment.length} equipment items, and ${workOrders.length} work orders.${placementSummary}${dustActive ? ' Dust front active.' : ''}`
 
   return (
     <div
       aria-label={`Top-down interactive map of Shackleton Base. ${accessibleSummary}`}
       aria-roledescription="colony tile map"
-      className={`moonbase-map ${dustActive ? 'dust-active' : ''}`}
+      className={`moonbase-map ${constructionLayout ? 'freeform-operations' : ''} ${dustActive ? 'dust-active' : ''}`}
+      data-custom-layout={constructionLayout ? 'true' : undefined}
       data-grid-height={height}
       data-grid-width={width}
       role="group"
@@ -376,6 +474,7 @@ export function MoonbaseMap({
     >
       <MapTerrain dustActive={dustActive} height={height} width={width} />
       <div className="map-grid" aria-hidden="true" />
+      {constructionLayout && <FreeformOperationsLayer layout={constructionLayout} />}
       <MapRoutes height={height} modules={modules} routes={routes} width={width} />
 
       {vacantBuildSites.flatMap((site) => {
@@ -458,9 +557,9 @@ export function MoonbaseMap({
         />
       )}
 
-      <ModuleConnectors modules={modules} />
+      {!constructionLayout && <ModuleConnectors modules={modules} />}
 
-      {modules.map((module) => (
+      {!constructionLayout && modules.map((module) => (
         <ModuleTilemap
           key={`${module.id}-tilemap`}
           module={module}

@@ -7,6 +7,7 @@ import type {
   MoonbaseState,
   WorkOrder,
 } from './types'
+import { createStarterConstruction } from './constructionCatalog'
 
 export const MOONBASE_SEED = 240826
 
@@ -462,6 +463,7 @@ export const createInitialState = (): MoonbaseState => ({
   map: { width: 24, height: 18 },
   settlement: {
     phase: 'landing',
+    layout: createStarterConstruction(),
     buildSites: structuredClone(INITIAL_BUILD_SITES),
     builtModuleIds: ['module-habitat', 'module-corridor', 'module-landing-pad'],
   },

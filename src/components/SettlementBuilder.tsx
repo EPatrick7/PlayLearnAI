@@ -1,282 +1,398 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  availableBlueprintsFor,
-  buildProgressFor,
-} from '../game/settlement'
+  detectRooms,
+  type ConstructionLayout,
+  type ConstructionResult,
+  type WorkstationRotation,
+} from '../game/construction'
+import {
+  WORKSTATION_SPECS,
+  categoryLabels,
+  isWorkstationTool,
+  type BuildCategory,
+  type ConstructionTool,
+} from '../game/constructionCatalog'
+import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
-import type { BuildableModuleId, SettlementPhase } from '../game/types'
+import { ConstructionMap } from './ConstructionMap'
 import { GameIcon, type GameIconName } from './GameIcon'
-import { MoonbaseMap } from './MoonbaseMap'
 
-const blueprintIcons: Record<BuildableModuleId, GameIconName> = {
-  solar_battery_skid: 'solar',
-  life_support: 'lifeSupport',
-  airlock: 'airlock',
-  storage: 'storage',
-  laboratory: 'laboratory',
+interface ToolDefinition {
+  id: ConstructionTool
+  label: string
+  detail: string
+  icon: GameIconName
 }
 
-const starterCrewIds = new Set(['crew-amina-okafor', 'crew-mateo-alvarez'])
-
-const phaseCopy: Record<Exclude<SettlementPhase, 'expanding' | 'ready' | 'operations'>, {
-  eyebrow: string
-  title: string
-  body: string
-}> = {
-  landing: {
-    eyebrow: 'First landing · step 1 of 5',
-    title: 'Land power',
-    body: 'Two settlers share one room. Place a solar skid on an exposed pad.',
-  },
-  power_online: {
-    eyebrow: 'Power online · step 2 of 5',
-    title: 'Make air',
-    body: 'Attach Life Support to one of the corridor bays.',
-  },
-  habitable: {
-    eyebrow: 'Air stable · step 3 of 5',
-    title: 'Open the surface',
-    body: 'Attach an airlock. Its outer hatch will face away from the corridor.',
-  },
+const categoryIcons: Record<BuildCategory, GameIconName> = {
+  structure: 'habitat',
+  furniture: 'bed',
+  production: 'gear',
+  power: 'power',
+  orders: 'work',
 }
 
-const starterCrew = (crew: ReturnType<typeof useColonyStore.getState>['crew']) => crew
-  .filter((member) => starterCrewIds.has(member.id))
-  .map((member) => ({ ...member, location: 'habitat' as const }))
+const toolsByCategory: Record<BuildCategory, ToolDefinition[]> = {
+  structure: [
+    { id: 'wall', label: 'Wall', detail: 'Drag a 1-tile line', icon: 'habitat' },
+    { id: 'door', label: 'Door', detail: 'Replace one wall tile', icon: 'door' },
+  ],
+  furniture: [
+    {
+      id: 'bed',
+      label: WORKSTATION_SPECS.bed.label,
+      detail: WORKSTATION_SPECS.bed.description,
+      icon: WORKSTATION_SPECS.bed.icon,
+    },
+    {
+      id: 'storage-rack',
+      label: WORKSTATION_SPECS['storage-rack'].label,
+      detail: WORKSTATION_SPECS['storage-rack'].description,
+      icon: WORKSTATION_SPECS['storage-rack'].icon,
+    },
+  ],
+  production: [
+    {
+      id: 'life-support',
+      label: WORKSTATION_SPECS['life-support'].label,
+      detail: WORKSTATION_SPECS['life-support'].description,
+      icon: WORKSTATION_SPECS['life-support'].icon,
+    },
+    {
+      id: 'research-bench',
+      label: WORKSTATION_SPECS['research-bench'].label,
+      detail: WORKSTATION_SPECS['research-bench'].description,
+      icon: WORKSTATION_SPECS['research-bench'].icon,
+    },
+  ],
+  power: [
+    {
+      id: 'solar-array',
+      label: WORKSTATION_SPECS['solar-array'].label,
+      detail: WORKSTATION_SPECS['solar-array'].description,
+      icon: WORKSTATION_SPECS['solar-array'].icon,
+    },
+    {
+      id: 'battery-bank',
+      label: WORKSTATION_SPECS['battery-bank'].label,
+      detail: WORKSTATION_SPECS['battery-bank'].description,
+      icon: WORKSTATION_SPECS['battery-bank'].icon,
+    },
+  ],
+  orders: [
+    { id: 'erase', label: 'Deconstruct', detail: 'Click or drag to remove', icon: 'minus' },
+  ],
+}
+
+const toolName = (tool: ConstructionTool | null) => {
+  if (!tool) return 'Pan'
+  if (tool === 'wall') return 'Wall'
+  if (tool === 'door') return 'Door'
+  if (tool === 'erase') return 'Deconstruct'
+  return WORKSTATION_SPECS[tool].label
+}
+
+const instructionFor = (tool: ConstructionTool | null) => {
+  if (!tool) return 'Drag the map to look around. Open Build when you want to construct.'
+  if (tool === 'wall') return 'Drag across cells to draw a one-tile-thick wall run.'
+  if (tool === 'door') return 'Click any existing wall tile to replace it with a door.'
+  if (tool === 'erase') return 'Click or drag across anything to deconstruct it.'
+  return `${WORKSTATION_SPECS[tool].description}. Point at the floor to place; R rotates.`
+}
+
+const sameLayout = (left: ConstructionLayout, right: ConstructionLayout) =>
+  JSON.stringify(left) === JSON.stringify(right)
 
 export function SettlementBuilder() {
   const colony = useColonyStore()
-  const [selectedBlueprintId, setSelectedBlueprintId] = useState<BuildableModuleId | null>(null)
-  const [previewSiteId, setPreviewSiteId] = useState<string | null>(null)
-  const [selectedModuleId, setSelectedModuleId] = useState('')
-  const [announcement, setAnnouncement] = useState('')
+  const layout = colony.settlement.layout
+  const [buildOpen, setBuildOpen] = useState(false)
+  const [category, setCategory] = useState<BuildCategory>('structure')
+  const [selectedTool, setSelectedTool] = useState<ConstructionTool | null>(null)
+  const [parkedTool, setParkedTool] = useState<ConstructionTool | null>(null)
+  const [rotation, setRotation] = useState<WorkstationRotation>(0)
+  const [announcement, setAnnouncement] = useState('Build freely. Rooms are enclosed shapes with at least one door.')
+  const [toastVisible, setToastVisible] = useState(false)
+  const [undoCount, setUndoCount] = useState(0)
+  const undoStack = useRef<ConstructionLayout[]>([])
+  const rooms = useMemo(() => detectRooms(layout), [layout])
+  const readyForShift = canBeginOperations(colony)
 
-  const availableBlueprints = availableBlueprintsFor(colony)
-  const selectedBlueprint = availableBlueprints.find((blueprint) => blueprint.id === selectedBlueprintId) ?? null
-  const previewSite = colony.settlement.buildSites.find((site) => site.id === previewSiteId) ?? null
-  const progress = buildProgressFor(colony)
-  const builtIds = useMemo(() => new Set(colony.settlement.builtModuleIds), [colony.settlement.builtModuleIds])
-  const visibleModules = useMemo(
-    () => colony.modules
-      .filter((module) => builtIds.has(module.id))
-      .map((module) => ({
-        ...module,
-        atmosphere: module.type === 'solar_battery_skid' || module.type === 'landing_pad' ? 'no' as const : 'yes' as const,
-        breached: false,
-        condition: Math.max(88, module.condition),
-      })),
-    [builtIds, colony.modules],
-  )
-  const visibleCrew = useMemo(() => starterCrew(colony.crew), [colony.crew])
-
-  const selectBlueprint = (blueprintId: BuildableModuleId) => {
-    setSelectedBlueprintId((current) => current === blueprintId ? null : blueprintId)
-    setPreviewSiteId(null)
-    setAnnouncement('')
+  const announce = (message: string) => {
+    setAnnouncement(message)
+    setToastVisible(true)
   }
 
-  const previewBlueprint = (siteId: string) => {
-    if (!selectedBlueprint) return
-    const site = colony.settlement.buildSites.find((candidate) => candidate.id === siteId)
-    if (!site || site.kind !== selectedBlueprint.siteKind) return
-    setPreviewSiteId(siteId)
-    setAnnouncement(`${selectedBlueprint.name} previewed at ${site.label}.`)
-  }
-
-  const confirmBlueprint = () => {
-    if (!selectedBlueprint || !previewSiteId) return
-    const result = colony.constructModule(selectedBlueprint.id, previewSiteId)
+  const applyConstruction = (result: ConstructionResult, label: string) => {
     if (!result.ok) {
-      setAnnouncement(result.error ?? 'That module could not be built there.')
+      announce(result.error)
       return
     }
-    setSelectedModuleId(result.moduleId ?? '')
-    setAnnouncement(`${selectedBlueprint.name} built. ${result.phase.replaceAll('_', ' ')}.`)
-    setSelectedBlueprintId(null)
-    setPreviewSiteId(null)
-  }
-
-  const cancelPlacement = () => {
-    setSelectedBlueprintId(null)
-    setPreviewSiteId(null)
-    setAnnouncement('')
-  }
-
-  useEffect(() => {
-    const cancelWithEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && selectedBlueprintId) {
-        setSelectedBlueprintId(null)
-        setPreviewSiteId(null)
-        setAnnouncement('')
-      }
+    if (sameLayout(result.layout, layout)) {
+      announce('Nothing changed on those tiles.')
+      return
     }
-    window.addEventListener('keydown', cancelWithEscape)
-    return () => window.removeEventListener('keydown', cancelWithEscape)
-  }, [selectedBlueprintId])
+
+    const previousRoomCount = rooms.length
+    const nextRooms = detectRooms(result.layout)
+    undoStack.current = [...undoStack.current.slice(-19), structuredClone(layout)]
+    setUndoCount(undoStack.current.length)
+    colony.setConstructionLayout(result.layout)
+
+    if (nextRooms.length > previousRoomCount) {
+      const newest = nextRooms.at(-1)
+      announce(`Room created · ${newest?.area ?? 0} floor tiles.`)
+    } else if (nextRooms.length < previousRoomCount) {
+      announce('Room opened to the surface.')
+    } else if (result.code === 'workstation_placed') {
+      announce(`${label} placed as a ${result.affectedCells.length}-tile object.`)
+    } else if (label === 'Door') {
+      announce('Door installed in the wall.')
+    } else {
+      announce(`${label} · ${result.affectedCells.length} ${result.affectedCells.length === 1 ? 'tile' : 'tiles'}.`)
+    }
+  }
+
+  const undo = () => {
+    const previous = undoStack.current.at(-1)
+    if (!previous) {
+      announce('Nothing to undo yet.')
+      return
+    }
+    undoStack.current = undoStack.current.slice(0, -1)
+    setUndoCount(undoStack.current.length)
+    colony.setConstructionLayout(previous)
+    announce('Last construction order undone.')
+  }
+
+  const rotate = () => {
+    setRotation((current) => ((current + 90) % 360) as WorkstationRotation)
+    announce(`${toolName(selectedTool)} rotated.`)
+  }
+
+  const cancelTool = () => {
+    setSelectedTool(null)
+    setParkedTool(null)
+    announce('Pan mode.')
+  }
+
+  const togglePan = () => {
+    if (selectedTool) {
+      setParkedTool(selectedTool)
+      setSelectedTool(null)
+      announce(`${toolName(selectedTool)} paused. Pan the map, then resume it from the toolbar.`)
+      return
+    }
+    if (parkedTool) {
+      setSelectedTool(parkedTool)
+      setParkedTool(null)
+      announce(`${toolName(parkedTool)} resumed.`)
+      return
+    }
+    announce('Pan mode.')
+  }
+
+  const chooseTool = (tool: ConstructionTool) => {
+    if (selectedTool === tool) {
+      cancelTool()
+      return
+    }
+    setSelectedTool(tool)
+    setParkedTool(null)
+    setRotation(0)
+    announce(`${toolName(tool)} selected. ${instructionFor(tool)}`)
+  }
+
+  const chooseCategory = (nextCategory: BuildCategory) => {
+    setCategory(nextCategory)
+    setSelectedTool(null)
+    setParkedTool(null)
+    setBuildOpen(true)
+    announce(`${categoryLabels[nextCategory]} tools open.`)
+  }
 
   const resetSettlement = () => {
-    if (window.confirm('Start a new landing? Your current settlement layout will be replaced.')) {
-      colony.resetColony()
-      setSelectedBlueprintId(null)
-      setPreviewSiteId(null)
-      setSelectedModuleId('')
-      setAnnouncement('New landing started.')
-    }
+    if (!window.confirm('Start over with the tiny landing habitat?')) return
+    colony.resetColony()
+    undoStack.current = []
+    setUndoCount(0)
+    setBuildOpen(false)
+    setCategory('structure')
+    setSelectedTool(null)
+    setParkedTool(null)
+    setRotation(0)
+    announce('New tiny landing started.')
   }
 
   const startFirstShift = () => {
     const result = colony.beginOperations()
-    if (!result.ok) setAnnouncement(result.error ?? 'Finish the essential modules first.')
+    if (!result.ok) announce(result.error ?? 'The settlement is not ready yet.')
   }
 
-  const phase = colony.settlement.phase
-  const expandingRemaining = availableBlueprints.length
-  const guide = phase === 'expanding'
-    ? {
-        eyebrow: `Shape your base · ${progress.built} of ${progress.total}`,
-        title: expandingRemaining > 1 ? 'Choose your next room' : 'One room to go',
-        body: expandingRemaining > 1
-          ? 'Add Stores and Kepler Lab in either order. Choose which bays they occupy.'
-          : 'Attach the last room to either open corridor bay.',
+  useEffect(() => {
+    const keyboardShortcuts = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      if (event.key.toLowerCase() === 'b' && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault()
+        setBuildOpen((current) => !current)
+        setSelectedTool(null)
+        setParkedTool(null)
       }
-    : phase === 'ready'
-      ? {
-          eyebrow: 'Settlement ready · 5 of 5',
-          title: 'This is your moonbase',
-          body: 'Power, air, access, stores, and research space are online. Begin when you are ready.',
-        }
-      : phaseCopy[phase as keyof typeof phaseCopy]
+      if (event.key === 'Escape' && (selectedTool || parkedTool)) {
+        setSelectedTool(null)
+        setParkedTool(null)
+        setAnnouncement('Pan mode.')
+        setToastVisible(true)
+      }
+    }
+    window.addEventListener('keydown', keyboardShortcuts)
+    return () => window.removeEventListener('keydown', keyboardShortcuts)
+  }, [parkedTool, selectedTool])
 
-  const singleNextBlueprint = availableBlueprints.length === 1 ? availableBlueprints[0] : null
-  const solarBuilt = builtIds.has('module-solar-skid')
-  const lifeSupportBuilt = builtIds.has('module-life-support')
-  const placementTitle = previewSite
-    ? `Build at ${previewSite.label}?`
-    : selectedBlueprint?.siteKind === 'exterior_power'
-      ? 'Choose an exterior pad'
-      : 'Choose a corridor bay'
-  const placementBody = previewSite
-    ? selectedBlueprint?.siteKind === 'exterior_power'
-      ? 'This tile ghost shows the exact panel and battery footprint.'
-      : 'This tile ghost shows the exact walls, door, floor, and furniture footprint.'
-    : selectedBlueprint?.siteKind === 'exterior_power'
-      ? 'Only the three exposed power pads are available.'
-      : 'Only connected bays glow. Every room gets a sealed door into the spine.'
+  useEffect(() => {
+    if (!toastVisible) return
+    const timeout = window.setTimeout(() => setToastVisible(false), 3200)
+    return () => window.clearTimeout(timeout)
+  }, [announcement, toastVisible])
+
+  const activeTools = toolsByCategory[category]
+  const toolInstruction = selectedTool
+    ? instructionFor(selectedTool)
+    : parkedTool
+      ? `${toolName(parkedTool)} is paused. Move around, then resume without choosing it again.`
+    : buildOpen
+      ? 'Pick a tool. Walls and objects are placed cell by cell—there are no room templates.'
+      : readyForShift
+        ? 'Your first expansion is habitable. Begin the first shift when you are ready.'
+      : 'Build freely. A closed wall shape with a door becomes a room.'
 
   return (
-    <div className="game-shell settlement-shell">
-      <header className="settlement-topbar">
-        <div className="settlement-brand" aria-label="Shackleton landing">
+    <div className="game-shell construction-shell">
+      <header className="construction-topbar">
+        <div className="construction-brand" aria-label="Shackleton construction mode">
           <span className="brand-mark"><i />PL</span>
-          <span><small>First landing</small><strong>Shackleton</strong></span>
+          <span><small>Build mode</small><strong>Shackleton</strong></span>
         </div>
 
-        <div className="settlement-progress" aria-label={`${progress.built} of ${progress.total} essential modules built`}>
-          <span><i style={{ width: `${progress.percent}%` }} /></span>
-          <small>{progress.built}/{progress.total} essentials</small>
+        <div className="construction-status" aria-label="Settlement layout status">
+          <span><small>Rooms</small><strong>{rooms.length}</strong></span>
+          <span><small>Objects</small><strong>{layout.workstations.length}</strong></span>
+          <span className="status-crew"><small>Settlers</small><strong>2</strong></span>
         </div>
 
-        <div className="settlement-vitals" aria-label="Settlement essentials">
-          <span className="vital-materials"><GameIcon name="gear" /><small>Build kits</small><strong>{colony.reserves.constructionStock}</strong></span>
-          {solarBuilt && <span className="vital-online"><GameIcon name="power" /><small>Power</small><strong>Online</strong></span>}
-          {lifeSupportBuilt && <span className="vital-online"><GameIcon name="oxygen" /><small>Air</small><strong>Stable</strong></span>}
-          <button aria-label="Reset settlement" className="settlement-reset" onClick={resetSettlement} title="Start a new landing" type="button"><GameIcon name="reset" /></button>
+        <div className="construction-top-actions">
+          {readyForShift && (
+            <button aria-label="Begin first shift" onClick={startFirstShift} title="Open colony operations" type="button">
+              <GameIcon name="play" /><span>Begin shift</span>
+            </button>
+          )}
+          <button aria-label="Undo last construction order" disabled={undoCount === 0} onClick={undo} type="button">
+            <GameIcon name="reset" /><span>Undo</span>
+          </button>
+          <button aria-label="Reset construction map" onClick={resetSettlement} title="Start over" type="button">
+            <GameIcon name="close" />
+          </button>
         </div>
       </header>
 
-      <main className="world-stage settlement-stage">
-        <div aria-label="Settlement map viewport. Drag to pan across the square-cell moon map." className="settlement-map-scroll" role="region" tabIndex={0}>
-          <MoonbaseMap
-            buildSites={colony.settlement.buildSites.map((site) => ({
-              id: site.id,
-              label: site.label,
-              moduleId: site.occupiedBy,
-              compatible: selectedBlueprint ? site.kind === selectedBlueprint.siteKind : false,
-              position: { x: site.x, y: site.y, width: site.width, height: site.height },
-            }))}
-            buildingLabel={selectedBlueprint?.name ?? null}
-            buildingPreview={selectedBlueprint ? {
-              name: selectedBlueprint.name,
-              type: selectedBlueprint.moduleType,
-              location: selectedBlueprint.location,
-              atmosphere: selectedBlueprint.atmosphere,
-            } : null}
-            crew={visibleCrew}
-            dustActive={false}
-            equipment={[]}
-            height={colony.map.height}
-            modules={visibleModules}
-            onChooseBuildSite={previewBlueprint}
-            onInspectModule={setSelectedModuleId}
-            plan={colony.operationsPlan}
-            previewSiteId={previewSiteId}
-            selectedModuleId={selectedModuleId}
-            width={colony.map.width}
-            workOrders={[]}
+      <main className="construction-stage">
+        <div className="construction-map-scroll">
+          <ConstructionMap
+            key={selectedTool ?? 'pan'}
+            layout={layout}
+            onApply={applyConstruction}
+            onCancelTool={cancelTool}
+            onError={announce}
+            onRotate={rotate}
+            onUndo={undo}
+            rotation={rotation}
+            selectedTool={selectedTool}
           />
         </div>
 
-        <section aria-label="Settlement guide" className={`settlement-guide phase-${phase} ${selectedBlueprint ? 'placing' : ''}`}>
-          <header>
-            <span className="guide-pin"><GameIcon name={phase === 'ready' ? 'check' : selectedBlueprint ? 'map' : 'habitat'} /></span>
-            <span><small>{guide.eyebrow}</small><h1>{selectedBlueprint ? placementTitle : guide.title}</h1></span>
-          </header>
-          <p>{selectedBlueprint ? placementBody : guide.body}</p>
+        <aside aria-label="Build guidance" className="construction-coach">
+          <span><GameIcon name={selectedTool ? 'work' : 'habitat'} /></span>
+          <p><strong>{selectedTool ? toolName(selectedTool) : 'Freeform building'}</strong>{toolInstruction}</p>
+        </aside>
 
-          {phase === 'ready' ? (
-            <button className="begin-shift" onClick={startFirstShift} type="button"><GameIcon name="play" /><span><strong>Begin first shift</strong><small>Open colony operations</small></span></button>
-          ) : singleNextBlueprint && !selectedBlueprint ? (
+        <div className="construction-controls">
+          <nav aria-label="Construction modes" className="construction-category-bar">
             <button
-              className="choose-next-build"
-              onClick={() => selectBlueprint(singleNextBlueprint.id)}
+              aria-label="Build menu"
+              aria-keyshortcuts="B"
+              aria-pressed={buildOpen}
+              className="architect-button"
+              onClick={() => {
+                setBuildOpen((current) => !current)
+                setSelectedTool(null)
+                setParkedTool(null)
+              }}
               type="button"
             >
-              <GameIcon name={blueprintIcons[singleNextBlueprint.id]} />
-              <span><strong>Place {singleNextBlueprint.name}</strong><small>{singleNextBlueprint.cost} build kits</small></span>
-              <GameIcon name="chevron" />
+              <GameIcon name="work" /><span>Build</span><small>B</small>
             </button>
-          ) : selectedBlueprint && previewSite ? (
-            <div className="placement-actions">
-              <button className="choose-next-build confirm-build" onClick={confirmBlueprint} type="button">
-                <GameIcon name="work" />
-                <span><strong>Build {selectedBlueprint.name}</strong><small>{selectedBlueprint.cost} kits · {selectedBlueprint.width}×{selectedBlueprint.height} tiles</small></span>
-                <GameIcon name="check" />
+
+            {buildOpen && (Object.keys(categoryLabels) as BuildCategory[]).map((categoryId) => (
+              <button
+                aria-pressed={category === categoryId}
+                className={category === categoryId ? 'selected' : ''}
+                key={categoryId}
+                onClick={() => chooseCategory(categoryId)}
+                type="button"
+              >
+                <GameIcon name={categoryIcons[categoryId]} />
+                <span>{categoryLabels[categoryId]}</span>
               </button>
-              <button className="cancel-placement" onClick={() => setPreviewSiteId(null)} type="button">Choose a different site</button>
-            </div>
-          ) : selectedBlueprint ? (
-            <button className="cancel-placement" onClick={cancelPlacement} type="button">Cancel placement</button>
-          ) : null}
-        </section>
+            ))}
 
-        {phase === 'expanding' && !selectedBlueprint && (
-          <section aria-label="Build blueprints" className="blueprint-tray">
-            <header>
-              <span><GameIcon name="gear" /><strong>Build</strong></span>
-              <small>{colony.reserves.constructionStock} kits left</small>
-            </header>
-            <div>
-              {availableBlueprints.map((blueprint) => (
-                <button
-                  aria-pressed={selectedBlueprintId === blueprint.id}
-                  className={selectedBlueprintId === blueprint.id ? 'selected' : ''}
-                  key={blueprint.id}
-                  onClick={() => selectBlueprint(blueprint.id)}
-                  type="button"
-                >
-                  <span className="blueprint-icon"><GameIcon name={blueprintIcons[blueprint.id]} /></span>
-                  <span><strong>{blueprint.name}</strong><small>{blueprint.cost} kits · {blueprint.width}×{blueprint.height}</small></span>
-                  <i>{selectedBlueprintId === blueprint.id ? <GameIcon name="check" /> : <GameIcon name="plus" />}</i>
+            <button
+              aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Pan'}
+              aria-pressed={selectedTool === null}
+              className="pan-button"
+              onClick={togglePan}
+              type="button"
+            >
+              <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? `Resume ${toolName(parkedTool)}` : 'Pan'}</span>
+            </button>
+          </nav>
+
+          {buildOpen && (
+            <section aria-label={`${categoryLabels[category]} build tools`} className="construction-tool-tray">
+              <header><strong>{categoryLabels[category]}</strong><small>Select, then draw directly on the grid</small></header>
+              <div>
+                {activeTools.map((tool) => (
+                  <button
+                    aria-label={`${tool.label}: ${tool.detail}`}
+                    aria-pressed={selectedTool === tool.id}
+                    className={selectedTool === tool.id ? 'selected' : ''}
+                    key={tool.id}
+                    onClick={() => chooseTool(tool.id)}
+                    type="button"
+                  >
+                    <span><GameIcon name={tool.icon} /></span>
+                    <strong>{tool.label}</strong>
+                    <small>{tool.detail}</small>
+                  </button>
+                ))}
+              </div>
+              {isWorkstationTool(selectedTool) && (
+                <button aria-label={`Rotate ${rotation}°`} aria-keyshortcuts="R" className="rotate-tool" onClick={rotate} type="button">
+                  <GameIcon name="reset" /><span>Rotate {rotation}°</span><small>R</small>
                 </button>
-              ))}
-            </div>
-          </section>
-        )}
-
-        <div aria-live="polite" className="settlement-announcement">{announcement}</div>
-        <div aria-hidden="true" className="landing-signature">
-          <span>SHACKLETON CRATER</span><i />
+              )}
+              {selectedTool && (
+                <button className="cancel-tool" onClick={cancelTool} type="button">
+                  <GameIcon name="close" /><span>Cancel</span>
+                </button>
+              )}
+            </section>
+          )}
         </div>
+
+        <div aria-atomic="true" aria-live="polite" className={`construction-toast ${toastVisible ? 'visible' : ''}`}>
+          {announcement}
+        </div>
+        <div aria-hidden="true" className="landing-signature"><span>SHACKLETON CRATER</span><i /></div>
       </main>
     </div>
   )

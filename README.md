@@ -2,7 +2,7 @@
 
 A browser-based lunar operations game about learning to supervise AI agents through shared, live tools.
 
-This proof of concept starts the player with one lunar habitat, two settlers, and an empty field of construction plots. The player chooses the layout of a small Moon base before its first pressure-breach shift begins. The page is the shared source of truth: a person can operate the response manually, while a compatible browser agent can inspect and change the same simulation through WebMCP. The point is not to ask an AI for a one-shot answer. It is to practice grounding a decision in evidence, making a bounded plan, supervising execution, and verifying the result.
+This proof of concept starts the player with one tiny lunar habitat, two settlers, and an open 24×18 construction grid. The player draws the layout of a small Moon base before its first pressure-breach shift begins. The page is the shared source of truth: a person can operate the response manually, while a compatible browser agent can inspect and change the same simulation through WebMCP. The point is not to ask an AI for a one-shot answer. It is to practice grounding a decision in evidence, making a bounded plan, supervising execution, and verifying the result.
 
 PlayLearnAI is being built for the [OpenAI WebMCP Challenge](https://openai.com/webmcp-challenge/).
 
@@ -10,9 +10,9 @@ PlayLearnAI is being built for the [OpenAI WebMCP Challenge](https://openai.com/
 
 The opening deliberately reveals one concept at a time:
 
-1. Place the solar and battery skid to bring the settlement off reserve power.
-2. Add life support and an airlock for a safe, habitable outpost.
-3. Choose where storage and the laboratory belong. Five persistent build sites make the resulting layout the player's own.
+1. Start with one 5×5 habitat, two bunks, two settlers, and the Build menu closed.
+2. Drag one-tile wall runs directly on the grid, then replace a wall cell with a door. A sealed, door-bearing shape becomes a room automatically.
+3. Place independent multi-tile furniture, production, and power objects. A second enclosed room with Life Support makes the settlement ready.
 4. Begin the first shift to reveal the full crew, resources, work system, and laboratory incident.
 
 The top-down map uses an original hand-painted regolith texture and code-native module art. On phones, it becomes a horizontally swipeable playfield so buildings retain useful proportions.
@@ -32,8 +32,8 @@ Resetting the scenario makes it easy to try a different crew assignment or respo
 
 WebMCP is optional for the manual path. After starting the app:
 
-1. Follow the single first-landing prompt, choose a glowing site, and place each essential module. Only construction stock, newly relevant power/air status, two settlers, and the current building choice are shown.
-2. Choose **Begin first shift** after all five modules are placed. The operations HUD, full crew, incident, work orders, and command dock appear at that point.
+1. Open **Build**, choose **Structure → Wall**, and drag directly across grid cells. Use **Door** to replace one wall cell in a closed outline.
+2. Add **Production → Life support** inside the new room. Choose **Begin shift** when it appears; the operations HUD, full crew, incident, work orders, and command dock then open.
 3. Select a furnished module, crew pawn, gear token, or numbered work site to inspect it in place.
 4. In **Work**, choose an order and stage crew and required gear. The map draws the proposed routes. You can also choose **Stage a response** to load the recommended response for review.
 5. In **Plan**, set the oxygen floor, protected crew, horizon, and stop condition. Review the full action queue and resource forecast, resolve any inline blocker, then commit.
@@ -68,7 +68,7 @@ Manual controls and agent tools operate on the same browser-local game state and
 
 The current POC is intentionally narrow:
 
-- a persisted first-landing builder with two visible settlers, five player-chosen construction sites, and progressive system disclosure;
+- a persisted freeform first-landing builder with two visible settlers, one-tile walls, wall-replacing doors, automatic room detection, and independent multi-tile objects;
 - one fixed lunar-base operations scenario with six named crew and an active laboratory pressure breach;
 - engineering, science, medicine, and operations skills plus crew health, fatigue, morale, location, and work state;
 - physical EVA suits, engineering and medical kits, and a rover with location, condition, reservation, transit, and deployment state;
@@ -80,7 +80,7 @@ The current POC is intentionally narrow:
 - bounded time advancement with visible consequences and evidence-based verification; and
 - browser-local progress plus deterministic scenario reset.
 
-Given the same reset state and the same actions, the simulation produces the same result. Use the reset control to discard the current run and return to the empty first-landing layout.
+Given the same reset state and the same actions, the simulation produces the same result. Use the reset control to discard the current run and return to the tiny first-landing habitat.
 
 ## Later vertical-slice targets
 
@@ -88,7 +88,7 @@ The larger game design is not represented as implemented POC functionality. Plan
 
 - incoming and returning flights competing for landing access;
 - cargo recovery and physical pallet hauling;
-- free-form corridors, habitat expansion, and utility routing; and
+- utility routing and deeper construction-resource simulation; and
 - additional research and production chains, settlement growth, and the full campaign progression described in the game design.
 
 Those systems are deliberately outside this first playable loop. See [the game design document](docs/GAME_DESIGN.md) for the target experience and explicit jam cuts.

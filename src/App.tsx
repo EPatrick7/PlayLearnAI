@@ -15,6 +15,7 @@ import type {
 import { useWebMcpTools } from './webmcp/registerTools'
 import './styles.css'
 import './tilemap.css'
+import './construction.css'
 
 type DockTab = 'work' | 'crew' | 'gear' | 'plan' | 'log'
 type Selection =
@@ -290,6 +291,7 @@ function App() {
 
       <main className="world-stage">
         <MoonbaseMap
+          constructionLayout={colony.settlement.layout}
           crew={colony.crew}
           dustActive={colony.dust.active}
           equipment={colony.equipment}

@@ -6,6 +6,12 @@ import type {
   MoonbaseState,
   SettlementPhase,
 } from './types'
+import {
+  detectRooms,
+  getWorkstationCells,
+  getWorkstationFootprintSize,
+  type ConstructionLayout,
+} from './construction'
 
 export const buildBlueprints: readonly BuildBlueprint[] = [
   {
@@ -104,6 +110,84 @@ const phaseFor = (state: Pick<MoonbaseState, 'settlement'>): SettlementPhase => 
   if (!built.has('life_support')) return 'power_online'
   if (built.size === buildBlueprints.length) return 'ready'
   return built.has('airlock') ? 'expanding' : 'habitable'
+}
+
+const freeformReadyForOperations = (layout: ConstructionLayout) =>
+  detectRooms(layout).length >= 2 &&
+  layout.workstations.some((workstation) => workstation.type === 'life-support')
+
+export const canBeginOperations = (
+  state: Pick<MoonbaseState, 'settlement'>,
+) => phaseFor(state) === 'ready' || freeformReadyForOperations(state.settlement.layout)
+
+const alignOperationsModulesToConstruction = (state: MoonbaseState) => {
+  const layout = state.settlement.layout
+  const rooms = detectRooms(layout)
+  if (rooms.length < 2) return
+  const bunkCells = new Set(
+    layout.workstations
+      .filter((workstation) => workstation.type === 'bed')
+      .flatMap(getWorkstationCells)
+      .map((cell) => `${cell.x}:${cell.y}`),
+  )
+  const habitatRoom = rooms.find((room) => room.cells.some(
+    (cell) => bunkCells.has(`${cell.x}:${cell.y}`),
+  )) ?? rooms[0]
+  const expansionRooms = rooms.filter((room) => room.id !== habitatRoom.id)
+  const semanticRooms = [habitatRoom, ...expansionRooms]
+
+  const shellForRoom = (roomIndex: number) => {
+    const room = semanticRooms[Math.min(roomIndex, semanticRooms.length - 1)]
+    const x = Math.max(0, room.bounds.x - 1)
+    const y = Math.max(0, room.bounds.y - 1)
+    return {
+      x,
+      y,
+      width: Math.min(layout.width - x, room.bounds.width + 2),
+      height: Math.min(layout.height - y, room.bounds.height + 2),
+    }
+  }
+  const workstationPosition = (type: string) => {
+    const workstation = layout.workstations.find((candidate) => candidate.type === type)
+    if (!workstation) return null
+    const footprint = getWorkstationFootprintSize(workstation)
+    return { ...workstation.origin, ...footprint }
+  }
+  const door = semanticRooms[1].doorCells[0] ?? semanticRooms[0].doorCells[0] ?? { x: 0, y: 0 }
+  const rightmostRoomEdge = Math.max(...rooms.map((room) => room.bounds.x + room.bounds.width))
+  const exteriorX = Math.max(0, Math.min(layout.width - 3, rightmostRoomEdge + 2))
+  const exteriorY = Math.max(0, Math.min(layout.height - 2, semanticRooms[1].bounds.y))
+  const habitat = shellForRoom(0)
+  const laboratory = shellForRoom(1)
+
+  state.modules.forEach((module) => {
+    const position = module.type === 'habitat'
+      ? habitat
+      : module.type === 'laboratory'
+        ? laboratory
+        : module.type === 'life_support'
+          ? workstationPosition('life-support') ?? laboratory
+          : module.type === 'storage'
+            ? workstationPosition('storage-rack') ?? habitat
+            : module.type === 'airlock' || module.type === 'corridor'
+              ? { x: door.x, y: door.y, width: 1, height: 1 }
+              : module.type === 'solar_battery_skid'
+                ? workstationPosition('solar-array') ?? workstationPosition('battery-bank') ?? {
+                    x: exteriorX,
+                    y: exteriorY,
+                    width: 3,
+                    height: 2,
+                  }
+                : module.type === 'landing_pad'
+                  ? {
+                      x: Math.max(0, layout.width - 4),
+                      y: Math.max(0, layout.height - 3),
+                      width: 4,
+                      height: 3,
+                    }
+                  : null
+    if (position) module.position = position
+  })
 }
 
 export const availableBlueprintsFor = (
@@ -254,11 +338,16 @@ export const beginOperations = (
   if (source.settlement.phase === 'operations') {
     return [source, buildResult(source, 'already_operational', false, { error: 'Operations are already active.' })]
   }
-  if (phaseFor(source) !== 'ready') {
-    return [source, buildResult(source, 'not_ready', false, { error: 'Construct all five establishment modules before beginning operations.' })]
+  if (!canBeginOperations(source)) {
+    return [source, buildResult(source, 'not_ready', false, {
+      error: 'Enclose a second room with a door and place Life Support before beginning operations.',
+    })]
   }
 
   const state = cloneState(source)
+  if (freeformReadyForOperations(source.settlement.layout)) {
+    alignOperationsModulesToConstruction(state)
+  }
   state.settlement.phase = 'operations'
   state.settlement.builtModuleIds = state.modules.map((module) => module.id)
   state.worldRevision += 1
