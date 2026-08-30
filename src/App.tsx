@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { GameIcon, type GameIconName } from './components/GameIcon'
 import { MoonbaseMap } from './components/MoonbaseMap'
+import type { MapTileInspection } from './components/mapInspection'
 import { PawnSprite, type PawnSpriteVariant } from './components/PawnSprite'
 import { SettlementBuilder } from './components/SettlementBuilder'
 import { useColonyStore } from './game/store'
@@ -25,6 +26,7 @@ type Selection =
   | { kind: 'crew'; id: string }
   | { kind: 'equipment'; id: string }
   | { kind: 'work'; id: WorkOrderId }
+  | { kind: 'tile'; tile: MapTileInspection }
 
 const formatClock = (hour: number) => `${String(hour).padStart(2, '0')}:00`
 const formatLocation = (location: string) => location
@@ -65,6 +67,16 @@ const equipmentIcon = (item: Equipment): GameIconName => {
   return 'gear'
 }
 
+const tileSurfaceIcon = (tile: MapTileInspection): GameIconName => {
+  if (tile.focusedItem) return tile.focusedItem.icon
+  if (tile.surfaceKind === 'wall') return 'wall'
+  if (tile.surfaceKind === 'door') return 'door'
+  if (tile.surfaceKind === 'floor' || tile.surfaceKind === 'corridor') return 'floor'
+  if (tile.surfaceKind === 'solar') return 'solar'
+  if (tile.surfaceKind === 'landing-pad') return 'landingPad'
+  return 'map'
+}
+
 const dockItems: Array<{ id: DockTab; label: string; icon: GameIconName }> = [
   { id: 'work', label: 'Work', icon: 'work' },
   { id: 'crew', label: 'Crew', icon: 'crew' },
@@ -95,6 +107,8 @@ function App() {
   const selectedModule = colony.modules.find((module) => module.id === selectedModuleId)
   const selectedCrew = colony.crew.find((member) => member.id === selectedCrewId)
   const selectedEquipment = colony.equipment.find((item) => item.id === selectedEquipmentId)
+  const selectedTile = selection?.kind === 'tile' ? selection.tile : null
+  const selectedTileItem = selectedTile?.focusedItem ?? null
   const stagedPriorityAction = plan.actions.find(
     (action) => action.kind === 'set_priority' && action.workOrderId === selectedOrder.id,
   )
@@ -171,6 +185,26 @@ function App() {
     colony.recordLearningEvidence(
       'ground',
       `Inspected ${module?.name ?? moduleId}: atmosphere ${module?.atmosphere ?? 'unknown'}, condition ${module?.condition ?? 'unknown'}%.`,
+      'manual',
+    )
+  }
+
+  const inspectCrew = (crewId: string) => {
+    setSelection({ kind: 'crew', id: crewId })
+    setDrawerOpen(false)
+  }
+
+  const inspectEquipment = (equipmentId: string) => {
+    setSelection({ kind: 'equipment', id: equipmentId })
+    setDrawerOpen(false)
+  }
+
+  const inspectMapTile = (tile: MapTileInspection) => {
+    setSelection({ kind: 'tile', tile })
+    setDrawerOpen(false)
+    colony.recordLearningEvidence(
+      'ground',
+      `Inspected tile ${tile.cell.x + 1},${tile.cell.y + 1}: ${tile.focusedItem?.label ?? tile.surfaceLabel}.`,
       'manual',
     )
   }
@@ -253,10 +287,33 @@ function App() {
     }
   }
 
-  const selectionTitle = selectedModule?.name
-    ?? selectedCrew?.name
-    ?? selectedEquipment?.name
-    ?? selectedOrder.label
+  const selectionTitle = selection?.kind === 'module'
+    ? selectedModule?.name ?? selection.id
+    : selection?.kind === 'crew'
+      ? selectedCrew?.name ?? selection.id
+      : selection?.kind === 'equipment'
+        ? selectedEquipment?.name ?? selection.id
+        : selection?.kind === 'work'
+          ? selectedOrder.label
+          : selection?.kind === 'tile'
+            ? selectedTileItem?.label ?? selection.tile.surfaceLabel
+            : ''
+  const selectionKindLabel = selection?.kind === 'tile'
+    ? selectedTileItem?.kind === 'boundary'
+      ? 'Structure'
+      : selectedTileItem?.kind === 'workstation'
+        ? 'Workstation'
+        : 'Tile'
+    : selection?.kind ?? ''
+  const selectionIcon: GameIconName = selection?.kind === 'crew'
+    ? 'crew'
+    : selection?.kind === 'equipment'
+      ? selectedEquipment ? equipmentIcon(selectedEquipment) : 'gear'
+      : selection?.kind === 'work'
+        ? 'work'
+        : selection?.kind === 'tile' && selectedTile
+          ? tileSurfaceIcon(selectedTile)
+          : 'map'
 
   const selectedOrderPercent = Math.min(100, Math.round((selectedOrder.progressHours / selectedOrder.durationHours) * 100))
 
@@ -302,10 +359,17 @@ function App() {
           equipment={colony.equipment}
           height={colony.map.height}
           modules={colony.modules}
-          onInspectModule={inspectModule}
-          onSelectCrew={(crewId) => setSelection({ kind: 'crew', id: crewId })}
-          onSelectEquipment={(equipmentId) => setSelection({ kind: 'equipment', id: equipmentId })}
-          onSelectWorkOrder={(workOrderId) => selectWorkOrder(workOrderId)}
+          onInspectModule={(moduleId) => {
+            inspectModule(moduleId)
+            setDrawerOpen(false)
+          }}
+          onInspectTile={inspectMapTile}
+          onSelectCrew={inspectCrew}
+          onSelectEquipment={inspectEquipment}
+          onSelectWorkOrder={(workOrderId) => {
+            selectWorkOrder(workOrderId, false)
+            setDrawerOpen(false)
+          }}
           plan={plan}
           selectedCrewId={selectedCrewId}
           selectedEquipmentId={selectedEquipmentId}
@@ -377,11 +441,32 @@ function App() {
           )}
         </section>
 
-        {selection && !drawerOpen && <section className={`selection-inspector selection-${selection.kind}`} aria-live="polite">
+        {selection && !drawerOpen && <section
+          aria-label={`${selectionTitle} inspector`}
+          aria-live="polite"
+          className={`selection-inspector selection-${selection.kind}`}
+          data-inspected-kind={selectedTileItem?.kind}
+        >
           <div className="selection-heading">
-            <span className="selection-kind"><GameIcon name={selection.kind === 'crew' ? 'crew' : selection.kind === 'equipment' ? 'gear' : selection.kind === 'work' ? 'work' : 'map'} /></span>
-            <span><small>Selected {selection.kind}</small><strong>{selectionTitle}</strong></span>
+            <span className="selection-kind"><GameIcon name={selectionIcon} /></span>
+            <span><small>{selectionKindLabel} selected</small><strong>{selectionTitle}</strong></span>
+            <button aria-label="Close inspector" className="inspector-close" onClick={() => setSelection(null)} type="button"><GameIcon name="close" /></button>
           </div>
+          {selection.kind === 'module' && selectedModule && (
+            <p className="selection-context"><GameIcon name="habitat" />{statusLabel(selectedModule.type)} · {selectedModule.atmosphere === 'yes' ? 'Pressurized' : selectedModule.atmosphere === 'low' ? 'Low pressure' : 'Vacuum'}</p>
+          )}
+          {selection.kind === 'crew' && selectedCrew && (
+            <p className="selection-context"><GameIcon name="crew" />{selectedCrew.role} · {statusLabel(selectedCrew.status)}</p>
+          )}
+          {selection.kind === 'equipment' && selectedEquipment && (
+            <p className="selection-context"><GameIcon name={equipmentIcon(selectedEquipment)} />{statusLabel(selectedEquipment.type)} · {statusLabel(selectedEquipment.status)}</p>
+          )}
+          {selection.kind === 'work' && (
+            <p className="selection-context"><GameIcon name="work" />{selectedOrder.detail}</p>
+          )}
+          {selectedTile && (
+            <p className="selection-context"><GameIcon name={tileSurfaceIcon(selectedTile)} />{selectedTileItem?.detail ?? selectedTile.surfaceDetail} · Tile {selectedTile.cell.x + 1}, {selectedTile.cell.y + 1}</p>
+          )}
           {selectedModule && (
             <div className="selection-stats">
               <span><small>Atmosphere</small><strong className={`atmosphere-${selectedModule.atmosphere}`}>{selectedModule.atmosphere.toUpperCase()}</strong></span>
@@ -412,6 +497,29 @@ function App() {
               <span><small>Duration</small><strong>{selectedOrder.durationHours}h</strong></span>
               <button className="inspector-action" onClick={() => openTab('work')} type="button">Open work <GameIcon name="chevron" /></button>
             </div>
+          )}
+          {selectedTile && selectedTileItem && (
+            <div className="selection-stats tile-selection-stats">
+              {selectedTileItem.stats.map((stat) => (
+                <span key={stat.label}><small>{stat.label}</small><strong>{stat.value}</strong></span>
+              ))}
+            </div>
+          )}
+          {selectedTile && !selectedTileItem && (
+            <div className="selection-stats tile-selection-stats">
+              <span><small>Surface</small><strong>{selectedTile.surfaceLabel}</strong></span>
+              <span><small>Room</small><strong>{selectedTile.roomLabel ?? 'Exterior'}</strong></span>
+              <span><small>Contents</small><strong>{selectedTile.contents.length}</strong></span>
+              <span><small>Pressure</small><strong>{selectedTile.atmosphere === 'yes' ? 'Nominal' : selectedTile.atmosphere === 'low' ? 'Low' : 'Vacuum'}</strong></span>
+            </div>
+          )}
+          {selectedTile && (
+            <dl className="selection-details">
+              <div><dt>Coordinates</dt><dd>Column {selectedTile.cell.x + 1} · Row {selectedTile.cell.y + 1}</dd></div>
+              <div><dt>Area</dt><dd>{selectedTile.roomLabel ?? selectedTile.moduleName ?? 'Lunar exterior'}</dd></div>
+              <div><dt>Surface</dt><dd>{selectedTile.surfaceLabel}</dd></div>
+              <div><dt>On tile</dt><dd>{selectedTile.contents.length === 0 ? 'Nothing' : `${selectedTile.contents.length} ${selectedTile.contents.length === 1 ? 'thing' : 'things'}`}</dd></div>
+            </dl>
           )}
         </section>}
 

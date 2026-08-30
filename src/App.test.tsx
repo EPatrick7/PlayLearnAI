@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import App from './App'
 import {
@@ -116,6 +116,22 @@ const seedSecondRoom = () => {
   const layout = addEnclosedRoom(state.settlement.layout, 9, 2, 14, 7)
   state.setConstructionLayout(layout)
   return layout
+}
+
+const startOperations = () => {
+  let layout = seedSecondRoom()
+  layout = layoutFrom(placeWorkstation(layout, {
+    id: 'life-support-1',
+    type: 'life-support',
+    label: 'Life support',
+    origin: { x: 10, y: 3 },
+    size: { width: 2, height: 2 },
+    rotation: 0,
+  }))
+  useColonyStore.getState().setConstructionLayout(layout)
+  renderFreshApp()
+  fireEvent.click(screen.getByRole('button', { name: 'Begin first shift' }))
+  return screen.getByRole('group', { name: /2 player-built rooms/i })
 }
 
 beforeEach(() => {
@@ -430,7 +446,12 @@ describe('freeform settlement builder', () => {
     expect(screen.queryByRole('group', { name: /freeform construction grid/i })).not.toBeInTheDocument()
     expect(screen.getByRole('main')).toHaveClass('world-stage')
     const operationsMap = screen.getByRole('group', { name: /2 player-built rooms/i })
+    const tileGrid = within(operationsMap).getByRole('grid', { name: 'Inspectable colony tiles' })
     expect(operationsMap).toHaveAttribute('data-custom-layout', 'true')
+    expect(tileGrid).toHaveAttribute('aria-colcount', '24')
+    expect(tileGrid).toHaveAttribute('aria-rowcount', '18')
+    expect(within(tileGrid).getAllByRole('row')).toHaveLength(18)
+    expect(tileGrid.querySelectorAll('[data-map-cell]')).toHaveLength(24 * 18)
     expect(operationsMap.querySelectorAll('[data-freeform-boundary]')).toHaveLength(
       layout.boundaries.length,
     )
@@ -440,26 +461,12 @@ describe('freeform settlement builder', () => {
     const operationalTokens = operationsMap.querySelectorAll<HTMLElement>(
       '.crew-marker, .equipment-marker, .work-hotspot',
     )
-    const operationalTokenCells = new Set(
-      [...operationalTokens].map((token) => `${token.style.gridColumn}|${token.style.gridRow}`),
-    )
-    expect(operationalTokenCells.size).toBe(operationalTokens.length)
-    const moduleTargets = operationsMap.querySelectorAll<HTMLElement>('.module-select-target')
-    const moduleTargetAreas = new Set(
-      [...moduleTargets].map((target) => `${target.style.gridColumn}|${target.style.gridRow}`),
-    )
-    expect(moduleTargetAreas.size).toBe(moduleTargets.length)
-    const highestModuleTargetLayer = Math.max(
-      ...[...moduleTargets].map((target) => Number(target.style.zIndex)),
-    )
     expect([...operationalTokens].every(
-      (token) => Number(token.style.zIndex) > highestModuleTargetLayer,
+      (token) => token.hasAttribute('data-grid-x') && token.hasAttribute('data-grid-y'),
     )).toBe(true)
-    const lifeSupportTarget = within(operationsMap).getByRole('button', { name: /Inspect Life Support/i })
-    const laboratoryTarget = within(operationsMap).getByRole('button', { name: /Inspect Kepler Laboratory/i })
-    expect(Number(lifeSupportTarget.style.zIndex)).toBeGreaterThan(
-      Number(laboratoryTarget.style.zIndex),
-    )
+    expect(operationsMap.querySelector(
+      '[data-map-cell][data-grid-x="4"][data-grid-y="8"]',
+    )).toHaveAccessibleName(/Amina Okafor.*Amina bunk/i)
     expect(operations.modules.find((module) => module.id === 'module-laboratory')?.position).toEqual({
       x: 9,
       y: 2,
@@ -487,5 +494,133 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('region', { name: 'Colony crew' })).toBeVisible()
     expect(document.querySelectorAll('.colonist-strip .pawn-sprite')).toHaveLength(operations.crew.length)
     expect(document.querySelectorAll('.large-portrait .pawn-sprite')).toHaveLength(operations.crew.length)
+  })
+
+  it('inspects an empty lunar tile with user-facing coordinates', () => {
+    const map = startOperations()
+    const emptyTile = map.querySelector<HTMLElement>(
+      '[data-map-cell][data-grid-x="0"][data-grid-y="0"]',
+    )
+    if (!emptyTile) throw new Error('Missing the first operational map tile.')
+
+    fireEvent.click(emptyTile)
+
+    const inspector = screen.getByRole('region', { name: 'Lunar regolith inspector' })
+    expect(inspector).toHaveClass('selection-tile')
+    expect(inspector).toHaveTextContent('Column 1 · Row 1')
+    expect(inspector).toHaveTextContent('Lunar exterior')
+    expect(inspector).toHaveTextContent('Nothing')
+    expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
+  })
+
+  it('selects a lone colonist directly and closes an open command drawer', () => {
+    startOperations()
+    fireEvent.click(screen.getByRole('button', { name: 'Crew' }))
+    expect(screen.getByRole('region', { name: 'Colony crew' })).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Select Jonah Reed,/i }))
+
+    expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Colony crew' })).not.toBeInTheDocument()
+    const inspector = screen.getByRole('region', { name: 'Jonah Reed inspector' })
+    expect(inspector).toHaveClass('selection-crew')
+    expect(inspector).toHaveTextContent('Flight Medic')
+    expect(inspector).toHaveTextContent('Health')
+    expect(inspector).toHaveTextContent('Fatigue')
+  })
+
+  it('opens a keyboard-friendly chooser for overlapping tile items', async () => {
+    const map = startOperations()
+    const stackedTile = map.querySelector<HTMLButtonElement>(
+      '[data-map-cell][data-grid-x="4"][data-grid-y="8"]',
+    )
+    if (!stackedTile) throw new Error('Missing the Amina bunk tile.')
+
+    fireEvent.click(stackedTile)
+
+    const chooser = screen.getByRole('dialog', { name: 'Choose an item' })
+    expect(chooser).toHaveTextContent('Tile 05 · 09')
+    expect(chooser).toHaveTextContent('2 things here')
+    expect(within(chooser).getByRole('button', { name: /Amina Okafor.*Colonist/i })).toBeVisible()
+    expect(within(chooser).getByRole('button', { name: /Amina bunk.*Workstation/i })).toBeVisible()
+    expect(within(chooser).getByRole('button', { name: /Pressurized floor/i })).toBeVisible()
+    await waitFor(() => expect(document.activeElement).toBe(
+      within(chooser).getByRole('button', { name: /Amina Okafor.*Colonist/i }),
+    ))
+
+    fireEvent.keyDown(chooser, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(
+      within(chooser).getByRole('button', { name: /Amina bunk.*Workstation/i }),
+    )
+    fireEvent.click(document.activeElement as HTMLElement)
+
+    expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
+    const inspector = screen.getByRole('region', { name: 'Amina bunk inspector' })
+    expect(inspector).toHaveAttribute('data-inspected-kind', 'workstation')
+    expect(inspector).toHaveTextContent('Footprint')
+    expect(inspector).toHaveTextContent('1×2')
+    await waitFor(() => expect(document.activeElement).toBe(stackedTile))
+
+    fireEvent.click(stackedTile)
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Choose an item' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
+    expect(document.activeElement).toBe(stackedTile)
+  })
+
+  it('inspects a clicked colonist directly while the tile stack badge opens the chooser', () => {
+    const map = startOperations()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Select Amina Okafor,/i }))
+
+    expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Amina Okafor inspector' })).toBeVisible()
+
+    fireEvent.click(within(map).getByRole('button', {
+      name: /Choose 2 overlapping items on column 5, row 9: Amina Okafor, Amina bunk/i,
+    }))
+
+    expect(screen.getByRole('dialog', { name: 'Choose an item' })).toBeVisible()
+  })
+
+  it('indexes every covered workstation cell and supports roving tile focus', () => {
+    const map = startOperations()
+    const workstationCell = map.querySelector<HTMLButtonElement>(
+      '[data-map-cell][data-grid-x="10"][data-grid-y="4"]',
+    )
+    if (!workstationCell) throw new Error('Missing a covered life-support tile.')
+    expect(workstationCell).toHaveAccessibleName(/Life support/i)
+
+    fireEvent.click(workstationCell)
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Choose an item' })).getByRole(
+      'button',
+      { name: /Life support.*Workstation/i },
+    ))
+    const inspector = screen.getByRole('region', { name: 'Life support inspector' })
+    expect(inspector).toHaveAttribute('data-inspected-kind', 'workstation')
+    expect(inspector).toHaveTextContent('2×2')
+
+    const firstCell = map.querySelector<HTMLButtonElement>(
+      '[data-map-cell][data-grid-x="0"][data-grid-y="0"]',
+    )!
+    fireEvent.focus(firstCell)
+    fireEvent.keyDown(firstCell, { key: 'ArrowRight' })
+    expect(document.activeElement).toHaveAttribute('data-grid-x', '1')
+    expect(document.activeElement).toHaveAttribute('data-grid-y', '0')
+  })
+
+  it('reports the breached laboratory room as vacuum instead of assuming every room is pressurized', () => {
+    const map = startOperations()
+    const laboratoryTile = map.querySelector<HTMLButtonElement>(
+      '[data-map-cell][data-grid-x="12"][data-grid-y="5"]',
+    )
+    if (!laboratoryTile) throw new Error('Missing a laboratory room tile.')
+
+    expect(laboratoryTile).toHaveAccessibleName(/Vacuum floor/i)
+    fireEvent.click(laboratoryTile)
+
+    const inspector = screen.getByRole('region', { name: 'Vacuum floor inspector' })
+    expect(inspector).toHaveTextContent('Pressure')
+    expect(inspector).toHaveTextContent('Vacuum')
+    expect(inspector).toHaveTextContent('Unpressurized player-built room')
   })
 })

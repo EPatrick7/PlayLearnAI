@@ -50,6 +50,9 @@ export type GameIconName =
   | 'crate'
   | 'microscope'
   | 'battery'
+  | 'floor'
+  | 'wall'
+  | 'inspect'
 
 export interface GameIconProps extends Omit<SVGProps<SVGSVGElement>, 'children'> {
   name: GameIconName
@@ -340,6 +343,27 @@ function IconArtwork({ name }: { name: GameIconName }) {
         <>
           <path d="M7 4h10v17H7zM10 2h4v2" />
           <path d="m13 7-3 5h2l-1 5 3-6h-2l1-4Z" />
+        </>
+      )
+    case 'floor':
+      return (
+        <>
+          <path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18" />
+          <path d="m9 9 6 6m0-6-6 6" />
+        </>
+      )
+    case 'wall':
+      return (
+        <>
+          <path d="M3 5h18v14H3zM3 10h18M3 15h18" />
+          <path d="M8 5v5m8-5v5m-4 0v5m-5 0v4m10-4v4" />
+        </>
+      )
+    case 'inspect':
+      return (
+        <>
+          <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+          <circle cx="12" cy="12" r="2.8" />
         </>
       )
   }

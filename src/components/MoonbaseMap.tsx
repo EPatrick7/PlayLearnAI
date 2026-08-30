@@ -1,4 +1,11 @@
-import type { CSSProperties } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react'
+import { createPortal } from 'react-dom'
 import {
   detectRooms,
   getWorkstationFootprintSize,
@@ -24,6 +31,13 @@ import type {
   WorkOrderId,
 } from '../game/types'
 import { GameIcon, type GameIconName } from './GameIcon'
+import {
+  buildMapInspection,
+  describeMapTile,
+  withFocusedMapItem,
+  type MapInspectable,
+  type MapTileInspection,
+} from './mapInspection'
 import { ModuleConnectors, ModuleTilemap } from './ModuleTilemap'
 import { getModuleWalkableCells } from './moduleTileGeometry'
 import { PawnSprite, type PawnSpriteVariant } from './PawnSprite'
@@ -45,6 +59,7 @@ export interface MoonbaseMapProps {
   onSelectCrew?: (crewId: string) => void
   onSelectEquipment?: (equipmentId: string) => void
   onSelectWorkOrder?: (workOrderId: WorkOrderId) => void
+  onInspectTile?: (tile: MapTileInspection) => void
   buildSites?: Array<{
     id: string
     label: string
@@ -104,6 +119,15 @@ const isExterior = (module: ModuleState) =>
   module.type === 'solar_battery_skid' || module.type === 'landing_pad'
 
 const words = (value: string) => value.replaceAll('_', ' ').replaceAll('-', ' ')
+
+const mapTileIcon = (tile: MapTileInspection): GameIconName => {
+  if (tile.surfaceKind === 'wall') return 'wall'
+  if (tile.surfaceKind === 'door') return 'door'
+  if (tile.surfaceKind === 'floor' || tile.surfaceKind === 'corridor') return 'floor'
+  if (tile.surfaceKind === 'solar') return 'solar'
+  if (tile.surfaceKind === 'landing-pad') return 'landingPad'
+  return 'map'
+}
 
 const initials = (name: string) => name
   .split(/\s+/)
@@ -347,6 +371,7 @@ export function MoonbaseMap({
   onSelectCrew,
   onSelectEquipment,
   onSelectWorkOrder,
+  onInspectTile,
   buildSites = [],
   buildingLabel = null,
   buildingPreview = null,
@@ -354,6 +379,15 @@ export function MoonbaseMap({
   onChooseBuildSite,
   constructionLayout = null,
 }: MoonbaseMapProps) {
+  const [rovingCellKey, setRovingCellKey] = useState('0:0')
+  const [selectedCellKey, setSelectedCellKey] = useState<string | null>(null)
+  const [stackPicker, setStackPicker] = useState<{
+    tile: MapTileInspection
+    trigger: HTMLElement | null
+    placement: CSSProperties
+  } | null>(null)
+  const mapRef = useRef<HTMLDivElement>(null)
+  const stackPickerRef = useRef<HTMLElement>(null)
   const activePlan = plan.status !== 'completed'
   const plannedWorkIds = new Set<WorkOrderId>(
     activePlan ? plan.actions.map((action) => action.workOrderId) : [],
@@ -424,29 +458,70 @@ export function MoonbaseMap({
     ))
   }
 
-  const markerPosition = (
+  const markerCell = (
     markerKey: string,
     location: LocationId,
     index: number,
     lane = 0,
-  ): CSSProperties => {
+  ): GridPoint => {
     const module = moduleAt(location)
     const walkableCells = getModuleWalkableCells(module)
     const slot = Math.max(0, index + lane * 2)
-    const cell = customMarkerCells.get(markerKey) ?? walkableCells[slot % walkableCells.length]
-    return {
-      gridColumn: `${cell.x + 1} / span 1`,
-      gridRow: `${cell.y + 1} / span 1`,
-      pointerEvents: 'auto',
-      zIndex: 50,
-    }
+    return customMarkerCells.get(markerKey)
+      ?? walkableCells[slot % Math.max(1, walkableCells.length)]
+      ?? { x: module.position.x, y: module.position.y }
   }
+
+  const markerPosition = (cell: GridPoint): CSSProperties => ({
+    gridColumn: `${cell.x + 1} / span 1`,
+    gridRow: `${cell.y + 1} / span 1`,
+    pointerEvents: 'auto',
+    zIndex: 50,
+  })
 
   const locationOrdinal = <T extends { location: LocationId }>(items: T[], itemIndex: number) =>
     items.slice(0, itemIndex).filter((item) => item.location === items[itemIndex].location).length
 
   const locationPopulation = (location: LocationId) =>
     crew.filter((member) => member.location === location).length
+
+  const crewCells = new Map(crew.map((member, index) => [
+    member.id,
+    markerCell(`crew:${member.id}`, member.location, locationOrdinal(crew, index)),
+  ]))
+  const equipmentCells = new Map(equipment.map((item, index) => [
+    item.id,
+    markerCell(
+      `equipment:${item.id}`,
+      item.location,
+      locationOrdinal(equipment, index) + locationPopulation(item.location),
+      1,
+    ),
+  ]))
+  const workCells = new Map(workOrders.map((order, index) => [
+    order.id,
+    markerCell(
+      `work:${order.id}`,
+      order.location,
+      locationOrdinal(workOrders, index) + locationPopulation(order.location),
+      2,
+    ),
+  ]))
+
+  const inspectionByCell = buildMapInspection({
+    width,
+    height,
+    modules,
+    crew,
+    equipment,
+    workOrders,
+    entityCells: {
+      crew: crewCells,
+      equipment: equipmentCells,
+      work: workCells,
+    },
+    constructionLayout,
+  })
 
   const routesById = new Map<string, MapRoute>()
   if (activePlan) {
@@ -526,6 +601,118 @@ export function MoonbaseMap({
   const customRoomCount = constructionLayout ? detectRooms(constructionLayout).length : null
   const accessibleSummary = `${customRoomCount === null ? `${inspectableModules.length} base areas` : `${customRoomCount} player-built rooms`}, ${crew.length} crew, ${equipment.length} equipment items, and ${workOrders.length} work orders.${placementSummary}${dustActive ? ' Dust front active.' : ''}`
 
+  const closeStackPicker = (restoreFocus = true) => {
+    const trigger = stackPicker?.trigger
+    setStackPicker(null)
+    if (restoreFocus) trigger?.focus()
+  }
+
+  const dispatchInspectable = (tile: MapTileInspection, item: MapInspectable) => {
+    const trigger = stackPicker?.trigger
+    setSelectedCellKey(tile.key)
+    setRovingCellKey(tile.key)
+    setStackPicker(null)
+    if (item.kind === 'crew' && onSelectCrew) {
+      onSelectCrew(item.id)
+    } else if (item.kind === 'equipment' && onSelectEquipment) {
+      onSelectEquipment(item.id)
+    } else if (item.kind === 'work' && onSelectWorkOrder) {
+      onSelectWorkOrder(item.id as WorkOrderId)
+    } else {
+      onInspectTile?.(withFocusedMapItem(tile, item))
+    }
+    if (trigger) requestAnimationFrame(() => trigger.isConnected && trigger.focus())
+  }
+
+  const activateTile = (tile: MapTileInspection, trigger: HTMLElement | null) => {
+    setSelectedCellKey(tile.key)
+    setRovingCellKey(tile.key)
+    if (tile.contents.length > 1) {
+      const bounds = trigger?.getBoundingClientRect()
+      const anchorRight = tile.cell.x >= Math.floor(width * 0.62)
+      const anchorBottom = tile.cell.y >= Math.floor(height * 0.56)
+      setStackPicker({
+        tile,
+        trigger,
+        placement: {
+          ...(anchorRight
+            ? { right: Math.max(8, window.innerWidth - (bounds?.right ?? 0) + 10) }
+            : { left: Math.max(8, (bounds?.left ?? 0) + 10) }),
+          ...(anchorBottom
+            ? { bottom: Math.max(8, window.innerHeight - (bounds?.top ?? 0) + 10) }
+            : { top: Math.max(8, (bounds?.bottom ?? 0) + 10) }),
+        },
+      })
+      return
+    }
+    setStackPicker(null)
+    if (tile.contents.length === 1) {
+      dispatchInspectable(tile, tile.contents[0])
+      return
+    }
+    onInspectTile?.(withFocusedMapItem(tile, null))
+  }
+
+  const moveGridFocus = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    cell: GridPoint,
+  ) => {
+    let next: GridPoint
+    if (event.key === 'ArrowLeft') next = { x: Math.max(0, cell.x - 1), y: cell.y }
+    else if (event.key === 'ArrowRight') next = { x: Math.min(width - 1, cell.x + 1), y: cell.y }
+    else if (event.key === 'ArrowUp') next = { x: cell.x, y: Math.max(0, cell.y - 1) }
+    else if (event.key === 'ArrowDown') next = { x: cell.x, y: Math.min(height - 1, cell.y + 1) }
+    else if (event.key === 'Home') next = { x: 0, y: cell.y }
+    else if (event.key === 'End') next = { x: width - 1, y: cell.y }
+    else return
+
+    event.preventDefault()
+    const nextKey = `${next.x}:${next.y}`
+    setRovingCellKey(nextKey)
+    mapRef.current?.querySelector<HTMLElement>(
+      `[data-map-cell][data-grid-x="${next.x}"][data-grid-y="${next.y}"]`,
+    )?.focus()
+  }
+
+  const handleStackPickerKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeStackPicker()
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    const choices = [...(stackPickerRef.current?.querySelectorAll<HTMLButtonElement>(
+      '.tile-stack-item, .tile-stack-surface',
+    ) ?? [])]
+    if (choices.length === 0) return
+    event.preventDefault()
+    const currentIndex = Math.max(0, choices.indexOf(document.activeElement as HTMLButtonElement))
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? choices.length - 1
+        : event.key === 'ArrowDown'
+          ? (currentIndex + 1) % choices.length
+          : (currentIndex - 1 + choices.length) % choices.length
+    choices[nextIndex].focus()
+  }
+
+  useEffect(() => {
+    if (!stackPicker) return
+    const frame = requestAnimationFrame(() => {
+      stackPickerRef.current?.querySelector<HTMLButtonElement>('.tile-stack-item')?.focus()
+    })
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (stackPickerRef.current?.contains(event.target as Node)) return
+      setStackPicker(null)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+    }
+  }, [stackPicker])
+
   return (
     <div
       aria-label={`Top-down interactive map of Shackleton Base. ${accessibleSummary}`}
@@ -534,6 +721,7 @@ export function MoonbaseMap({
       data-custom-layout={constructionLayout ? 'true' : undefined}
       data-grid-height={height}
       data-grid-width={width}
+      ref={mapRef}
       role="group"
       style={{
         gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))`,
@@ -668,9 +856,7 @@ export function MoonbaseMap({
               boxShadow: 'none',
               gridColumn: `${module.position.x + 1} / span ${module.position.width}`,
               gridRow: `${module.position.y + 1} / span ${module.position.height}`,
-              zIndex: constructionLayout
-                ? 40 - Math.min(30, module.position.width * module.position.height)
-                : 4,
+              zIndex: 51,
             }}
             type="button"
           >
@@ -702,6 +888,64 @@ export function MoonbaseMap({
         )
       })}
 
+      <div
+        aria-colcount={width}
+        aria-label="Inspectable colony tiles"
+        aria-rowcount={height}
+        className="map-tile-hit-layer"
+        role="grid"
+        style={{ gridTemplateRows: `repeat(${height}, minmax(0, 1fr))` }}
+      >
+        {Array.from({ length: height }, (_, row) => (
+          <div
+            className="map-tile-row"
+            key={`map-row-${row}`}
+            role="row"
+            style={{
+              gridRow: `${row + 1}`,
+              gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))`,
+            }}
+          >
+            {Array.from({ length: width }, (_, column) => inspectionByCell.get(`${column}:${row}`))
+              .filter((tile): tile is MapTileInspection => Boolean(tile))
+              .map((tile) => {
+                const selected = selectedCellKey === tile.key
+                const stackOpen = stackPicker?.tile.key === tile.key
+                return (
+                  <button
+                    aria-colindex={tile.cell.x + 1}
+                    aria-expanded={tile.contents.length > 1 ? stackOpen : undefined}
+                    aria-haspopup={tile.contents.length > 1 ? 'dialog' : undefined}
+                    aria-label={describeMapTile(tile)}
+                    aria-rowindex={tile.cell.y + 1}
+                    className={[
+                      'map-tile-target',
+                      tile.contents.length > 0 ? 'has-items' : '',
+                      tile.contents.length > 1 ? 'has-stack' : '',
+                      selected ? 'is-selected' : '',
+                      stackOpen ? 'is-stack-open' : '',
+                    ].filter(Boolean).join(' ')}
+                    data-grid-x={tile.cell.x}
+                    data-grid-y={tile.cell.y}
+                    data-map-cell="true"
+                    key={`map-cell-${tile.key}`}
+                    onClick={(event) => activateTile(tile, event.currentTarget)}
+                    onFocus={() => setRovingCellKey(tile.key)}
+                    onKeyDown={(event) => moveGridFocus(event, tile.cell)}
+                    role="gridcell"
+                    style={{ gridColumn: `${tile.cell.x + 1}` }}
+                    tabIndex={rovingCellKey === tile.key ? 0 : -1}
+                    title={tile.contents.length > 1
+                      ? `${tile.contents.length} things here — click to choose`
+                      : describeMapTile(tile)}
+                    type="button"
+                  />
+                )
+              })}
+          </div>
+        ))}
+      </div>
+
       {workOrders.map((order, index) => {
         const presentation = workOrderPresentation[order.type]
         const ordinal = locationOrdinal(workOrders, index)
@@ -721,11 +965,19 @@ export function MoonbaseMap({
               selected ? 'selected' : '',
             ].filter(Boolean).join(' ')}
             key={order.id}
-            onClick={() => {
-              onInspectModule(module.id)
-              onSelectWorkOrder?.(order.id)
+            data-grid-x={workCells.get(order.id)?.x}
+            data-grid-y={workCells.get(order.id)?.y}
+            onClick={(event) => {
+              event.stopPropagation()
+              const cell = workCells.get(order.id)
+              const tile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
+              const item = tile?.contents.find((candidate) => (
+                candidate.kind === 'work' && candidate.id === order.id
+              ))
+              if (tile && item) dispatchInspectable(tile, item)
+              else onSelectWorkOrder?.(order.id)
             }}
-            style={markerPosition(`work:${order.id}`, order.location, ordinal + locationPopulation(order.location), 2)}
+            style={markerPosition(workCells.get(order.id) ?? markerCell(`work:${order.id}`, order.location, ordinal + locationPopulation(order.location), 2))}
             title={`${order.label} — ${words(order.status)}`}
             type="button"
           >
@@ -754,11 +1006,19 @@ export function MoonbaseMap({
               selected ? 'selected' : '',
             ].filter(Boolean).join(' ')}
             key={member.id}
-            onClick={() => {
-              onInspectModule(module.id)
-              onSelectCrew?.(member.id)
+            data-grid-x={crewCells.get(member.id)?.x}
+            data-grid-y={crewCells.get(member.id)?.y}
+            onClick={(event) => {
+              event.stopPropagation()
+              const cell = crewCells.get(member.id)
+              const tile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
+              const item = tile?.contents.find((candidate) => (
+                candidate.kind === 'crew' && candidate.id === member.id
+              ))
+              if (tile && item) dispatchInspectable(tile, item)
+              else onSelectCrew?.(member.id)
             }}
-            style={markerPosition(`crew:${member.id}`, member.location, ordinal)}
+            style={markerPosition(crewCells.get(member.id) ?? markerCell(`crew:${member.id}`, member.location, ordinal))}
             title={`${member.name} — ${words(member.status)}`}
             type="button"
           >
@@ -792,11 +1052,19 @@ export function MoonbaseMap({
               selected ? 'selected' : '',
             ].filter(Boolean).join(' ')}
             key={item.id}
-            onClick={() => {
-              onInspectModule(module.id)
-              onSelectEquipment?.(item.id)
+            data-grid-x={equipmentCells.get(item.id)?.x}
+            data-grid-y={equipmentCells.get(item.id)?.y}
+            onClick={(event) => {
+              event.stopPropagation()
+              const cell = equipmentCells.get(item.id)
+              const tile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
+              const inspectable = tile?.contents.find((candidate) => (
+                candidate.kind === 'equipment' && candidate.id === item.id
+              ))
+              if (tile && inspectable) dispatchInspectable(tile, inspectable)
+              else onSelectEquipment?.(item.id)
             }}
-            style={markerPosition(`equipment:${item.id}`, item.location, ordinal + locationPopulation(item.location), 1)}
+            style={markerPosition(equipmentCells.get(item.id) ?? markerCell(`equipment:${item.id}`, item.location, ordinal + locationPopulation(item.location), 1))}
             title={`${item.name} — ${words(item.status)} at ${module.name}`}
             type="button"
           >
@@ -809,6 +1077,104 @@ export function MoonbaseMap({
           </button>
         )
       })}
+
+      {[...inspectionByCell.values()]
+        .filter((tile) => tile.contents.length > 1)
+        .map((tile) => (
+          <button
+            aria-expanded={stackPicker?.tile.key === tile.key}
+            aria-haspopup="dialog"
+            aria-label={`Choose ${tile.contents.length} overlapping items on column ${tile.cell.x + 1}, row ${tile.cell.y + 1}: ${tile.contents.map((item) => item.label).join(', ')}`}
+            className="tile-stack-trigger"
+            data-grid-x={tile.cell.x}
+            data-grid-y={tile.cell.y}
+            key={`stack-trigger-${tile.key}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              activateTile(tile, event.currentTarget)
+            }}
+            style={{
+              gridColumn: `${tile.cell.x + 1}`,
+              gridRow: `${tile.cell.y + 1}`,
+              zIndex: 60,
+            }}
+            title={`Choose from ${tile.contents.length} things here`}
+            type="button"
+          >
+            {tile.contents.length}
+          </button>
+        ))}
+
+      {stackPicker && createPortal((
+        <section
+          aria-labelledby="tile-stack-title"
+          className={[
+            'tile-stack-popover',
+            'portal-layer',
+            stackPicker.tile.cell.x >= Math.floor(width * 0.62) ? 'anchor-right' : 'anchor-left',
+            stackPicker.tile.cell.y >= Math.floor(height * 0.56) ? 'anchor-bottom' : 'anchor-top',
+          ].join(' ')}
+          data-grid-x={stackPicker.tile.cell.x}
+          data-grid-y={stackPicker.tile.cell.y}
+          onKeyDown={handleStackPickerKeyDown}
+          ref={stackPickerRef}
+          role="dialog"
+          style={stackPicker.placement}
+        >
+          <header className="tile-stack-header">
+            <span className="tile-stack-heading-icon"><GameIcon name="inspect" /></span>
+            <span>
+              <small>Tile {String(stackPicker.tile.cell.x + 1).padStart(2, '0')} · {String(stackPicker.tile.cell.y + 1).padStart(2, '0')}</small>
+              <strong id="tile-stack-title">Choose an item</strong>
+              <em>{stackPicker.tile.contents.length} things here</em>
+            </span>
+            <button
+              aria-label="Close item picker"
+              className="tile-stack-close"
+              onClick={() => closeStackPicker()}
+              type="button"
+            >
+              <GameIcon name="close" />
+            </button>
+          </header>
+
+          <div className="tile-stack-list">
+            {stackPicker.tile.contents.map((item) => (
+              <button
+                className={`tile-stack-item stack-kind-${item.kind}`}
+                key={item.key}
+                onClick={() => dispatchInspectable(stackPicker.tile, item)}
+                type="button"
+              >
+                <span className="tile-stack-item-icon"><GameIcon name={item.icon} /></span>
+                <span className="tile-stack-item-copy">
+                  <strong>{item.label}</strong>
+                  <small>{item.subtitle}</small>
+                </span>
+                <GameIcon className="tile-stack-chevron" name="chevron" />
+              </button>
+            ))}
+          </div>
+
+          <button
+            className="tile-stack-surface"
+            onClick={() => {
+              const trigger = stackPicker.trigger
+              setStackPicker(null)
+              onInspectTile?.(withFocusedMapItem(stackPicker.tile, null))
+              requestAnimationFrame(() => trigger?.isConnected && trigger.focus())
+            }}
+            type="button"
+          >
+            <span className="tile-stack-item-icon"><GameIcon name={mapTileIcon(stackPicker.tile)} /></span>
+            <span className="tile-stack-item-copy">
+              <strong>{stackPicker.tile.surfaceLabel}</strong>
+              <small>{stackPicker.tile.roomLabel ?? 'Exterior'} · Inspect tile surface</small>
+            </span>
+            <GameIcon className="tile-stack-chevron" name="chevron" />
+          </button>
+        </section>
+      ), document.body)}
 
       {dustActive && (
         <div aria-hidden="true" className="dust-warning-flag">
