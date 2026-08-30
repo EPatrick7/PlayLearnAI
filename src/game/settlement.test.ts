@@ -191,9 +191,11 @@ describe('tiny-start settlement construction', () => {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(4)
+    expect(saved.version).toBe(5)
     expect(saved.state?.settlement).toMatchObject({
       phase: 'power_online',
+      constructionOrders: [],
+      constructionSequence: 1,
       buildSites: expect.arrayContaining([
         expect.objectContaining({ id: 'site-power-east', occupiedBy: 'solar_battery_skid' }),
       ]),
@@ -220,6 +222,8 @@ describe('tiny-start settlement construction', () => {
       ]),
     })
     expect(migratedV3.settlement.layout.boundaries).toHaveLength(16)
+    expect(migratedV3.settlement.constructionOrders).toEqual([])
+    expect(migratedV3.settlement.constructionSequence).toBe(1)
 
     const merge = useColonyStore.persist.getOptions().merge
     expect(merge).toBeTypeOf('function')
@@ -228,7 +232,7 @@ describe('tiny-start settlement construction', () => {
     const recovered = merge!(malformedCurrentVersion, useColonyStore.getState())
     expect(recovered.settlement.layout.boundaries).toHaveLength(16)
 
-    const future = await migrate!(saved.state, 5) as MoonbaseState
+    const future = await migrate!(saved.state, 6) as MoonbaseState
     expect(future).toMatchObject({ worldRevision: 1, settlement: { phase: 'landing' } })
   })
 })

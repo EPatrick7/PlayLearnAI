@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   detectRooms,
-  type ConstructionLayout,
   type ConstructionResult,
   type WorkstationRotation,
 } from '../game/construction'
@@ -12,6 +11,7 @@ import {
   type BuildCategory,
   type ConstructionTool,
 } from '../game/constructionCatalog'
+import { projectConstructionOrders } from '../game/constructionJobs'
 import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
 import { ConstructionMap } from './ConstructionMap'
@@ -34,7 +34,7 @@ const categoryIcons: Record<BuildCategory, GameIconName> = {
 
 const toolsByCategory: Record<BuildCategory, ToolDefinition[]> = {
   structure: [
-    { id: 'wall', label: 'Wall', detail: 'Drag a 1-tile line', icon: 'habitat' },
+    { id: 'wall', label: 'Wall', detail: 'Drag a 1-tile line', icon: 'wall' },
     { id: 'door', label: 'Door', detail: 'Replace one wall tile', icon: 'door' },
   ],
   furniture: [
@@ -100,12 +100,22 @@ const instructionFor = (tool: ConstructionTool | null) => {
   return `${WORKSTATION_SPECS[tool].description}. Point at the floor to place; R rotates.`
 }
 
-const sameLayout = (left: ConstructionLayout, right: ConstructionLayout) =>
-  JSON.stringify(left) === JSON.stringify(right)
+interface SettlementBuilderProps {
+  onExit?: () => void
+}
 
-export function SettlementBuilder() {
+export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const colony = useColonyStore()
   const layout = colony.settlement.layout
+  const constructionOrders = colony.settlement.constructionOrders
+  const projection = useMemo(
+    () => projectConstructionOrders(layout, constructionOrders),
+    [constructionOrders, layout],
+  )
+  const openOrders = constructionOrders.filter((order) => order.status !== 'complete')
+  const assignedBuilders = new Set(
+    openOrders.map((order) => order.assignedCrewId).filter(Boolean),
+  ).size
   const [buildOpen, setBuildOpen] = useState(false)
   const [category, setCategory] = useState<BuildCategory>('structure')
   const [selectedTool, setSelectedTool] = useState<ConstructionTool | null>(null)
@@ -113,8 +123,9 @@ export function SettlementBuilder() {
   const [rotation, setRotation] = useState<WorkstationRotation>(0)
   const [announcement, setAnnouncement] = useState('Build freely. Rooms are enclosed shapes with at least one door.')
   const [toastVisible, setToastVisible] = useState(false)
+  const [simulationSpeed, setSimulationSpeed] = useState<0 | 1 | 2 | 3>(1)
   const [undoCount, setUndoCount] = useState(0)
-  const undoStack = useRef<ConstructionLayout[]>([])
+  const undoStack = useRef<string[]>([])
   const rooms = useMemo(() => detectRooms(layout), [layout])
   const readyForShift = canBeginOperations(colony)
 
@@ -128,41 +139,32 @@ export function SettlementBuilder() {
       announce(result.error)
       return
     }
-    if (sameLayout(result.layout, layout)) {
-      announce('Nothing changed on those tiles.')
+    const queued = colony.queueConstruction(result)
+    if (!queued.ok) {
+      announce(queued.error ?? 'That blueprint could not be queued.')
       return
     }
-
-    const previousRoomCount = rooms.length
-    const nextRooms = detectRooms(result.layout)
-    undoStack.current = [...undoStack.current.slice(-19), structuredClone(layout)]
-    setUndoCount(undoStack.current.length)
-    colony.setConstructionLayout(result.layout)
-
-    if (nextRooms.length > previousRoomCount) {
-      const newest = nextRooms.at(-1)
-      announce(`Room created · ${newest?.area ?? 0} floor tiles.`)
-    } else if (nextRooms.length < previousRoomCount) {
-      announce('Room opened to the surface.')
-    } else if (result.code === 'workstation_placed') {
-      announce(`${label} placed as a ${result.affectedCells.length}-tile object.`)
-    } else if (label === 'Door') {
-      announce('Door installed in the wall.')
+    if (queued.commandId && queued.orderIds.length > 0) {
+      undoStack.current = [...undoStack.current.slice(-19), queued.commandId]
+      setUndoCount(undoStack.current.length)
+      announce(`${label} blueprint queued · ${queued.orderIds.length} ${queued.orderIds.length === 1 ? 'job' : 'jobs'}.`)
     } else {
-      announce(`${label} · ${result.affectedCells.length} ${result.affectedCells.length === 1 ? 'tile' : 'tiles'}.`)
+      announce('Pending blueprint cancelled.')
     }
   }
 
   const undo = () => {
-    const previous = undoStack.current.at(-1)
-    if (!previous) {
+    const commandId = undoStack.current.at(-1)
+    if (!commandId) {
       announce('Nothing to undo yet.')
       return
     }
     undoStack.current = undoStack.current.slice(0, -1)
     setUndoCount(undoStack.current.length)
-    colony.setConstructionLayout(previous)
-    announce('Last construction order undone.')
+    const cancelled = colony.cancelConstructionCommand(commandId)
+    announce(cancelled.length > 0
+      ? `Cancelled ${cancelled.length} unfinished ${cancelled.length === 1 ? 'job' : 'jobs'}.`
+      : 'That order is already built; deconstruct it to remove it.')
   }
 
   const rotate = () => {
@@ -200,14 +202,11 @@ export function SettlementBuilder() {
     setSelectedTool(tool)
     setParkedTool(null)
     setRotation(0)
-    setBuildOpen(false)
     announce(`${toolName(tool)} selected.`)
   }
 
   const chooseCategory = (nextCategory: BuildCategory) => {
     setCategory(nextCategory)
-    setSelectedTool(null)
-    setParkedTool(null)
     setBuildOpen(true)
     announce(`${categoryLabels[nextCategory]} tools open.`)
   }
@@ -236,25 +235,37 @@ export function SettlementBuilder() {
       if (event.key.toLowerCase() === 'b' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault()
         setBuildOpen((current) => !current)
-        setSelectedTool(null)
-        setParkedTool(null)
       }
-      if (event.key === 'Escape' && (selectedTool || parkedTool)) {
-        setSelectedTool(null)
-        setParkedTool(null)
-        setAnnouncement('Pan mode.')
-        setToastVisible(true)
+      if (event.key === 'Escape') {
+        if (selectedTool || parkedTool) {
+          setSelectedTool(null)
+          setParkedTool(null)
+          setAnnouncement('Select mode.')
+          setToastVisible(true)
+        } else if (buildOpen) {
+          setBuildOpen(false)
+        } else if (onExit) {
+          onExit()
+        }
       }
     }
     window.addEventListener('keydown', keyboardShortcuts)
     return () => window.removeEventListener('keydown', keyboardShortcuts)
-  }, [parkedTool, selectedTool])
+  }, [buildOpen, onExit, parkedTool, selectedTool])
 
   useEffect(() => {
     if (!toastVisible) return
     const timeout = window.setTimeout(() => setToastVisible(false), 3200)
     return () => window.clearTimeout(timeout)
   }, [announcement, toastVisible])
+
+  useEffect(() => {
+    if (simulationSpeed === 0 || openOrders.length === 0) return
+    const interval = window.setInterval(() => {
+      useColonyStore.getState().advanceConstruction(simulationSpeed * 0.72)
+    }, 900)
+    return () => window.clearInterval(interval)
+  }, [openOrders.length, simulationSpeed])
 
   const activeTools = toolsByCategory[category]
   const currentTool = selectedTool ?? parkedTool
@@ -270,14 +281,14 @@ export function SettlementBuilder() {
       ? 'Pick a tool. Walls and objects are placed cell by cell—there are no room templates.'
       : readyForShift
         ? 'Your first expansion is habitable. Begin the first shift when you are ready.'
-      : 'Build freely. A closed wall shape with a door becomes a room.'
+      : 'Drag to pan · scroll to zoom · B opens Architect.'
 
   return (
     <div className="game-shell construction-shell">
       <header className="construction-topbar">
         <div className="construction-brand" aria-label="Shackleton construction mode">
           <span className="brand-mark"><i />PL</span>
-          <span><small>Build mode</small><strong>Shackleton</strong></span>
+          <span><small>Architect</small><strong>Shackleton</strong></span>
         </div>
 
         <div className="construction-status sr-only" aria-label="Settlement layout status">
@@ -292,21 +303,50 @@ export function SettlementBuilder() {
               <GameIcon name="play" /><span>Begin shift</span>
             </button>
           )}
-          <button aria-label="Reset construction map" className="construction-reset-action" onClick={resetSettlement} title="Start over" type="button">
-            <GameIcon name="reset" />
-          </button>
+          {onExit && (
+            <button aria-label="Return to colony" className="construction-exit-action" onClick={onExit} title="Return to colony" type="button">
+              <GameIcon name="chevron" /><span>Colony</span>
+            </button>
+          )}
+          {!onExit && (
+            <button aria-label="Reset construction map" className="construction-reset-action" onClick={resetSettlement} title="Start over" type="button">
+              <GameIcon name="reset" />
+            </button>
+          )}
         </div>
       </header>
 
       <main className="construction-stage">
+        <section aria-label="Construction status" className="construction-job-hud">
+          <span className="construction-job-summary">
+            <GameIcon name={openOrders.length > 0 ? 'work' : 'check'} />
+            <span>
+              <strong>{openOrders.length > 0 ? `${openOrders.length} queued` : 'No blueprints'}</strong>
+              <small>{openOrders.length > 0
+                ? assignedBuilders > 0
+                  ? `${assignedBuilders} ${assignedBuilders === 1 ? 'builder' : 'builders'} working`
+                  : 'Waiting for a builder'
+                : toolInstruction}</small>
+            </span>
+          </span>
+          <div aria-label="Construction speed" className="construction-speed-controls" role="group">
+            <button aria-label="Pause construction" aria-pressed={simulationSpeed === 0} onClick={() => setSimulationSpeed(0)} type="button">Ⅱ</button>
+            {([1, 2, 3] as const).map((speed) => (
+              <button aria-label={`${speed} times construction speed`} aria-pressed={simulationSpeed === speed} key={speed} onClick={() => setSimulationSpeed(speed)} type="button">{speed}×</button>
+            ))}
+          </div>
+        </section>
         <div className="construction-map-scroll">
           <ConstructionMap
+            constructionOrders={constructionOrders}
+            crew={colony.crew}
             layout={layout}
             onApply={applyConstruction}
             onCancelTool={cancelTool}
             onError={announce}
             onRotate={rotate}
             onUndo={undo}
+            planningLayout={projection.layout}
             rotation={rotation}
             selectedTool={selectedTool}
           />
@@ -321,8 +361,6 @@ export function SettlementBuilder() {
               className="architect-button"
               onClick={() => {
                 setBuildOpen((current) => !current)
-                setSelectedTool(null)
-                setParkedTool(null)
               }}
               type="button"
             >
@@ -349,7 +387,7 @@ export function SettlementBuilder() {
               </span>
             )}
 
-            {undoCount > 0 && (
+            {!buildOpen && undoCount > 0 && (
               <button aria-label="Undo last construction order" className="undo-tool" onClick={undo} type="button">
                 <GameIcon name="reset" /><span>Undo</span>
               </button>

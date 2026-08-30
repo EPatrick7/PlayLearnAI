@@ -1,4 +1,5 @@
 import type { ConstructionLayout } from './construction'
+import type { ConstructionOrder } from './constructionJobs'
 
 export const skillKeys = ['engineering', 'science', 'medicine', 'operations'] as const
 export type SkillKey = (typeof skillKeys)[number]
@@ -88,6 +89,8 @@ export interface BuildSiteState {
 export interface SettlementState {
   phase: SettlementPhase
   layout: ConstructionLayout
+  constructionOrders: ConstructionOrder[]
+  constructionSequence: number
   buildSites: BuildSiteState[]
   builtModuleIds: string[]
 }

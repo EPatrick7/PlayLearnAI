@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import App from './App'
 import {
@@ -14,7 +14,23 @@ import {
 } from './game/construction'
 import { useColonyStore } from './game/store'
 
-const renderFreshApp = () => render(<App />)
+const renderFreshApp = () => {
+  const view = render(<App />)
+  const pause = screen.queryByRole('button', { name: 'Pause construction' })
+  if (pause) fireEvent.click(pause)
+  return view
+}
+
+const advanceAllConstruction = () => {
+  act(() => {
+    for (let tick = 0; tick < 60; tick += 1) {
+      if (!useColonyStore.getState().settlement.constructionOrders.some(
+        (order) => order.status !== 'complete',
+      )) break
+      useColonyStore.getState().advanceConstruction(1)
+    }
+  })
+}
 
 const constructionMap = () => screen.getByRole('group', {
   name: /freeform construction grid/i,
@@ -80,6 +96,9 @@ const selectTool = (
   const tray = openCategory(category)
   const tool = within(tray).getByRole('button', { name: toolName })
   fireEvent.click(tool)
+  expect(constructionMap()).toHaveClass('tool-active')
+  expect(screen.getByRole('region', { name: new RegExp(`^${category} build tools$`, 'i') })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
   expect(constructionMap()).toHaveClass('tool-active')
   expect(screen.queryByRole('region', { name: new RegExp(`^${category} build tools$`, 'i') })).not.toBeInTheDocument()
 }
@@ -181,7 +200,7 @@ describe('freeform settlement builder', () => {
 
     expect(map.querySelector('[data-build-site-id]')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^(Place|Preview)\b/i })).not.toBeInTheDocument()
-    expect(screen.queryByText(/build socket|blueprint/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(/No blueprints/i)
 
     const modes = screen.getByRole('navigation', { name: 'Construction modes' })
     expect(within(modes).getAllByRole('button')).toHaveLength(1)
@@ -190,7 +209,7 @@ describe('freeform settlement builder', () => {
     expect(screen.getByLabelText('Settlement layout status')).toHaveClass('sr-only')
   })
 
-  it('opens Build → Structure and commits a five-cell wall drag as one revision', () => {
+  it('queues a five-cell wall drag as worker blueprints before completing it', () => {
     renderFreshApp()
     const revision = useColonyStore.getState().worldRevision
 
@@ -198,7 +217,21 @@ describe('freeform settlement builder', () => {
     dragConstructionTool({ x: 9, y: 6 }, { x: 13, y: 6 })
 
     const state = useColonyStore.getState()
-    const painted = state.settlement.layout.boundaries.filter(
+    const paintedBeforeWork = state.settlement.layout.boundaries.filter(
+      (cell) => cell.y === 6 && cell.x >= 9 && cell.x <= 13,
+    )
+    expect(paintedBeforeWork).toEqual([])
+    expect(state.settlement.constructionOrders).toHaveLength(5)
+    expect(state.settlement.constructionOrders.every(
+      (order) => order.status === 'hauling' && order.commandId === 'construction-1',
+    )).toBe(true)
+    expect(constructionMap().querySelectorAll(
+      '[data-construction-order-status="hauling"]',
+    )).toHaveLength(5)
+    expect(state.worldRevision).toBe(revision + 1)
+
+    advanceAllConstruction()
+    const painted = useColonyStore.getState().settlement.layout.boundaries.filter(
       (cell) => cell.y === 6 && cell.x >= 9 && cell.x <= 13,
     )
     expect(painted).toEqual([
@@ -208,8 +241,6 @@ describe('freeform settlement builder', () => {
       { x: 12, y: 6, kind: 'wall' },
       { x: 13, y: 6, kind: 'wall' },
     ])
-    expect(state.worldRevision).toBe(revision + 1)
-
     for (let x = 9; x <= 13; x += 1) {
       expect(constructionMap().querySelector(
         `[data-tile-kind="wall"][data-grid-x="${x}"][data-grid-y="6"]`,
@@ -232,6 +263,14 @@ describe('freeform settlement builder', () => {
     expect(status).toHaveTextContent(/column 11, row 10.*valid wall.*2 tiles/i)
     fireEvent.keyDown(map, { key: ' ' })
 
+    expect(useColonyStore.getState().settlement.layout.boundaries).not.toEqual(
+      expect.arrayContaining([
+        { x: 9, y: 9, kind: 'wall' },
+        { x: 10, y: 9, kind: 'wall' },
+      ]),
+    )
+    expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(2)
+    advanceAllConstruction()
     expect(useColonyStore.getState().settlement.layout.boundaries).toEqual(
       expect.arrayContaining([
         { x: 9, y: 9, kind: 'wall' },
@@ -256,6 +295,13 @@ describe('freeform settlement builder', () => {
     )
 
     fireEvent.keyDown(map, { key: ' ' })
+    expect(useColonyStore.getState().settlement.layout.boundaries).toContainEqual(
+      { x: 7, y: 9, kind: 'door' },
+    )
+    expect(useColonyStore.getState().settlement.constructionOrders).toEqual(
+      expect.arrayContaining([expect.objectContaining({ operation: 'deconstruct' })]),
+    )
+    advanceAllConstruction()
     expect(useColonyStore.getState().settlement.layout.boundaries).not.toContainEqual(
       { x: 7, y: 9, kind: 'door' },
     )
@@ -279,6 +325,13 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/column 5, row 8.*valid door/i)
 
     fireEvent.keyDown(map, { key: 'Enter' })
+    expect(useColonyStore.getState().settlement.layout.boundaries).toContainEqual(
+      { x: 4, y: 7, kind: 'wall' },
+    )
+    expect(useColonyStore.getState().settlement.constructionOrders).toEqual(
+      expect.arrayContaining([expect.objectContaining({ operation: 'replace' })]),
+    )
+    advanceAllConstruction()
     expect(useColonyStore.getState().settlement.layout.boundaries).toContainEqual(
       { x: 4, y: 7, kind: 'door' },
     )
@@ -341,7 +394,13 @@ describe('freeform settlement builder', () => {
     expect(accepted.settlement.layout.boundaries).toHaveLength(16)
     expect(accepted.settlement.layout.boundaries.find(
       (cell) => cell.x === 4 && cell.y === 7,
-    )).toEqual({ x: 4, y: 7, kind: 'door' })
+    )).toEqual({ x: 4, y: 7, kind: 'wall' })
+    expect(screen.getByRole('img', { name: /Door blueprint, hauling/i })).toBeVisible()
+    expect(constructionMap().querySelector(
+      '[data-tile-kind="wall"][data-grid-x="4"][data-grid-y="7"]',
+    )).toBeInTheDocument()
+
+    advanceAllConstruction()
     expect(constructionMap().querySelector(
       '[data-tile-kind="door"][data-grid-x="4"][data-grid-y="7"]',
     )).toBeInTheDocument()
@@ -378,7 +437,24 @@ describe('freeform settlement builder', () => {
 
     const state = useColonyStore.getState()
     expect(state.worldRevision).toBe(revision + 1)
-    expect(state.settlement.layout.workstations).toContainEqual(expect.objectContaining({
+    expect(state.settlement.layout.workstations).not.toContainEqual(expect.objectContaining({
+      type: 'life-support',
+    }))
+    expect(state.settlement.constructionOrders).toContainEqual(expect.objectContaining({
+      operation: 'construct',
+      target: expect.objectContaining({
+        kind: 'workstation',
+        construct: expect.objectContaining({
+          rotation: 90,
+        }),
+      }),
+    }))
+    const blueprint = screen.getByRole('img', { name: /Life support blueprint, hauling/i })
+    expect(blueprint).toHaveAttribute('data-grid-width', '2')
+    expect(blueprint).toHaveAttribute('data-grid-height', '2')
+
+    advanceAllConstruction()
+    expect(useColonyStore.getState().settlement.layout.workstations).toContainEqual(expect.objectContaining({
       id: 'life-support-1',
       type: 'life-support',
       label: 'Life support',
@@ -393,21 +469,22 @@ describe('freeform settlement builder', () => {
     expect(lifeSupport).toHaveAttribute('data-grid-height', '2')
   })
 
-  it('deconstructs a whole workstation from a covered cell and Undo restores it', () => {
+  it('queues whole-workstation deconstruction and Undo cancels it before removal', () => {
     seedSecondRoom()
     renderFreshApp()
 
     selectTool('Production', /^Life support/i)
     clickConstructionCell({ x: 10, y: 3 })
+    advanceAllConstruction()
     expect(screen.getByRole('img', { name: 'Life support, 2 by 2 tiles' })).toBeVisible()
 
     selectTool('Orders', /^Deconstruct/i)
     clickConstructionCell({ x: 11, y: 4 }, 2)
 
-    expect(useColonyStore.getState().settlement.layout.workstations).not.toEqual(
+    expect(useColonyStore.getState().settlement.layout.workstations).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'life-support' })]),
     )
-    expect(screen.queryByRole('img', { name: 'Life support, 2 by 2 tiles' })).not.toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /Deconstruct Life support blueprint, building/i })).toBeVisible()
 
     const undo = screen.getByRole('button', { name: /^Undo/i })
     expect(undo).toBeEnabled()
@@ -419,6 +496,7 @@ describe('freeform settlement builder', () => {
         origin: { x: 10, y: 3 },
       })]),
     )
+    expect(screen.queryByRole('img', { name: /Deconstruct Life support blueprint/i })).not.toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'Life support, 2 by 2 tiles' })).toBeVisible()
   })
 
@@ -494,6 +572,37 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('region', { name: 'Colony crew' })).toBeVisible()
     expect(document.querySelectorAll('.colonist-strip .pawn-sprite')).toHaveLength(operations.crew.length)
     expect(document.querySelectorAll('.large-portrait .pawn-sprite')).toHaveLength(operations.crew.length)
+  })
+
+  it('keeps Architect reachable after operations begin and returns to the colony', () => {
+    startOperations()
+
+    const commands = screen.getByRole('navigation', { name: 'Colony commands' })
+    fireEvent.click(within(commands).getByRole('button', { name: 'Build' }))
+
+    expect(constructionMap()).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Return to colony' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Reset construction map' })).not.toBeInTheDocument()
+    expect(useColonyStore.getState().settlement.phase).toBe('operations')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Return to colony' }))
+    expect(screen.getByRole('main')).toHaveClass('world-stage')
+    expect(screen.getByRole('navigation', { name: 'Colony commands' })).toBeVisible()
+  })
+
+  it('does not open Architect when B is typed into an operations field', () => {
+    startOperations()
+
+    const commands = screen.getByRole('navigation', { name: 'Colony commands' })
+    fireEvent.click(within(commands).getByRole('button', { name: 'Plan' }))
+    const oxygenFloor = screen.getByRole('spinbutton', { name: 'O₂ reserve floor hours' })
+
+    oxygenFloor.focus()
+    fireEvent.keyDown(oxygenFloor, { key: 'b' })
+
+    expect(oxygenFloor).toBeVisible()
+    expect(screen.getByRole('main')).toHaveClass('world-stage')
+    expect(screen.queryByRole('button', { name: 'Return to colony' })).not.toBeInTheDocument()
   })
 
   it('inspects an empty lunar tile with user-facing coordinates', () => {

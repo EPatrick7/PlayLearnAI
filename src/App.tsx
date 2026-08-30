@@ -93,6 +93,7 @@ function App() {
   const webMcpStatus = useWebMcpTools()
   const [activeTab, setActiveTab] = useState<DockTab>('work')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [architectOpen, setArchitectOpen] = useState(false)
   const [selectedOrderId, setSelectedOrderId] = useState<WorkOrderId>('work-seal-lab')
   const [selection, setSelection] = useState<Selection | null>(null)
 
@@ -132,13 +133,34 @@ function App() {
   useEffect(() => {
     const closeDrawer = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setDrawerOpen(false)
+      const target = event.target
+      const editing =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      if (
+        event.key.toLowerCase() === 'b' &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !editing &&
+        colony.settlement.phase === 'operations'
+      ) {
+        event.preventDefault()
+        setDrawerOpen(false)
+        setArchitectOpen(true)
+      }
     }
     window.addEventListener('keydown', closeDrawer)
     return () => window.removeEventListener('keydown', closeDrawer)
-  }, [])
+  }, [colony.settlement.phase])
 
   if (colony.settlement.phase !== 'operations') {
     return <SettlementBuilder />
+  }
+
+  if (architectOpen) {
+    return <SettlementBuilder onExit={() => setArchitectOpen(false)} />
   }
 
   const openTab = (tab: DockTab) => {
@@ -728,6 +750,17 @@ function App() {
         </section>
 
         <nav className="command-dock" aria-label="Colony commands">
+          <button
+            aria-keyshortcuts="B"
+            onClick={() => {
+              setDrawerOpen(false)
+              setArchitectOpen(true)
+            }}
+            type="button"
+          >
+            <GameIcon name="habitat" />
+            <span>Build</span>
+          </button>
           {dockItems.map((item) => (
             <button aria-expanded={drawerOpen && activeTab === item.id} className={`${activeTab === item.id && drawerOpen ? 'active' : ''}`} key={item.id} onClick={() => openTab(item.id)} type="button">
               <GameIcon name={item.icon} />

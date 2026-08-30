@@ -464,6 +464,8 @@ export const createInitialState = (): MoonbaseState => ({
   settlement: {
     phase: 'landing',
     layout: createStarterConstruction(),
+    constructionOrders: [],
+    constructionSequence: 1,
     buildSites: structuredClone(INITIAL_BUILD_SITES),
     builtModuleIds: ['module-habitat', 'module-corridor', 'module-landing-pad'],
   },

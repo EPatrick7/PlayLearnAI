@@ -1,12 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
   boundaryAt,
@@ -32,6 +34,8 @@ import {
   type ConstructionTool,
   type WorkstationKind,
 } from '../game/constructionCatalog'
+import type { ConstructionOrder } from '../game/constructionJobs'
+import type { CrewMember } from '../game/types'
 import {
   BOUNDARY_CONNECTION_BITS,
   getBoundaryConnection,
@@ -42,6 +46,9 @@ import { PawnSprite } from './PawnSprite'
 
 interface ConstructionMapProps {
   layout: ConstructionLayout
+  planningLayout?: ConstructionLayout
+  constructionOrders?: readonly ConstructionOrder[]
+  crew?: readonly CrewMember[]
   selectedTool: ConstructionTool | null
   rotation: WorkstationRotation
   onApply: (result: ConstructionResult, label: string) => void
@@ -62,6 +69,46 @@ interface PointerPosition {
   x: number
   y: number
 }
+
+interface ZoomAnchor {
+  clientX: number
+  clientY: number
+  mapX: number
+  mapY: number
+}
+
+const MIN_ZOOM = 0.7
+const MAX_ZOOM = 1.8
+const ZOOM_STEP = 0.1
+
+const clampZoom = (zoom: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))
+
+const constructionProgress = (order: ConstructionOrder) => {
+  const haulingShare = order.materials.required > 0 ? 0.35 : 0
+  const hauling = order.materials.required > 0
+    ? Math.min(1, order.materials.delivered / order.materials.required) * haulingShare
+    : 0
+  const building = order.work.required > 0
+    ? Math.min(1, order.work.completed / order.work.required) * (1 - haulingShare)
+    : 1 - haulingShare
+  return Math.round(Math.min(1, hauling + building) * 100)
+}
+
+const constructionOrderLabel = (order: ConstructionOrder) => {
+  if (order.target.kind === 'boundary') {
+    const boundary = order.target.construct ?? order.target.deconstruct
+    return order.operation === 'deconstruct'
+      ? `Deconstruct ${boundary?.kind ?? 'boundary'}`
+      : boundary?.kind === 'door' ? 'Door' : 'Wall'
+  }
+  const workstation = order.target.construct ?? order.target.deconstruct
+  return order.operation === 'deconstruct'
+    ? `Deconstruct ${workstation?.label ?? 'workstation'}`
+    : workstation?.label ?? 'Workstation'
+}
+
+const workerVariants = ['umber', 'gold', 'olive', 'rose', 'copper', 'slate'] as const
+const workerAccents = ['#a75b4c', '#527b7d', '#68805f', '#8a6378', '#9a7046', '#596f7c']
 
 const keyFor = (point: GridPoint) => `${point.x}:${point.y}`
 
@@ -102,6 +149,9 @@ const nextWorkstationId = (layout: ConstructionLayout, kind: WorkstationKind) =>
 
 export function ConstructionMap({
   layout,
+  planningLayout = layout,
+  constructionOrders = [],
+  crew = [],
   selectedTool,
   rotation,
   onApply,
@@ -112,6 +162,9 @@ export function ConstructionMap({
 }: ConstructionMapProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const pointerIdRef = useRef<number | null>(null)
+  const panPointerIdRef = useRef<number | null>(null)
+  const panLastPointRef = useRef<PointerPosition | null>(null)
+  const zoomAnchorRef = useRef<ZoomAnchor | null>(null)
   const dragStartRef = useRef<GridPoint | null>(null)
   const dragEndRef = useRef<GridPoint | null>(null)
   const keyboardAnchorRef = useRef<GridPoint | null>(null)
@@ -122,13 +175,31 @@ export function ConstructionMap({
   const [dragEnd, setDragEnd] = useState<GridPoint | null>(null)
   const [draftTool, setDraftTool] = useState<ConstructionTool | null>(null)
   const [cursor, setCursor] = useState<GridPoint>({ x: 8, y: 9 })
+  const [isPanning, setIsPanning] = useState(false)
+  const [zoom, setZoom] = useState(1)
   const rooms = useMemo(() => detectRooms(layout), [layout])
+  const plannedRooms = useMemo(() => detectRooms(planningLayout), [planningLayout])
 
   const roomByCell = useMemo(() => {
     const map = new Map<string, (typeof rooms)[number]>()
-    rooms.forEach((room) => room.cells.forEach((cell) => map.set(keyFor(cell), room)))
+    plannedRooms.forEach((room) => room.cells.forEach((cell) => map.set(keyFor(cell), room)))
     return map
-  }, [rooms])
+  }, [plannedRooms])
+
+  const openOrders = useMemo(
+    () => constructionOrders.filter((order) => order.status !== 'complete'),
+    [constructionOrders],
+  )
+
+  const assignedOrderByCrew = useMemo(() => {
+    const byCrew = new Map<string, ConstructionOrder>()
+    openOrders.forEach((order) => {
+      if (order.assignedCrewId && !byCrew.has(order.assignedCrewId)) {
+        byCrew.set(order.assignedCrewId, order)
+      }
+    })
+    return byCrew
+  }, [openOrders])
 
   const pointerPoint = (event: ReactPointerEvent<HTMLDivElement>) => {
     const direct = pointFromElement(event.target as Element)
@@ -155,6 +226,69 @@ export function ConstructionMap({
     }
   }
 
+  const scrollContainer = () => mapRef.current?.closest<HTMLElement>('.construction-map-scroll') ?? null
+
+  const beginPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    panPointerIdRef.current = event.pointerId
+    panLastPointRef.current = { x: event.clientX, y: event.clientY }
+    setIsPanning(true)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (panPointerIdRef.current !== event.pointerId) return false
+    panPointerIdRef.current = null
+    panLastPointRef.current = null
+    setIsPanning(false)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    return true
+  }
+
+  const setZoomAround = (nextZoom: number, clientX: number, clientY: number) => {
+    const map = mapRef.current
+    if (!map) return
+    const rect = map.getBoundingClientRect()
+    zoomAnchorRef.current = {
+      clientX,
+      clientY,
+      mapX: rect.width ? (clientX - rect.left) / rect.width : 0.5,
+      mapY: rect.height ? (clientY - rect.top) / rect.height : 0.5,
+    }
+    setZoom(clampZoom(nextZoom))
+  }
+
+  const zoomFromViewportCenter = (direction: -1 | 1) => {
+    const container = scrollContainer()
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    setZoomAround(
+      Math.round((zoom + direction * ZOOM_STEP) * 10) / 10,
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2,
+    )
+  }
+
+  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (event.deltaY === 0) return
+    event.preventDefault()
+    const factor = Math.exp(-event.deltaY * 0.0015)
+    setZoomAround(zoom * factor, event.clientX, event.clientY)
+  }
+
+  useLayoutEffect(() => {
+    const anchor = zoomAnchorRef.current
+    const map = mapRef.current
+    const container = scrollContainer()
+    if (!anchor || !map || !container) return
+    zoomAnchorRef.current = null
+    const rect = map.getBoundingClientRect()
+    container.scrollLeft += rect.left + rect.width * anchor.mapX - anchor.clientX
+    container.scrollTop += rect.top + rect.height * anchor.mapY - anchor.clientY
+  }, [zoom])
+
   const indoorFootprintError = useCallback((kind: WorkstationKind, cells: GridPoint[]) => {
     if (!WORKSTATION_SPECS[kind].indoor) return null
     const roomIds = cells.map((cell) => roomByCell.get(keyFor(cell))?.id ?? null)
@@ -171,9 +305,9 @@ export function ConstructionMap({
     if (selectedTool === 'wall' || selectedTool === 'erase') {
       const start = draftTool === selectedTool ? dragStart ?? point : point
       const cells = cellsOnConstructionLine(start, point) ?? []
-      const outOfBounds = cells.some((cell) => !isInConstructionBounds(cell, layout))
+      const outOfBounds = cells.some((cell) => !isInConstructionBounds(cell, planningLayout))
       const occupied = selectedTool === 'wall'
-        ? cells.some((cell) => Boolean(workstationAt(layout, cell)))
+        ? cells.some((cell) => Boolean(workstationAt(planningLayout, cell)))
         : false
       const valid = !outOfBounds && !occupied
       return {
@@ -187,7 +321,7 @@ export function ConstructionMap({
     }
 
     if (selectedTool === 'door') {
-      const valid = boundaryAt(layout, point)?.kind === 'wall'
+      const valid = boundaryAt(planningLayout, point)?.kind === 'wall'
       return {
         cells: [point],
         valid,
@@ -197,7 +331,7 @@ export function ConstructionMap({
     }
 
     const input = workstationInput(selectedTool, point, rotation)
-    const validation = validateWorkstationPlacement(layout, input)
+    const validation = validateWorkstationPlacement(planningLayout, input)
     const indoorError = validation.valid
       ? indoorFootprintError(selectedTool, validation.cells)
       : null
@@ -211,39 +345,39 @@ export function ConstructionMap({
       label: `${WORKSTATION_SPECS[selectedTool].label} · ${footprint.width}×${footprint.height}`,
       error: validation.error ?? indoorError,
     }
-  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintError, layout, rotation, selectedTool])
+  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintError, planningLayout, rotation, selectedTool])
 
   const previewBoundaryLayout = useMemo<ConstructionLayout | null>(() => {
     if (!preview || (selectedTool !== 'wall' && selectedTool !== 'door')) return null
     const boundaries = new Map(
-      layout.boundaries.map((boundary) => [keyFor(boundary), boundary]),
+      planningLayout.boundaries.map((boundary) => [keyFor(boundary), boundary]),
     )
     preview.cells
-      .filter((cell) => isInConstructionBounds(cell, layout))
+      .filter((cell) => isInConstructionBounds(cell, planningLayout))
       .forEach((cell) => boundaries.set(keyFor(cell), { ...cell, kind: selectedTool }))
-    return { ...layout, boundaries: [...boundaries.values()] }
-  }, [layout, preview, selectedTool])
+    return { ...planningLayout, boundaries: [...boundaries.values()] }
+  }, [planningLayout, preview, selectedTool])
 
   const commitAt = (point: GridPoint) => {
     if (!selectedTool) return
     if (selectedTool === 'wall') {
       const start = dragStartRef.current ?? point
-      onApply(paintBoundaryLine(layout, start, point, 'wall'), 'Wall')
+      onApply(paintBoundaryLine(planningLayout, start, point, 'wall'), 'Wall')
       return
     }
     if (selectedTool === 'erase') {
       const start = dragStartRef.current ?? point
-      onApply(eraseLine(layout, start, point), 'Deconstruct')
+      onApply(eraseLine(planningLayout, start, point), 'Deconstruct')
       return
     }
     if (selectedTool === 'door') {
-      onApply(paintBoundaryCell(layout, point, 'door'), 'Door')
+      onApply(paintBoundaryCell(planningLayout, point, 'door'), 'Door')
       return
     }
 
-    const id = nextWorkstationId(layout, selectedTool)
+    const id = nextWorkstationId(planningLayout, selectedTool)
     const input = workstationInput(selectedTool, point, rotation, id)
-    const validation = validateWorkstationPlacement(layout, input)
+    const validation = validateWorkstationPlacement(planningLayout, input)
     const indoorError = validation.valid
       ? indoorFootprintError(selectedTool, validation.cells)
       : null
@@ -255,21 +389,29 @@ export function ConstructionMap({
       onError(validation.error ?? 'That workstation does not fit there.')
       return
     }
-    onApply(placeWorkstation(layout, input), WORKSTATION_SPECS[selectedTool].label)
+    onApply(placeWorkstation(planningLayout, input), WORKSTATION_SPECS[selectedTool].label)
   }
 
   const beginPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!selectedTool || event.button !== 0) return
     if (event.pointerType === 'touch') {
       touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
       if (touchPointsRef.current.size >= 2) {
         event.preventDefault()
         clearDraft()
+        panPointerIdRef.current = null
+        panLastPointRef.current = null
+        setIsPanning(true)
         touchPanCenterRef.current = touchCenter()
         event.currentTarget.setPointerCapture?.(event.pointerId)
         return
       }
     }
+    const panButton = (!selectedTool && event.button === 0) || (selectedTool && event.button === 1)
+    if (panButton) {
+      beginPan(event)
+      return
+    }
+    if (!selectedTool || event.button !== 0) return
     const point = pointerPoint(event)
     if (!point) return
     event.preventDefault()
@@ -290,14 +432,25 @@ export function ConstructionMap({
       if (touchPanCenterRef.current) {
         event.preventDefault()
         const nextCenter = touchCenter()
-        const scrollContainer = mapRef.current?.parentElement
-        if (nextCenter && scrollContainer) {
-          scrollContainer.scrollLeft -= nextCenter.x - touchPanCenterRef.current.x
-          scrollContainer.scrollTop -= nextCenter.y - touchPanCenterRef.current.y
+        const container = scrollContainer()
+        if (nextCenter && container) {
+          container.scrollLeft -= nextCenter.x - touchPanCenterRef.current.x
+          container.scrollTop -= nextCenter.y - touchPanCenterRef.current.y
           touchPanCenterRef.current = nextCenter
         }
         return
       }
+    }
+    if (panPointerIdRef.current === event.pointerId) {
+      event.preventDefault()
+      const previous = panLastPointRef.current
+      const container = scrollContainer()
+      if (previous && container) {
+        container.scrollLeft -= event.clientX - previous.x
+        container.scrollTop -= event.clientY - previous.y
+      }
+      panLastPointRef.current = { x: event.clientX, y: event.clientY }
+      return
     }
     const point = pointerPoint(event)
     if (!point) return
@@ -311,12 +464,16 @@ export function ConstructionMap({
     const wasTouchPan = event.pointerType === 'touch' && touchPanCenterRef.current !== null
     if (event.pointerType === 'touch') touchPointsRef.current.delete(event.pointerId)
     if (wasTouchPan) {
-      if (touchPointsRef.current.size < 2) touchPanCenterRef.current = null
+      if (touchPointsRef.current.size < 2) {
+        touchPanCenterRef.current = null
+        setIsPanning(false)
+      }
       if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId)
       }
       return
     }
+    if (endPan(event)) return
     if (pointerIdRef.current !== event.pointerId || !selectedTool) return
     const point = pointerPoint(event) ?? dragEndRef.current ?? dragStartRef.current
     if (point) commitAt(point)
@@ -328,7 +485,11 @@ export function ConstructionMap({
 
   const cancelPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'touch') touchPointsRef.current.delete(event.pointerId)
-    if (touchPointsRef.current.size < 2) touchPanCenterRef.current = null
+    if (touchPointsRef.current.size < 2) {
+      touchPanCenterRef.current = null
+      setIsPanning(false)
+    }
+    endPan(event)
     if (pointerIdRef.current !== null) onError('Draft cancelled.')
     clearDraft()
   }
@@ -405,11 +566,16 @@ export function ConstructionMap({
   const previewEndpoint = preview?.cells.at(-1) ?? hoverCell ?? cursor
   const cursorBoundary = boundaryAt(layout, cursor)
   const cursorWorkstation = workstationAt(layout, cursor)
+  const cursorOrder = openOrders.find((order) =>
+    order.target.cells.some((cell) => cell.x === cursor.x && cell.y === cursor.y),
+  )
   const cursorRoom = roomByCell.get(keyFor(cursor))
   const cursorContents = cursorBoundary
     ? cursorBoundary.kind === 'door' ? 'Door.' : 'Wall.'
     : cursorWorkstation
       ? `${cursorWorkstation.label}.`
+      : cursorOrder
+        ? `${constructionOrderLabel(cursorOrder)} blueprint, ${cursorOrder.status}.`
       : cursorRoom
         ? `Room ${cursorRoom.id.replace('room-', '')} floor.`
         : 'Open lunar ground.'
@@ -433,10 +599,32 @@ export function ConstructionMap({
         {cursorStatus}
       </p>
       <div
+        aria-label="Construction map zoom controls"
+        className="construction-zoom-controls"
+        onPointerDown={(event) => event.stopPropagation()}
+        role="group"
+      >
+        <button
+          aria-label="Zoom out construction map"
+          disabled={zoom <= MIN_ZOOM}
+          onClick={() => zoomFromViewportCenter(-1)}
+          title="Zoom out"
+          type="button"
+        >−</button>
+        <span aria-label="Construction map zoom" className="construction-zoom-value">{Math.round(zoom * 100)}%</span>
+        <button
+          aria-label="Zoom in construction map"
+          disabled={zoom >= MAX_ZOOM}
+          onClick={() => zoomFromViewportCenter(1)}
+          title="Zoom in"
+          type="button"
+        >+</button>
+      </div>
+      <div
         aria-describedby="construction-grid-help construction-grid-status"
         aria-label={`Freeform construction grid, ${layout.width} columns by ${layout.height} rows. ${rooms.length} ${rooms.length === 1 ? 'room' : 'rooms'}.`}
         aria-roledescription="freeform tile construction grid"
-        className={`construction-map ${selectedTool ? 'tool-active' : 'pan-active'}`}
+        className={`construction-map ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''}`}
         data-grid-height={layout.height}
         data-grid-width={layout.width}
         onContextMenu={(event) => {
@@ -451,12 +639,14 @@ export function ConstructionMap({
         }}
         onPointerMove={movePointer}
         onPointerUp={finishPointer}
+        onWheel={handleWheel}
         ref={mapRef}
         role="group"
         style={{
           gridTemplateColumns: `repeat(${layout.width}, minmax(0, 1fr))`,
           gridTemplateRows: `repeat(${layout.height}, minmax(0, 1fr))`,
-        }}
+          '--construction-zoom': zoom,
+        } as CSSProperties}
         tabIndex={0}
       >
         {Array.from({ length: layout.width * layout.height }, (_, index) => {
@@ -539,14 +729,109 @@ export function ConstructionMap({
           )
         })}
 
-        <span aria-label="Amina Okafor" className="construction-pawn pawn-amina" role="img">
-          <PawnSprite accent="#a75b4c" initials="AO" size="compact" variant="umber" />
-          <small className="construction-pawn-label">Amina</small>
-        </span>
-        <span aria-label="Mateo Alvarez" className="construction-pawn pawn-mateo" role="img">
-          <PawnSprite accent="#527b7d" initials="MA" size="compact" variant="gold" />
-          <small className="construction-pawn-label">Mateo</small>
-        </span>
+        {openOrders.map((order) => {
+          const progress = constructionProgress(order)
+          if (order.target.kind === 'boundary') {
+            const cell = order.target.cells[0]
+            const boundary = order.target.construct ?? order.target.deconstruct
+            if (!boundary) return null
+            const connectionLayout = order.target.construct ? planningLayout : layout
+            const connection = getBoundaryConnection(connectionLayout, cell)
+            return (
+              <span
+                aria-label={`${constructionOrderLabel(order)} blueprint, ${order.status}, ${progress} percent`}
+                className={`construction-blueprint construction-blueprint-boundary construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+                data-boundary-connection={connection.name}
+                data-boundary-mask={connection.mask}
+                data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
+                data-connect-north={connection.mask & BOUNDARY_CONNECTION_BITS.north ? 'true' : undefined}
+                data-connect-south={connection.mask & BOUNDARY_CONNECTION_BITS.south ? 'true' : undefined}
+                data-connect-west={connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
+                data-construction-order-id={order.id}
+                data-construction-order-status={order.status}
+                data-grid-x={cell.x}
+                data-grid-y={cell.y}
+                key={order.id}
+                role="img"
+                style={{ gridColumn: `${cell.x + 1}`, gridRow: `${cell.y + 1}` }}
+              >
+                <i />
+                <b className="construction-job-progress"><i style={{ width: `${progress}%` }} /></b>
+              </span>
+            )
+          }
+
+          const workstation = order.target.construct ?? order.target.deconstruct
+          if (!workstation) return null
+          const kind = workstation.type as WorkstationKind
+          const spec = WORKSTATION_SPECS[kind]
+          const footprint = getWorkstationFootprintSize(workstation)
+          return (
+            <span
+              aria-label={`${constructionOrderLabel(order)} blueprint, ${order.status}, ${progress} percent`}
+              className={`construction-blueprint construction-blueprint-workstation blueprint-${order.operation} status-${order.status}`}
+              data-construction-order-id={order.id}
+              data-construction-order-status={order.status}
+              data-grid-height={footprint.height}
+              data-grid-width={footprint.width}
+              data-grid-x={workstation.origin.x}
+              data-grid-y={workstation.origin.y}
+              key={order.id}
+              role="img"
+              style={{
+                gridColumn: `${workstation.origin.x + 1} / span ${footprint.width}`,
+                gridRow: `${workstation.origin.y + 1} / span ${footprint.height}`,
+              }}
+            >
+              <span className="blueprint-workstation-art"><GameIcon name={spec?.icon ?? 'work'} /></span>
+              <strong>{order.operation === 'deconstruct' ? 'Remove' : spec?.shortLabel ?? workstation.label}</strong>
+              <small>{order.status === 'hauling' ? 'Hauling' : order.status === 'blocked' ? 'Blocked' : 'Building'}</small>
+              <b className="construction-job-progress"><i style={{ width: `${progress}%` }} /></b>
+            </span>
+          )
+        })}
+
+        {!assignedOrderByCrew.has('crew-amina-okafor') && (
+          <span aria-label="Amina Okafor, idle" className="construction-pawn pawn-amina" role="img">
+            <PawnSprite accent="#a75b4c" initials="AO" size="compact" variant="umber" />
+            <small className="construction-pawn-label">Amina</small>
+          </span>
+        )}
+        {!assignedOrderByCrew.has('crew-mateo-alvarez') && (
+          <span aria-label="Mateo Alvarez, idle" className="construction-pawn pawn-mateo" role="img">
+            <PawnSprite accent="#527b7d" initials="MA" size="compact" variant="gold" />
+            <small className="construction-pawn-label">Mateo</small>
+          </span>
+        )}
+        {[...assignedOrderByCrew.entries()].map(([crewId, order]) => {
+          const memberIndex = Math.max(0, crew.findIndex((member) => member.id === crewId))
+          const member = crew[memberIndex]
+          const cell = order.target.cells[0]
+          const name = member?.name ?? crewId
+          const workerInitials = name.split(' ').map((part) => part[0]).join('').slice(0, 2)
+          return (
+            <span
+              aria-label={`${name}, ${order.status} ${constructionOrderLabel(order)}`}
+              className={`construction-pawn construction-worker worker-${order.status}`}
+              data-construction-worker-id={crewId}
+              data-order-id={order.id}
+              key={crewId}
+              role="img"
+              style={{ gridColumn: `${cell.x + 1}`, gridRow: `${cell.y + 1}` }}
+            >
+              <PawnSprite
+                accent={workerAccents[memberIndex % workerAccents.length]}
+                initials={workerInitials}
+                showStatusDot
+                size="compact"
+                status="working"
+                variant={workerVariants[memberIndex % workerVariants.length]}
+              />
+              <span className="construction-worker-task"><GameIcon name="work" /></span>
+              <small className="construction-pawn-label">{name.split(' ')[0]}</small>
+            </span>
+          )
+        })}
 
         {rooms.map((room) => {
           const labelCell = room.cells[Math.floor(room.cells.length / 2)]
@@ -563,7 +848,7 @@ export function ConstructionMap({
         })}
 
         {selectedTool && preview?.cells
-          .filter((cell) => isInConstructionBounds(cell, layout))
+          .filter((cell) => isInConstructionBounds(cell, planningLayout))
           .map((cell) => {
             const connection = previewBoundaryLayout
               ? getBoundaryConnection(previewBoundaryLayout, cell)
