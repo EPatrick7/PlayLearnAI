@@ -1,0 +1,111 @@
+.pawn-sprite {
+  position: relative;
+  z-index: 1;
+  margin: 0 !important;
+  vertical-align: middle;
+}
+
+.pawn-sprite__art {
+  display: block;
+  overflow: visible;
+  filter: drop-shadow(0 2px 2px rgba(7, 11, 10, 0.42));
+}
+
+.construction-pawn {
+  width: 28px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.construction-pawn .pawn-sprite { grid-area: 1 / 1; }
+
+.construction-pawn-label {
+  display: none;
+}
+
+.crew-marker,
+.map-pawn {
+  width: 36px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.crew-marker .pawn-sprite,
+.map-pawn .pawn-sprite {
+  grid-area: 1 / 1;
+  margin: 0 !important;
+}
+
+.crew-marker:hover .pawn-sprite__art,
+.crew-marker.selected .pawn-sprite__art,
+.map-pawn:hover .pawn-sprite__art,
+.map-pawn.selected .pawn-sprite__art {
+  filter:
+    drop-shadow(0 0 3px rgba(143, 197, 220, 0.88))
+    drop-shadow(0 3px 2px rgba(7, 11, 10, 0.5));
+}
+
+.colonist-card .portrait {
+  width: 38px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(0, 0, 0, 0.08)),
+    conic-gradient(var(--mint) var(--health), rgba(87, 91, 87, 0.42) 0);
+  filter: none;
+}
+
+.colonist-card .portrait::before {
+  inset: 2px;
+  border: 1px solid rgba(24, 31, 29, 0.78);
+  border-radius: 3px;
+  background: rgba(30, 37, 35, 0.88);
+}
+
+.colonist-card .portrait .pawn-sprite {
+  position: relative;
+  z-index: 2;
+}
+
+.mini-portrait,
+.large-portrait {
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: inherit;
+  background: rgba(27, 34, 33, 0.86);
+}
+
+.mini-portrait {
+  width: 28px;
+  height: 32px;
+  border: 1px solid #596563;
+  box-shadow: none;
+}
+
+.large-portrait {
+  width: 54px;
+  height: 62px;
+  border: 1px solid #65716f;
+  box-shadow: 0 3px 7px rgba(0, 0, 0, 0.3);
+}
+
+@media (max-width: 700px) {
+  .construction-pawn { width: 26px; height: 32px; }
+  .colonist-card .portrait { width: 35px; height: 40px; }
+}

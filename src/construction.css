@@ -184,7 +184,7 @@
 }
 
 .construction-map.pan-active { touch-action: pan-x pan-y; }
-.construction-map:focus-visible { box-shadow: 0 0 0 2px var(--construction-cyan), 0 0 44px rgba(0, 0, 0, 0.24) inset; }
+.construction-map:focus-visible { box-shadow: 0 0 0 1px rgba(219, 217, 201, 0.08), 0 0 44px rgba(0, 0, 0, 0.24) inset; }
 
 .construction-cell,
 .construction-room-floor,
@@ -226,19 +226,19 @@
 
 .construction-boundary {
   --boundary-edge-east: rgba(25, 31, 30, 0.92);
-  --boundary-edge-north: rgba(235, 236, 222, 0.52);
+  --boundary-edge-north: rgba(235, 236, 222, 0.42);
   --boundary-edge-south: rgba(22, 28, 27, 0.9);
-  --boundary-edge-west: rgba(220, 222, 209, 0.28);
-  --wall-face: #727b77;
-  --wall-face-low: #4c5652;
-  --wall-face-top: #aeb2a9;
+  --boundary-edge-west: rgba(220, 222, 209, 0.2);
   z-index: 6;
   pointer-events: none;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 24% 31%, rgba(242, 239, 218, 0.11) 0 1px, transparent 1.5px),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.08), transparent 42%),
-    linear-gradient(180deg, var(--wall-face-top) 0 16%, var(--wall-face) 17% 72%, var(--wall-face-low) 73% 100%);
+  background-color: #68716d;
+  background-image:
+    radial-gradient(circle, rgba(240, 237, 218, 0.04) 0 1px, transparent 1.5px),
+    linear-gradient(125deg, rgba(255, 255, 255, 0.045), transparent 43%, rgba(20, 26, 24, 0.045));
+  background-attachment: fixed, fixed;
+  background-position: 0 0, 0 0;
+  background-size: 23px 19px, 100vw 100vh;
   box-shadow: none;
 }
 
@@ -255,14 +255,7 @@
 }
 
 .construction-boundary::after {
-  position: absolute;
-  z-index: 1;
-  inset: 3px;
-  background:
-    linear-gradient(112deg, transparent 0 43%, rgba(244, 240, 217, 0.08) 44% 46%, transparent 47%),
-    repeating-linear-gradient(90deg, transparent 0 10px, rgba(21, 27, 26, 0.045) 10px 11px);
-  content: "";
-  opacity: 0.62;
+  display: none;
 }
 
 .construction-boundary[data-connect-north="true"] { --boundary-edge-north: transparent; }
@@ -270,69 +263,8 @@
 .construction-boundary[data-connect-south="true"] { --boundary-edge-south: transparent; }
 .construction-boundary[data-connect-west="true"] { --boundary-edge-west: transparent; }
 
-.construction-boundary.boundary-variant-1 {
-  --wall-face: #78807c;
-  --wall-face-low: #515a56;
-  --wall-face-top: #b3b5ac;
-}
-
-.construction-boundary.boundary-variant-2 {
-  --wall-face: #6d7672;
-  --wall-face-low: #48524e;
-  --wall-face-top: #a8aca3;
-}
-
 .construction-boundary.boundary-wall > i {
-  position: absolute;
-  z-index: 3;
-  inset: 17%;
-  border: 1px solid rgba(34, 41, 39, 0.68);
-  border-radius: 2px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.14), transparent 42%),
-    rgba(91, 100, 96, 0.96);
-}
-
-.construction-boundary.boundary-wall > i::before,
-.construction-boundary.boundary-wall > i::after {
-  position: absolute;
-  width: clamp(2px, 8%, 4px);
-  height: clamp(2px, 8%, 4px);
-  border-radius: 50%;
-  background: #252c2b;
-  box-shadow: 0 0 0 1px rgba(213, 215, 204, 0.15);
-  content: "";
-}
-
-.construction-boundary.boundary-wall > i::before { left: 2px; top: 2px; }
-.construction-boundary.boundary-wall > i::after { right: 2px; bottom: 2px; }
-
-.construction-boundary.boundary-wall[data-connect-north="true"] > i {
-  top: -1px;
-  border-top-color: transparent;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-}
-
-.construction-boundary.boundary-wall[data-connect-east="true"] > i {
-  right: -1px;
-  border-right-color: transparent;
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.construction-boundary.boundary-wall[data-connect-south="true"] > i {
-  bottom: -1px;
-  border-bottom-color: transparent;
-  border-bottom-right-radius: 0;
-  border-bottom-left-radius: 0;
-}
-
-.construction-boundary.boundary-wall[data-connect-west="true"] > i {
-  left: -1px;
-  border-left-color: transparent;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
+  display: none;
 }
 
 .construction-boundary.boundary-connection-isolated { border-radius: 3px; }
@@ -341,33 +273,20 @@
 .construction-boundary.boundary-connection-end-south { border-radius: 3px 3px 0 0; }
 .construction-boundary.boundary-connection-end-west { border-radius: 0 3px 3px 0; }
 
-.construction-boundary[class*="boundary-connection-tee-"] > i,
-.construction-boundary.boundary-connection-cross > i {
-  background:
-    radial-gradient(circle at 50% 50%, rgba(216, 186, 119, 0.2) 0 3px, transparent 3.5px),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.13), transparent 42%),
-    rgba(87, 97, 92, 0.98);
-}
-
 .construction-boundary.boundary-door {
-  --wall-face: #5d6864;
-  --wall-face-low: #38433f;
-  --wall-face-top: #8f9892;
-  background:
-    repeating-linear-gradient(135deg, rgba(224, 177, 83, 0.18) 0 4px, transparent 4px 9px),
-    linear-gradient(180deg, var(--wall-face-top) 0 16%, var(--wall-face) 17% 72%, var(--wall-face-low) 73% 100%);
+  background-color: #68716d;
 }
 
 .construction-boundary.boundary-door > i {
   position: absolute;
   z-index: 3;
-  border: 1px solid #222a28;
-  border-radius: 2px;
-  background:
-    repeating-linear-gradient(135deg, rgba(230, 184, 91, 0.3) 0 3px, transparent 3px 8px),
-    linear-gradient(90deg, rgba(239, 225, 190, 0.14), transparent 48%),
-    #848b85;
-  box-shadow: 0 0 0 1px rgba(222, 218, 198, 0.16) inset;
+  border: 2px solid #242d2a;
+  border-radius: 1px;
+  background: #7e8782;
+  box-shadow:
+    0 0 0 1px rgba(148, 212, 220, 0.26),
+    1px 1px 0 rgba(239, 234, 214, 0.12) inset,
+    -1px -1px 0 rgba(16, 22, 20, 0.18) inset;
 }
 
 .construction-boundary.boundary-door > i::before,
@@ -388,8 +307,8 @@
 .construction-boundary.boundary-door > i::after {
   left: 50%;
   top: 50%;
-  width: 6px;
-  height: 3px;
+  width: 5px;
+  height: 4px;
   border: 1px solid rgba(35, 39, 36, 0.78);
   border-radius: 1px;
   background: #d2ad5d;
@@ -397,17 +316,17 @@
 }
 
 .construction-boundary.boundary-door.door-vertical > i {
-  left: 23%;
-  right: 23%;
-  top: 3px;
-  bottom: 3px;
+  left: 24%;
+  right: 24%;
+  top: -1px;
+  bottom: -1px;
 }
 
 .construction-boundary.boundary-door.door-horizontal > i {
-  left: 3px;
-  right: 3px;
-  top: 23%;
-  bottom: 23%;
+  left: -1px;
+  right: -1px;
+  top: 24%;
+  bottom: 24%;
 }
 
 .construction-boundary.boundary-door.door-vertical > i::before {
@@ -418,17 +337,10 @@
   box-shadow: 0 1px rgba(233, 224, 199, 0.14);
 }
 
-.construction-boundary.boundary-door.door-horizontal[data-connect-east="true"] > i { right: -1px; border-right-color: transparent; }
-.construction-boundary.boundary-door.door-horizontal[data-connect-west="true"] > i { left: -1px; border-left-color: transparent; }
-.construction-boundary.boundary-door.door-vertical[data-connect-north="true"] > i { top: -1px; border-top-color: transparent; }
-.construction-boundary.boundary-door.door-vertical[data-connect-south="true"] > i { bottom: -1px; border-bottom-color: transparent; }
-
-.construction-boundary.boundary-door::after {
-  inset: 4px;
-  border: 1px solid rgba(216, 173, 87, 0.16);
-  background: none;
-  opacity: 1;
-}
+.construction-boundary.boundary-door.door-horizontal[data-connect-east="true"] > i { border-right-color: transparent; }
+.construction-boundary.boundary-door.door-horizontal[data-connect-west="true"] > i { border-left-color: transparent; }
+.construction-boundary.boundary-door.door-vertical[data-connect-north="true"] > i { border-top-color: transparent; }
+.construction-boundary.boundary-door.door-vertical[data-connect-south="true"] > i { border-bottom-color: transparent; }
 
 .construction-workstation {
   position: relative;
@@ -573,28 +485,24 @@
   --boundary-edge-north: rgba(255, 230, 166, 0.92);
   --boundary-edge-south: rgba(63, 42, 12, 0.94);
   --boundary-edge-west: rgba(255, 218, 136, 0.6);
-  --wall-face: rgba(199, 151, 57, 0.92);
-  --wall-face-low: rgba(119, 83, 25, 0.94);
-  --wall-face-top: rgba(239, 198, 110, 0.94);
   border: 0;
-  background:
-    radial-gradient(circle at 24% 31%, rgba(255, 242, 203, 0.18) 0 1px, transparent 1.5px),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.16), transparent 42%),
-    linear-gradient(180deg, var(--wall-face-top) 0 16%, var(--wall-face) 17% 72%, var(--wall-face-low) 73% 100%);
+  background-color: #b88634;
+  background-image:
+    radial-gradient(circle, rgba(255, 242, 203, 0.1) 0 1px, transparent 1.5px),
+    linear-gradient(125deg, rgba(255, 255, 255, 0.12), transparent 43%, rgba(74, 48, 13, 0.1));
+  background-attachment: fixed, fixed;
+  background-position: 0 0, 0 0;
+  background-size: 23px 19px, 100vw 100vh;
+  box-shadow: none;
 }
 
 .construction-preview.preview-wall.boundary-wall > i {
-  border-color: rgba(75, 51, 17, 0.76);
-  background:
-    linear-gradient(135deg, rgba(255, 245, 209, 0.18), transparent 42%),
-    rgba(170, 124, 43, 0.98);
+  display: none;
 }
 
 .construction-preview.preview-door.boundary-door > i {
   border-color: rgba(70, 47, 13, 0.84);
-  background:
-    repeating-linear-gradient(135deg, rgba(255, 231, 169, 0.28) 0 3px, transparent 3px 8px),
-    #bd8f38;
+  background: #c49a47;
 }
 
 .construction-preview.invalid.preview-wall,
@@ -603,16 +511,21 @@
   --boundary-edge-north: rgba(255, 187, 177, 0.9);
   --boundary-edge-south: rgba(58, 20, 17, 0.96);
   --boundary-edge-west: rgba(247, 143, 132, 0.58);
-  --wall-face: rgba(161, 62, 53, 0.92);
-  --wall-face-low: rgba(92, 33, 28, 0.94);
-  --wall-face-top: rgba(216, 105, 94, 0.94);
+  background-color: #9b4139;
+  background-image:
+    radial-gradient(circle, rgba(255, 224, 218, 0.08) 0 1px, transparent 1.5px),
+    linear-gradient(125deg, rgba(255, 255, 255, 0.08), transparent 43%, rgba(48, 15, 13, 0.12));
 }
 
-.construction-preview.invalid.preview-wall.boundary-wall > i,
 .construction-preview.invalid.preview-door.boundary-door > i {
   border-color: rgba(66, 24, 20, 0.84);
-  background: rgba(139, 49, 43, 0.98);
+  background: #b0574c;
 }
+
+.construction-preview[data-connect-north="true"] { --boundary-edge-north: transparent; }
+.construction-preview[data-connect-east="true"] { --boundary-edge-east: transparent; }
+.construction-preview[data-connect-south="true"] { --boundary-edge-south: transparent; }
+.construction-preview[data-connect-west="true"] { --boundary-edge-west: transparent; }
 
 .construction-cursor {
   z-index: 13;
@@ -984,4 +897,250 @@
 @media (prefers-reduced-motion: reduce) {
   .construction-room-floor { animation: none; }
   .construction-toast { transition: none; }
+}
+
+/* Construction UI polish: one quiet dock, one feedback channel, map first. */
+.construction-topbar {
+  height: 48px;
+  padding: 0 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-bottom-color: rgba(235, 226, 204, 0.09);
+  background: rgba(25, 29, 27, 0.96);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.26);
+}
+
+.construction-brand { gap: 7px; }
+.construction-brand .brand-mark { width: 30px; height: 30px; }
+.construction-brand > span:last-child { display: flex; align-items: baseline; gap: 8px; }
+.construction-brand small { font-size: 6px; }
+.construction-brand strong { font-size: 14px; }
+
+.construction-top-actions { grid-column: 2; }
+.construction-top-actions button {
+  height: 34px;
+  min-width: 34px;
+  padding: 0 9px;
+  border-color: rgba(235, 226, 204, 0.1);
+  font-size: 9px;
+}
+.construction-top-actions .construction-reset-action { width: 34px; padding: 0; opacity: 0.62; }
+
+.construction-stage { height: calc(100dvh - 48px); }
+.construction-map { --construction-cell-size: min(calc(100vw / 24), calc((100dvh - 48px) / 18)); }
+
+.construction-controls {
+  bottom: 14px;
+  width: auto;
+  max-width: calc(100% - 28px);
+  align-items: stretch;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(8, 11, 10, 0.92);
+  border-radius: 6px;
+  background: rgba(27, 31, 28, 0.96);
+  box-shadow: 0 1px 0 rgba(255, 248, 226, 0.07) inset, 0 8px 22px rgba(0, 0, 0, 0.38);
+}
+
+.construction-controls.catalog-open { width: min(700px, calc(100% - 28px)); }
+.construction-controls.active-tool { width: min(760px, calc(100% - 28px)); }
+
+.construction-category-bar,
+.construction-tool-tray {
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.construction-category-bar {
+  min-height: 50px;
+  padding: 4px;
+  gap: 2px;
+  overflow: visible;
+}
+
+.construction-category-bar button {
+  min-width: 62px;
+  min-height: 42px;
+  padding: 5px 8px;
+  grid-template-columns: 17px minmax(0, 1fr);
+  gap: 5px;
+  border-radius: 4px;
+  font: 700 10px/1 system-ui, sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.construction-category-bar button .game-icon { width: 16px; height: 16px; }
+.construction-category-bar .architect-button { min-width: 78px; }
+.construction-category-bar .architect-button small { display: none; }
+.construction-category-bar .pan-button { min-width: 58px; }
+
+.active-tool-summary {
+  min-width: 0;
+  flex: 1 1 260px;
+  padding: 4px 10px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border-left: 1px solid rgba(235, 226, 204, 0.08);
+  border-right: 1px solid rgba(235, 226, 204, 0.08);
+  color: #d9d0bd;
+}
+
+.active-tool-summary > .game-icon { width: 19px; height: 19px; color: var(--construction-amber); }
+.active-tool-summary > span { min-width: 0; display: grid; gap: 2px; }
+.active-tool-summary strong { font: 750 11px/1 system-ui, sans-serif; }
+.active-tool-summary small {
+  overflow: hidden;
+  color: #99998f;
+  font: 500 9px/1.15 system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.construction-tool-tray {
+  width: 100%;
+  padding: 6px;
+  border-bottom: 1px solid rgba(235, 226, 204, 0.08);
+  display: block;
+}
+
+.construction-tool-tray > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.construction-tool-tray > div > button {
+  min-height: 48px;
+  padding: 5px 8px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  gap: 7px;
+  border-color: rgba(235, 226, 204, 0.09);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.construction-tool-tray > div > button > span {
+  grid-row: 1;
+  width: 28px;
+  height: 34px;
+  border: 0;
+  background: transparent;
+}
+
+.construction-tool-tray > div > button .game-icon { width: 20px; height: 20px; }
+.construction-tool-tray > div > button strong {
+  align-self: center;
+  font: 700 11px/1 system-ui, sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.construction-tool-tray > div > button small { display: none; }
+
+.construction-category-bar .rotate-tool,
+.construction-category-bar .cancel-tool,
+.construction-category-bar .undo-tool {
+  width: auto;
+  min-width: 58px;
+  min-height: 42px;
+  padding: 5px 8px;
+  display: grid;
+  grid-template-columns: 16px auto;
+  grid-auto-flow: row;
+  place-items: center;
+  gap: 4px;
+  border-color: transparent;
+  color: #aaa796;
+  background: transparent;
+  font: 700 9px/1 system-ui, sans-serif;
+  text-transform: none;
+}
+
+.construction-category-bar .rotate-tool small { grid-column: 1 / -1; color: #87877e; font-size: 7px; }
+.construction-category-bar .cancel-tool:hover { color: #efbbb4; border-color: rgba(221, 111, 97, 0.36); }
+
+@media (max-width: 700px) {
+  .construction-topbar {
+    height: 44px;
+    padding: 0 7px;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .construction-brand .brand-mark { width: 29px; height: 29px; }
+  .construction-brand > span:last-child { display: block; }
+  .construction-brand strong { font-size: 13px; }
+  .construction-top-actions button { width: 34px; height: 34px; padding: 0; }
+  .construction-top-actions .construction-reset-action { width: 40px; height: 40px; min-width: 40px; }
+  .construction-stage { height: calc(100dvh - 44px); }
+  .construction-map { --construction-cell-size: 40px; }
+
+  .construction-controls,
+  .construction-controls.catalog-open,
+  .construction-controls.active-tool {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-width: none;
+  }
+
+  .construction-category-bar {
+    width: 100%;
+    min-height: 50px;
+    padding: 3px;
+    overflow: hidden;
+  }
+
+  .construction-controls.catalog-open .construction-category-bar button {
+    min-width: 0;
+    min-height: 44px;
+    padding: 3px 2px;
+    flex: 1 1 0;
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 2px;
+    font-size: 9px;
+  }
+
+  .construction-controls.catalog-open .construction-category-bar .architect-button { min-width: 52px; flex-grow: 0; }
+  .construction-category-bar button .game-icon { width: 15px; height: 15px; }
+
+  .construction-tool-tray { padding: 5px; }
+  .construction-tool-tray > div > button { min-height: 46px; padding: 4px 6px; }
+  .construction-tool-tray > div > button strong { font-size: 10px; }
+
+  .construction-controls.active-tool .construction-category-bar button {
+    min-width: 44px;
+    width: 44px;
+    padding: 3px;
+    grid-template-columns: 1fr;
+  }
+
+  .construction-controls.active-tool .construction-category-bar button > span,
+  .construction-controls.active-tool .construction-category-bar button > small { display: none; }
+  .construction-controls.active-tool .construction-category-bar .pan-button {
+    width: 60px;
+    min-width: 60px;
+    grid-template-columns: 15px auto;
+    gap: 3px;
+  }
+  .construction-controls.active-tool .construction-category-bar .pan-button > span {
+    display: inline;
+    font-size: 8px;
+  }
+  .construction-controls.active-tool .construction-category-bar .architect-button { min-width: 48px; width: 48px; }
+  .construction-controls.active-tool .active-tool-summary { flex-basis: 84px; padding: 4px 7px; grid-template-columns: 18px minmax(0, 1fr); gap: 5px; }
+  .active-tool-summary > .game-icon { width: 17px; height: 17px; }
+  .active-tool-summary strong { font-size: 10px; }
+  .active-tool-summary small { display: none; }
+}
+
+@media (max-width: 420px) {
+  .construction-controls.catalog-open .construction-category-bar button { font-size: 9px; }
+  .construction-controls.active-tool .active-tool-summary { flex-basis: 72px; }
 }

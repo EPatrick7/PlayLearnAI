@@ -26,6 +26,7 @@ import type {
 import { GameIcon, type GameIconName } from './GameIcon'
 import { ModuleConnectors, ModuleTilemap } from './ModuleTilemap'
 import { getModuleWalkableCells } from './moduleTileGeometry'
+import { PawnSprite, type PawnSpriteVariant } from './PawnSprite'
 
 export interface MoonbaseMapProps {
   width: number
@@ -96,6 +97,9 @@ const workOrderPresentation: Record<WorkOrder['type'], { label: string; icon: Ga
   clean_solar: { label: 'Clean', icon: 'solar' },
 }
 
+const pawnVariants: PawnSpriteVariant[] = ['umber', 'gold', 'olive', 'rose', 'copper', 'slate']
+const pawnAccents = ['#a75b4c', '#527b7d', '#68805f', '#8a6378', '#9a7046', '#596f7c']
+
 const isExterior = (module: ModuleState) =>
   module.type === 'solar_battery_skid' || module.type === 'landing_pad'
 
@@ -127,11 +131,10 @@ function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
 
       {layout.boundaries.map((boundary) => {
         const connection = getBoundaryConnection(layout, boundary)
-        const variant = Math.abs(boundary.x * 17 + boundary.y * 31) % 3
         return (
           <span
             aria-hidden="true"
-            className={`construction-boundary boundary-${boundary.kind} ${connection.className} boundary-variant-${variant} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+            className={`construction-boundary boundary-${boundary.kind} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
             data-boundary-connection={connection.name}
             data-boundary-mask={connection.mask}
             data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -759,12 +762,13 @@ export function MoonbaseMap({
             title={`${member.name} — ${words(member.status)}`}
             type="button"
           >
-            <span aria-hidden="true" className="pawn-shadow" />
-            <span aria-hidden="true" className="pawn-portrait">
-              <GameIcon name="pawn" size={14} />
-              <i className="pawn-status-dot" />
-            </span>
-            <span aria-hidden="true" className="pawn-initials">{initials(member.name)}</span>
+            <PawnSprite
+              accent={pawnAccents[index % pawnAccents.length]}
+              initials={initials(member.name)}
+              showStatusDot
+              status={member.status}
+              variant={pawnVariants[index % pawnVariants.length]}
+            />
             <span className="map-token-label crew-label">{member.name.split(' ')[0]}</span>
           </button>
         )

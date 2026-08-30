@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { GameIcon, type GameIconName } from './components/GameIcon'
 import { MoonbaseMap } from './components/MoonbaseMap'
+import { PawnSprite, type PawnSpriteVariant } from './components/PawnSprite'
 import { SettlementBuilder } from './components/SettlementBuilder'
 import { useColonyStore } from './game/store'
 import type {
@@ -16,6 +17,7 @@ import { useWebMcpTools } from './webmcp/registerTools'
 import './styles.css'
 import './tilemap.css'
 import './construction.css'
+import './pawn.css'
 
 type DockTab = 'work' | 'crew' | 'gear' | 'plan' | 'log'
 type Selection =
@@ -71,22 +73,25 @@ const dockItems: Array<{ id: DockTab; label: string; icon: GameIconName }> = [
   { id: 'log', label: 'Log', icon: 'log' },
 ]
 
+const pawnVariants: PawnSpriteVariant[] = ['umber', 'gold', 'olive', 'rose', 'copper', 'slate']
+const pawnAccents = ['#a75b4c', '#527b7d', '#68805f', '#8a6378', '#9a7046', '#596f7c']
+
 function App() {
   const colony = useColonyStore()
   const webMcpStatus = useWebMcpTools()
   const [activeTab, setActiveTab] = useState<DockTab>('work')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [selectedOrderId, setSelectedOrderId] = useState<WorkOrderId>('work-seal-lab')
-  const [selection, setSelection] = useState<Selection>({ kind: 'module', id: 'module-laboratory' })
+  const [selection, setSelection] = useState<Selection | null>(null)
 
   const plan = colony.operationsPlan
   const validation = colony.validatePlan()
   const isDraft = plan.status === 'draft'
   const hasCommittedPlan = plan.baseline !== null
   const selectedOrder = colony.workOrders.find((order) => order.id === selectedOrderId) ?? colony.workOrders[0]
-  const selectedModuleId = selection.kind === 'module' ? selection.id : null
-  const selectedCrewId = selection.kind === 'crew' ? selection.id : null
-  const selectedEquipmentId = selection.kind === 'equipment' ? selection.id : null
+  const selectedModuleId = selection?.kind === 'module' ? selection.id : null
+  const selectedCrewId = selection?.kind === 'crew' ? selection.id : null
+  const selectedEquipmentId = selection?.kind === 'equipment' ? selection.id : null
   const selectedModule = colony.modules.find((module) => module.id === selectedModuleId)
   const selectedCrew = colony.crew.find((member) => member.id === selectedCrewId)
   const selectedEquipment = colony.equipment.find((item) => item.id === selectedEquipmentId)
@@ -305,33 +310,37 @@ function App() {
           selectedCrewId={selectedCrewId}
           selectedEquipmentId={selectedEquipmentId}
           selectedModuleId={selectedModuleId ?? ''}
-          selectedWorkOrderId={selection.kind === 'work' ? selection.id : selectedOrderId}
+          selectedWorkOrderId={selection?.kind === 'work' ? selection.id : null}
           width={colony.map.width}
           workOrders={colony.workOrders}
         />
 
-        <section className="colonist-strip" aria-label="Colony crew">
-          {colony.crew.map((member) => (
-            <button
-              aria-label={`${member.name}, ${member.role}. ${member.status}. Health ${Math.round(member.health)} percent.`}
-              className={`colonist-card ${member.status} ${selectedCrewId === member.id ? 'selected' : ''}`}
-              key={member.id}
-              onClick={() => {
-                setSelection({ kind: 'crew', id: member.id })
-                setActiveTab('crew')
-              }}
-              onDoubleClick={() => openTab('crew')}
-              title={`${member.name}, ${member.role}. ${member.status}. Health ${Math.round(member.health)}%.`}
-              type="button"
-            >
-              <span className="portrait" style={{ '--health': `${member.health}%` } as React.CSSProperties}>
-                <i className="portrait-head">{initials(member.name)}</i>
-                <i className="portrait-status" />
-              </span>
-              <span><strong>{member.name.split(' ')[0]}</strong><small>{member.taskId ? 'On task' : member.status}</small></span>
-            </button>
-          ))}
-        </section>
+        {drawerOpen && activeTab === 'crew' && (
+          <section className="colonist-strip" aria-label="Colony crew">
+            {colony.crew.map((member, index) => (
+              <button
+                aria-label={`${member.name}, ${member.role}. ${member.status}. Health ${Math.round(member.health)} percent.`}
+                className={`colonist-card ${member.status} ${selectedCrewId === member.id ? 'selected' : ''}`}
+                key={member.id}
+                onClick={() => setSelection({ kind: 'crew', id: member.id })}
+                title={`${member.name}, ${member.role}. ${member.status}. Health ${Math.round(member.health)}%.`}
+                type="button"
+              >
+                <span className="portrait" style={{ '--health': `${member.health}%` } as React.CSSProperties}>
+                  <PawnSprite
+                    accent={pawnAccents[index % pawnAccents.length]}
+                    initials={initials(member.name)}
+                    showStatusDot
+                    size="compact"
+                    status={member.status}
+                    variant={pawnVariants[index % pawnVariants.length]}
+                  />
+                </span>
+                <span><strong>{member.name.split(' ')[0]}</strong><small>{member.taskId ? 'On task' : member.status}</small></span>
+              </button>
+            ))}
+          </section>
+        )}
 
         <section className={`incident-card ${colony.scenarioStatus}`} aria-label="Current objective">
           <div className="incident-heading">
@@ -340,7 +349,7 @@ function App() {
             <b>{objectiveProgress}/3</b>
           </div>
           <div className="objective-progress" aria-label={`${objectiveProgress} of 3 objective conditions complete`}><i style={{ width: `${(objectiveProgress / 3) * 100}%` }} /></div>
-          <p>{colony.learning.completedLoops > 0 ? 'Recovery loop complete. Inspect the verified colony state.' : colony.learning.coaching}</p>
+          <p className="sr-only">{colony.learning.completedLoops > 0 ? 'Recovery loop complete. Inspect the verified colony state.' : colony.learning.coaching}</p>
           <div className="learning-loop" aria-label={`Current supervision phase: ${colony.learning.currentPhase}`}>
             {(['ground', 'plan', 'supervise', 'verify'] as const).map((phase, index) => (
               <span className={`${colony.learning.currentPhase === phase ? 'current' : ''} ${colony.learning.achieved[phase] ? 'complete' : ''}`} key={phase} title={phase}>
@@ -349,19 +358,26 @@ function App() {
             ))}
           </div>
           {isDraft && <button className="text-action" onClick={stageRecommendedResponse} type="button"><GameIcon name="plan" />Stage a response</button>}
+          {colony.alerts.length > 0 && (
+            <div aria-label="Active alerts" className="incident-alerts" role="group">
+              {colony.alerts.slice(0, 2).map((alert) => (
+                <button
+                  aria-label={`${alert.title}. ${alert.detail}`}
+                  className={alert.severity}
+                  key={alert.id}
+                  onClick={() => handleAlert(alert.title)}
+                  type="button"
+                >
+                  <GameIcon name={alert.severity === 'critical' ? 'alert' : 'warning'} />
+                  <span>{alert.title}</span>
+                  <GameIcon name="chevron" />
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
-        <section className="alert-stack" aria-label="Active alerts">
-          {colony.alerts.slice(0, 3).map((alert) => (
-            <button className={`world-alert ${alert.severity}`} key={alert.id} onClick={() => handleAlert(alert.title)} type="button">
-              <span><GameIcon name={alert.severity === 'critical' ? 'alert' : 'warning'} /></span>
-              <span><strong>{alert.title}</strong><small>{alert.detail}</small></span>
-              <GameIcon name="chevron" />
-            </button>
-          ))}
-        </section>
-
-        <section className={`selection-inspector selection-${selection.kind}`} aria-live="polite">
+        {selection && !drawerOpen && <section className={`selection-inspector selection-${selection.kind}`} aria-live="polite">
           <div className="selection-heading">
             <span className="selection-kind"><GameIcon name={selection.kind === 'crew' ? 'crew' : selection.kind === 'equipment' ? 'gear' : selection.kind === 'work' ? 'work' : 'map'} /></span>
             <span><small>Selected {selection.kind}</small><strong>{selectionTitle}</strong></span>
@@ -397,7 +413,7 @@ function App() {
               <button className="inspector-action" onClick={() => openTab('work')} type="button">Open work <GameIcon name="chevron" /></button>
             </div>
           )}
-        </section>
+        </section>}
 
         <section className="time-controls" aria-label="Simulation controls">
           <span className={`sim-state ${hasCommittedPlan ? 'ready' : 'paused'}`}><i />{hasCommittedPlan ? 'Plan live' : 'Paused'}</span>
@@ -456,13 +472,22 @@ function App() {
                 <header><span>Assign crew</span><small>Click to stage</small></header>
                 <div className="loadout-scroll">
                   {[...colony.crew].sort((a, b) => b.skills[selectedOrder.requiredSkill] - a.skills[selectedOrder.requiredSkill]).map((member) => {
+                    const crewIndex = Math.max(0, colony.crew.findIndex((candidate) => candidate.id === member.id))
                     const staged = plan.actions.some((action) => action.kind === 'assign_crew' && action.crewId === member.id && action.workOrderId === selectedOrder.id)
                     const committed = selectedOrder.assignedCrewIds.includes(member.id)
                     const conflict = plan.actions.some((action) => action.kind === 'assign_crew' && action.crewId === member.id && action.workOrderId !== selectedOrder.id)
                     const qualified = member.skills[selectedOrder.requiredSkill] >= selectedOrder.minimumSkill
                     return (
                       <button className={`loadout-card ${staged || committed ? 'staged' : ''} ${!qualified ? 'unqualified' : ''}`} disabled={!isDraft || conflict || committed} key={member.id} onClick={() => stageCrew(member.id)} title={conflict ? 'Already staged for another order' : `${member.skills[selectedOrder.requiredSkill]} ${selectedOrder.requiredSkill}`} type="button">
-                        <span className="mini-portrait">{initials(member.name)}</span>
+                        <span className="mini-portrait">
+                          <PawnSprite
+                            accent={pawnAccents[crewIndex % pawnAccents.length]}
+                            initials={initials(member.name)}
+                            size="compact"
+                            status={member.status}
+                            variant={pawnVariants[crewIndex % pawnVariants.length]}
+                          />
+                        </span>
                         <span><strong>{member.name}</strong><small>{member.role}</small></span>
                         <b>{selectedOrder.requiredSkill.slice(0, 3).toUpperCase()} {member.skills[selectedOrder.requiredSkill]}</b>
                         <i>{staged || committed ? <GameIcon name="check" /> : <GameIcon name="plus" />}</i>
@@ -500,9 +525,17 @@ function App() {
           {activeTab === 'crew' && (
             <div className="sheet-body roster-sheet">
               <div className="roster-grid">
-                {colony.crew.map((member) => (
+                {colony.crew.map((member, index) => (
                   <button className={`roster-card ${selectedCrewId === member.id ? 'selected' : ''}`} key={member.id} onClick={() => setSelection({ kind: 'crew', id: member.id })} type="button">
-                    <span className="large-portrait">{initials(member.name)}</span>
+                    <span className="large-portrait">
+                      <PawnSprite
+                        accent={pawnAccents[index % pawnAccents.length]}
+                        initials={initials(member.name)}
+                        showStatusDot
+                        status={member.status}
+                        variant={pawnVariants[index % pawnVariants.length]}
+                      />
+                    </span>
                     <span className="roster-copy"><small>{member.status}</small><strong>{member.name}</strong><em>{member.role}</em><p>{member.trait}</p></span>
                     <span className="vital-bars"><i><b style={{ width: `${member.health}%` }} /></i><small>HLT {Math.round(member.health)}</small><i className="fatigue"><b style={{ width: `${member.fatigue}%` }} /></i><small>FAT {Math.round(member.fatigue)}</small></span>
                     <span className="skill-grid">{Object.entries(member.skills).map(([skill, value]) => <i key={skill} title={skill}>{skill.slice(0, 3).toUpperCase()} <b>{value}</b></i>)}</span>

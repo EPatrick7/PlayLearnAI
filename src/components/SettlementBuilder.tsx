@@ -200,7 +200,8 @@ export function SettlementBuilder() {
     setSelectedTool(tool)
     setParkedTool(null)
     setRotation(0)
-    announce(`${toolName(tool)} selected. ${instructionFor(tool)}`)
+    setBuildOpen(false)
+    announce(`${toolName(tool)} selected.`)
   }
 
   const chooseCategory = (nextCategory: BuildCategory) => {
@@ -256,6 +257,11 @@ export function SettlementBuilder() {
   }, [announcement, toastVisible])
 
   const activeTools = toolsByCategory[category]
+  const currentTool = selectedTool ?? parkedTool
+  const currentToolDefinition = currentTool
+    ? Object.values(toolsByCategory).flat().find((tool) => tool.id === currentTool)
+    : null
+  const nextRotation = (rotation + 90) % 360
   const toolInstruction = selectedTool
     ? instructionFor(selectedTool)
     : parkedTool
@@ -274,7 +280,7 @@ export function SettlementBuilder() {
           <span><small>Build mode</small><strong>Shackleton</strong></span>
         </div>
 
-        <div className="construction-status" aria-label="Settlement layout status">
+        <div className="construction-status sr-only" aria-label="Settlement layout status">
           <span><small>Rooms</small><strong>{rooms.length}</strong></span>
           <span><small>Objects</small><strong>{layout.workstations.length}</strong></span>
           <span className="status-crew"><small>Settlers</small><strong>2</strong></span>
@@ -286,11 +292,8 @@ export function SettlementBuilder() {
               <GameIcon name="play" /><span>Begin shift</span>
             </button>
           )}
-          <button aria-label="Undo last construction order" disabled={undoCount === 0} onClick={undo} type="button">
-            <GameIcon name="reset" /><span>Undo</span>
-          </button>
-          <button aria-label="Reset construction map" onClick={resetSettlement} title="Start over" type="button">
-            <GameIcon name="close" />
+          <button aria-label="Reset construction map" className="construction-reset-action" onClick={resetSettlement} title="Start over" type="button">
+            <GameIcon name="reset" />
           </button>
         </div>
       </header>
@@ -298,7 +301,6 @@ export function SettlementBuilder() {
       <main className="construction-stage">
         <div className="construction-map-scroll">
           <ConstructionMap
-            key={selectedTool ?? 'pan'}
             layout={layout}
             onApply={applyConstruction}
             onCancelTool={cancelTool}
@@ -310,12 +312,7 @@ export function SettlementBuilder() {
           />
         </div>
 
-        <aside aria-label="Build guidance" className="construction-coach">
-          <span><GameIcon name={selectedTool ? 'work' : 'habitat'} /></span>
-          <p><strong>{selectedTool ? toolName(selectedTool) : 'Freeform building'}</strong>{toolInstruction}</p>
-        </aside>
-
-        <div className="construction-controls">
+        <div className={`construction-controls ${buildOpen ? 'catalog-open' : ''} ${currentTool ? 'active-tool' : ''}`}>
           <nav aria-label="Construction modes" className="construction-category-bar">
             <button
               aria-label="Build menu"
@@ -345,20 +342,46 @@ export function SettlementBuilder() {
               </button>
             ))}
 
-            <button
-              aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Pan'}
-              aria-pressed={selectedTool === null}
-              className="pan-button"
-              onClick={togglePan}
-              type="button"
-            >
-              <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? `Resume ${toolName(parkedTool)}` : 'Pan'}</span>
-            </button>
+            {!buildOpen && currentTool && (
+              <span className="active-tool-summary">
+                <GameIcon name={currentToolDefinition?.icon ?? 'work'} />
+                <span><strong>{toolName(currentTool)}</strong><small>{toolInstruction}</small></span>
+              </span>
+            )}
+
+            {undoCount > 0 && (
+              <button aria-label="Undo last construction order" className="undo-tool" onClick={undo} type="button">
+                <GameIcon name="reset" /><span>Undo</span>
+              </button>
+            )}
+
+            {!buildOpen && isWorkstationTool(selectedTool) && (
+              <button aria-label={`Rotate ${toolName(selectedTool)} to ${nextRotation}°`} className="rotate-tool" onClick={rotate} type="button">
+                <GameIcon name="reset" /><span>Rotate</span><small>→ {nextRotation}°</small>
+              </button>
+            )}
+
+            {!buildOpen && currentTool && (
+              <button
+                aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Pan'}
+                aria-pressed={selectedTool === null}
+                className="pan-button"
+                onClick={togglePan}
+                type="button"
+              >
+                <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? 'Resume' : 'Move'}</span>
+              </button>
+            )}
+
+            {!buildOpen && currentTool && (
+              <button aria-label="Cancel active construction tool" className="cancel-tool" onClick={cancelTool} type="button">
+                <GameIcon name="close" /><span>Cancel</span>
+              </button>
+            )}
           </nav>
 
           {buildOpen && (
             <section aria-label={`${categoryLabels[category]} build tools`} className="construction-tool-tray">
-              <header><strong>{categoryLabels[category]}</strong><small>Select, then draw directly on the grid</small></header>
               <div>
                 {activeTools.map((tool) => (
                   <button
@@ -375,16 +398,6 @@ export function SettlementBuilder() {
                   </button>
                 ))}
               </div>
-              {isWorkstationTool(selectedTool) && (
-                <button aria-label={`Rotate ${rotation}°`} aria-keyshortcuts="R" className="rotate-tool" onClick={rotate} type="button">
-                  <GameIcon name="reset" /><span>Rotate {rotation}°</span><small>R</small>
-                </button>
-              )}
-              {selectedTool && (
-                <button className="cancel-tool" onClick={cancelTool} type="button">
-                  <GameIcon name="close" /><span>Cancel</span>
-                </button>
-              )}
             </section>
           )}
         </div>
@@ -392,7 +405,6 @@ export function SettlementBuilder() {
         <div aria-atomic="true" aria-live="polite" className={`construction-toast ${toastVisible ? 'visible' : ''}`}>
           {announcement}
         </div>
-        <div aria-hidden="true" className="landing-signature"><span>SHACKLETON CRATER</span><i /></div>
       </main>
     </div>
   )

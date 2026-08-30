@@ -38,6 +38,7 @@ import {
   getBoundaryDoorAxis,
 } from '../game/boundaryConnections'
 import { GameIcon } from './GameIcon'
+import { PawnSprite } from './PawnSprite'
 
 interface ConstructionMapProps {
   layout: ConstructionLayout
@@ -119,6 +120,7 @@ export function ConstructionMap({
   const [hoverCell, setHoverCell] = useState<GridPoint | null>({ x: 8, y: 9 })
   const [dragStart, setDragStart] = useState<GridPoint | null>(null)
   const [dragEnd, setDragEnd] = useState<GridPoint | null>(null)
+  const [draftTool, setDraftTool] = useState<ConstructionTool | null>(null)
   const [cursor, setCursor] = useState<GridPoint>({ x: 8, y: 9 })
   const rooms = useMemo(() => detectRooms(layout), [layout])
 
@@ -138,8 +140,10 @@ export function ConstructionMap({
     pointerIdRef.current = null
     dragStartRef.current = null
     dragEndRef.current = null
+    keyboardAnchorRef.current = null
     setDragStart(null)
     setDragEnd(null)
+    setDraftTool(null)
   }
 
   const touchCenter = () => {
@@ -162,10 +166,10 @@ export function ConstructionMap({
 
   const preview = useMemo<DraftPreview | null>(() => {
     if (!selectedTool) return null
-    const point = dragEnd ?? hoverCell ?? cursor
+    const point = (draftTool === selectedTool ? dragEnd : null) ?? hoverCell ?? cursor
 
     if (selectedTool === 'wall' || selectedTool === 'erase') {
-      const start = dragStart ?? point
+      const start = draftTool === selectedTool ? dragStart ?? point : point
       const cells = cellsOnConstructionLine(start, point) ?? []
       const outOfBounds = cells.some((cell) => !isInConstructionBounds(cell, layout))
       const occupied = selectedTool === 'wall'
@@ -207,7 +211,7 @@ export function ConstructionMap({
       label: `${WORKSTATION_SPECS[selectedTool].label} · ${footprint.width}×${footprint.height}`,
       error: validation.error ?? indoorError,
     }
-  }, [cursor, dragEnd, dragStart, hoverCell, indoorFootprintError, layout, rotation, selectedTool])
+  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintError, layout, rotation, selectedTool])
 
   const previewBoundaryLayout = useMemo<ConstructionLayout | null>(() => {
     if (!preview || (selectedTool !== 'wall' && selectedTool !== 'door')) return null
@@ -276,6 +280,7 @@ export function ConstructionMap({
     setCursor(point)
     setDragStart(point)
     setDragEnd(point)
+    setDraftTool(selectedTool)
     event.currentTarget.setPointerCapture?.(event.pointerId)
   }
 
@@ -331,10 +336,11 @@ export function ConstructionMap({
   const commitKeyboardDraft = (point: GridPoint) => {
     if (!selectedTool) return
     if (selectedTool === 'wall' || selectedTool === 'erase') {
-      if (!keyboardAnchorRef.current) {
+      if (!keyboardAnchorRef.current || draftTool !== selectedTool) {
         keyboardAnchorRef.current = point
         setDragStart(point)
         setDragEnd(point)
+        setDraftTool(selectedTool)
         return
       }
       dragStartRef.current = keyboardAnchorRef.current
@@ -361,7 +367,7 @@ export function ConstructionMap({
       }
       setCursor(next)
       setHoverCell(next)
-      if (keyboardAnchorRef.current) setDragEnd(next)
+      if (keyboardAnchorRef.current && draftTool === selectedTool) setDragEnd(next)
       return
     }
     if ((event.key === 'Enter' || event.key === ' ') && selectedTool) {
@@ -483,11 +489,10 @@ export function ConstructionMap({
 
         {layout.boundaries.map((boundary) => {
           const connection = getBoundaryConnection(layout, boundary)
-          const variant = Math.abs(boundary.x * 17 + boundary.y * 31) % 3
           return (
             <span
               aria-hidden="true"
-              className={`construction-boundary boundary-${boundary.kind} ${connection.className} boundary-variant-${variant} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+              className={`construction-boundary boundary-${boundary.kind} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
               data-boundary-connection={connection.name}
               data-boundary-mask={connection.mask}
               data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -534,8 +539,14 @@ export function ConstructionMap({
           )
         })}
 
-        <span aria-label="Amina Okafor" className="construction-pawn pawn-amina" role="img"><i>AO</i><small>Amina</small></span>
-        <span aria-label="Mateo Alvarez" className="construction-pawn pawn-mateo" role="img"><i>MA</i><small>Mateo</small></span>
+        <span aria-label="Amina Okafor" className="construction-pawn pawn-amina" role="img">
+          <PawnSprite accent="#a75b4c" initials="AO" size="compact" variant="umber" />
+          <small className="construction-pawn-label">Amina</small>
+        </span>
+        <span aria-label="Mateo Alvarez" className="construction-pawn pawn-mateo" role="img">
+          <PawnSprite accent="#527b7d" initials="MA" size="compact" variant="gold" />
+          <small className="construction-pawn-label">Mateo</small>
+        </span>
 
         {rooms.map((room) => {
           const labelCell = room.cells[Math.floor(room.cells.length / 2)]
@@ -558,11 +569,10 @@ export function ConstructionMap({
               ? getBoundaryConnection(previewBoundaryLayout, cell)
               : null
             const boundaryPreview = connection && (selectedTool === 'wall' || selectedTool === 'door')
-            const variant = Math.abs(cell.x * 17 + cell.y * 31) % 3
             return (
               <span
                 aria-hidden="true"
-                className={`construction-preview ${preview.valid ? 'valid' : 'invalid'} preview-${selectedTool} ${boundaryPreview ? `construction-boundary boundary-${selectedTool} ${connection.className} boundary-variant-${variant} ${selectedTool === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}` : ''}`}
+                className={`construction-preview ${preview.valid ? 'valid' : 'invalid'} preview-${selectedTool} ${boundaryPreview ? `construction-boundary boundary-${selectedTool} ${connection.className} ${selectedTool === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}` : ''}`}
                 data-boundary-connection={connection?.name}
                 data-boundary-mask={connection?.mask}
                 data-connect-east={connection && connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}

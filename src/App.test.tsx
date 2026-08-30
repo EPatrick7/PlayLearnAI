@@ -80,7 +80,8 @@ const selectTool = (
   const tray = openCategory(category)
   const tool = within(tray).getByRole('button', { name: toolName })
   fireEvent.click(tool)
-  expect(tool).toHaveAttribute('aria-pressed', 'true')
+  expect(constructionMap()).toHaveClass('tool-active')
+  expect(screen.queryByRole('region', { name: new RegExp(`^${category} build tools$`, 'i') })).not.toBeInTheDocument()
 }
 
 const layoutFrom = (result: ConstructionResult) => {
@@ -165,6 +166,12 @@ describe('freeform settlement builder', () => {
     expect(map.querySelector('[data-build-site-id]')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^(Place|Preview)\b/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/build socket|blueprint/i)).not.toBeInTheDocument()
+
+    const modes = screen.getByRole('navigation', { name: 'Construction modes' })
+    expect(within(modes).getAllByRole('button')).toHaveLength(1)
+    expect(within(modes).getByRole('button', { name: 'Build menu' })).toBeVisible()
+    expect(screen.queryByRole('complementary', { name: /build guidance/i })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Settlement layout status')).toHaveClass('sr-only')
   })
 
   it('opens Build → Structure and commits a five-cell wall drag as one revision', () => {
@@ -214,6 +221,50 @@ describe('freeform settlement builder', () => {
         { x: 9, y: 9, kind: 'wall' },
         { x: 10, y: 9, kind: 'wall' },
       ]),
+    )
+  })
+
+  it('clears an unfinished keyboard draft when switching construction tools', () => {
+    renderFreshApp()
+    selectTool('Structure', /^Wall/i)
+
+    const map = constructionMap()
+    fireEvent.keyDown(map, { key: ' ' })
+
+    selectTool('Orders', /^Deconstruct/i)
+    fireEvent.keyDown(map, { key: 'ArrowLeft' })
+    fireEvent.keyDown(map, { key: ' ' })
+
+    expect(useColonyStore.getState().settlement.layout.boundaries).toContainEqual(
+      { x: 7, y: 9, kind: 'door' },
+    )
+
+    fireEvent.keyDown(map, { key: ' ' })
+    expect(useColonyStore.getState().settlement.layout.boundaries).not.toContainEqual(
+      { x: 7, y: 9, kind: 'door' },
+    )
+  })
+
+  it('moves a switched tool preview to the live keyboard cursor', () => {
+    renderFreshApp()
+    selectTool('Structure', /^Wall/i)
+
+    const map = constructionMap()
+    fireEvent.keyDown(map, { key: ' ' })
+
+    selectTool('Structure', /^Door/i)
+    for (let step = 0; step < 4; step += 1) fireEvent.keyDown(map, { key: 'ArrowLeft' })
+    fireEvent.keyDown(map, { key: 'ArrowUp' })
+    fireEvent.keyDown(map, { key: 'ArrowUp' })
+
+    const preview = map.querySelector('.construction-preview.preview-door')
+    expect(preview).toHaveAttribute('data-grid-x', '4')
+    expect(preview).toHaveAttribute('data-grid-y', '7')
+    expect(screen.getByRole('status')).toHaveTextContent(/column 5, row 8.*valid door/i)
+
+    fireEvent.keyDown(map, { key: 'Enter' })
+    expect(useColonyStore.getState().settlement.layout.boundaries).toContainEqual(
+      { x: 4, y: 7, kind: 'door' },
     )
   })
 
@@ -303,9 +354,9 @@ describe('freeform settlement builder', () => {
     const revision = useColonyStore.getState().worldRevision
 
     selectTool('Production', /^Life support/i)
-    const rotate = screen.getByRole('button', { name: /^Rotate 0°$/i })
+    const rotate = screen.getByRole('button', { name: /^Rotate Life support to 90°$/i })
     fireEvent.click(rotate)
-    expect(screen.getByRole('button', { name: /^Rotate 90°$/i })).toBeVisible()
+    expect(screen.getByRole('button', { name: /^Rotate Life support to 180°$/i })).toBeVisible()
 
     clickConstructionCell({ x: 10, y: 3 })
 
@@ -421,5 +472,20 @@ describe('freeform settlement builder', () => {
       width: 2,
       height: 2,
     })
+
+    expect(screen.queryByRole('region', { name: 'Colony crew' })).not.toBeInTheDocument()
+    expect(document.querySelector('.selection-inspector')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Current objective' })).getByRole(
+      'group',
+      { name: 'Active alerts' },
+    )).toBeVisible()
+
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Colony commands' })).getByRole(
+      'button',
+      { name: 'Crew' },
+    ))
+    expect(screen.getByRole('region', { name: 'Colony crew' })).toBeVisible()
+    expect(document.querySelectorAll('.colonist-strip .pawn-sprite')).toHaveLength(operations.crew.length)
+    expect(document.querySelectorAll('.large-portrait .pawn-sprite')).toHaveLength(operations.crew.length)
   })
 })
