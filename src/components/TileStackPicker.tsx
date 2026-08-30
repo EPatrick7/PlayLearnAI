@@ -13,6 +13,7 @@ import { PawnSprite } from './PawnSprite'
 export interface TileStackPickerProps {
   tile: MapTileInspection
   trigger: HTMLElement | null
+  preferredItemKey?: string | null
   gridWidth: number
   gridHeight: number
   onClose: () => void
@@ -83,6 +84,7 @@ const pickerPlacement = (
 export function TileStackPicker({
   tile,
   trigger,
+  preferredItemKey = null,
   gridWidth,
   gridHeight,
   onClose,
@@ -100,14 +102,21 @@ export function TileStackPicker({
 
   const restoreTriggerFocus = useCallback(() => {
     requestAnimationFrame(() => {
-      if (!trigger?.isConnected) return
-      if (trigger.tabIndex >= 0) {
+      if (trigger?.isConnected && trigger.tabIndex >= 0) {
         trigger.focus()
         if (document.activeElement === trigger) return
       }
-      trigger.closest<HTMLElement>('.construction-map')?.focus()
+      const connectedMap = trigger?.isConnected
+        ? trigger.closest<HTMLElement>('.construction-map')
+        : null
+      const cellFallback = document.querySelector<HTMLElement>([
+        `button[data-construction-cell][data-grid-x="${tile.cell.x}"][data-grid-y="${tile.cell.y}"]`,
+        `[data-map-cell][data-grid-x="${tile.cell.x}"][data-grid-y="${tile.cell.y}"]`,
+      ].join(', '))
+      ;(connectedMap ?? cellFallback ?? document.querySelector<HTMLElement>('.construction-map'))
+        ?.focus()
     })
-  }, [trigger])
+  }, [tile.cell.x, tile.cell.y, trigger])
 
   const closeAndRestore = useCallback(() => {
     onCloseRef.current()
@@ -171,12 +180,16 @@ export function TileStackPicker({
     const frame = requestAnimationFrame(() => {
       const picker = pickerRef.current
       if (!picker || picker.contains(document.activeElement)) return
-      picker.querySelector<HTMLButtonElement>(
+      const preferredChoice = preferredItemKey
+        ? [...picker.querySelectorAll<HTMLButtonElement>('.tile-stack-item')]
+            .find((choice) => choice.dataset.inspectItemKey === preferredItemKey)
+        : null
+      ;(preferredChoice ?? picker.querySelector<HTMLButtonElement>(
         '.tile-stack-item, .tile-stack-surface',
-      )?.focus()
+      ))?.focus()
     })
     return () => cancelAnimationFrame(frame)
-  }, [contentKeys, tile.key])
+  }, [contentKeys, preferredItemKey, tile.key])
 
   return createPortal((
     <>
@@ -214,24 +227,30 @@ export function TileStackPicker({
       </header>
 
       <div className="tile-stack-list">
-        {tile.contents.map((item) => (
-          <button
-            className={`tile-stack-item stack-kind-${item.kind}`}
-            key={item.key}
-            onClick={() => selectItem(item)}
-            type="button"
-          >
-            <span className={`tile-stack-item-icon ${item.portrait ? 'tile-stack-pawn-icon' : ''}`}>
-              {item.portrait
-                ? <PawnSprite {...item.portrait} size="compact" />
-                : <GameIcon name={item.icon} />}
-            </span>
-            <span className="tile-stack-item-copy">
-              <strong>{item.label}</strong>
-              <small>{item.subtitle}</small>
-            </span>
-          </button>
-        ))}
+        {tile.contents.map((item) => {
+          const directlyHit = item.key === preferredItemKey
+          return (
+            <button
+              className={`tile-stack-item stack-kind-${item.kind}${directlyHit ? ' is-direct-hit' : ''}`}
+              data-inspect-item-key={item.key}
+              data-pointer-hit={directlyHit ? 'true' : undefined}
+              key={item.key}
+              onClick={() => selectItem(item)}
+              type="button"
+            >
+              <span className={`tile-stack-item-icon ${item.portrait ? 'tile-stack-pawn-icon' : ''}`}>
+                {item.portrait
+                  ? <PawnSprite {...item.portrait} size="compact" />
+                  : <GameIcon name={item.icon} />}
+              </span>
+              <span className="tile-stack-item-copy">
+                <strong>{item.label}</strong>
+                <small>{item.subtitle}</small>
+              </span>
+              {directlyHit && <em className="tile-stack-hit-label">Targeted</em>}
+            </button>
+          )
+        })}
       </div>
 
       <div aria-label="Tile itself" className="tile-stack-surface-section" role="group">

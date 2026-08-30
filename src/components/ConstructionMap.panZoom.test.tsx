@@ -35,6 +35,7 @@ interface RenderMapOptions {
   inspectionByCell?: ReadonlyMap<string, MapTileInspection>
   layout?: ConstructionLayout
   overlapCounts?: ReadonlyMap<string, number>
+  stackOpenCell?: GridPoint | null
 }
 
 const renderMap = (
@@ -71,6 +72,7 @@ const renderMap = (
         overlapCounts={options.overlapCounts}
         rotation={0}
         selectedTool={activeTool}
+        stackOpenCell={options.stackOpenCell}
         toolActivationId={toolActivationId}
       />
     </div>
@@ -315,10 +317,15 @@ describe('ConstructionMap pan and zoom', () => {
     const { map, onInspectCell } = renderMap(null, {
       crew: [builder],
       crewCells: new Map([[builder.id, crewCell]]),
+      overlapCounts: new Map([['6:7', 2]]),
+      stackOpenCell: crewCell,
     })
     const pawn = map.querySelector<HTMLElement>(`[data-crew-id="${builder.id}"]`)!
 
     expect(pawn).toHaveAttribute('data-inspect-item-key', `crew:${builder.id}`)
+    expect(pawn).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(pawn).toHaveAttribute('aria-expanded', 'true')
+    expect(pawn).toHaveAccessibleName(/2 things share this tile; activate to choose/i)
     fireEvent.pointerDown(pawn, {
       button: 0,
       clientX: 120,

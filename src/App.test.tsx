@@ -419,7 +419,7 @@ describe('freeform settlement builder', () => {
     expect(colonistInspector).toHaveTextContent('Fatigue')
   })
 
-  it('opens an SS13-style chooser when a worker and blueprint overlap', () => {
+  it('opens an SS13-style chooser when a worker and blueprint overlap', async () => {
     renderFreshApp()
     selectTool('Structure', /^Wall/i)
     clickConstructionCell({ x: 9, y: 6 })
@@ -474,7 +474,12 @@ describe('freeform settlement builder', () => {
     const directBuilder = useColonyStore.getState().crew.find(
       (member) => member.id === order.assignedCrewId,
     )!
-    expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
+    const directChooser = screen.getByRole('dialog', { name: 'Choose an item' })
+    const directBuilderChoice = within(directChooser).getByRole('button', {
+      name: new RegExp(`${directBuilder.name}.*Colonist.*Targeted`, 'i'),
+    })
+    expect(directBuilderChoice).toHaveAttribute('data-pointer-hit', 'true')
+    fireEvent.click(directBuilderChoice)
     expect(screen.getByRole('region', { name: `${directBuilder.name} inspector` })).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Close inspector' }))
 
@@ -498,12 +503,22 @@ describe('freeform settlement builder', () => {
     )!
     expect(screen.getByRole('region', { name: `${builder.name} inspector` })).toBeVisible()
 
-    fireEvent.click(screen.getByRole('button', {
+    const colonistStackButton = screen.getByRole('button', {
       name: 'Choose 2 overlapping items on this tile',
-    }))
+    })
+    expect(colonistStackButton).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(colonistStackButton)
+    expect(colonistStackButton).toHaveAttribute('aria-expanded', 'true')
     const reopenedChooser = screen.getByRole('dialog', { name: 'Choose an item' })
     expect(reopenedChooser).toBeVisible()
-    fireEvent.click(within(reopenedChooser).getByRole('button', {
+    fireEvent.keyDown(reopenedChooser, { key: 'Escape' })
+    expect(screen.getByRole('region', { name: `${builder.name} inspector` })).toBeVisible()
+    expect(colonistStackButton).toHaveAttribute('aria-expanded', 'false')
+    await waitFor(() => expect(document.activeElement).toBe(colonistStackButton))
+
+    fireEvent.click(colonistStackButton)
+    const chooserAfterEscape = screen.getByRole('dialog', { name: 'Choose an item' })
+    fireEvent.click(within(chooserAfterEscape).getByRole('button', {
       name: /Wall blueprint.*Blueprint · Paused/i,
     }))
     const blueprintInspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })
@@ -1354,17 +1369,24 @@ describe('freeform settlement builder', () => {
     expect(document.activeElement).toBe(stackedTile)
   })
 
-  it('inspects a clicked colonist directly while the tile stack badge opens the chooser', () => {
+  it('opens the chooser from a directly clicked colonist when its tile is stacked', () => {
     const map = startOperations()
 
     fireEvent.click(screen.getByRole('button', { name: /^Select Amina Okafor,/i }))
 
-    expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
+    const directChooser = screen.getByRole('dialog', { name: 'Choose an item' })
+    const aminaChoice = within(directChooser).getByRole('button', {
+      name: /Amina Okafor.*Colonist.*Targeted/i,
+    })
+    expect(aminaChoice).toHaveAttribute('data-pointer-hit', 'true')
+    fireEvent.click(aminaChoice)
     expect(screen.getByRole('region', { name: 'Amina Okafor inspector' })).toBeVisible()
 
-    fireEvent.click(within(map).getByRole('button', {
+    const stackBadge = within(map).getByRole('button', {
       name: /Choose 2 overlapping items on column 5, row 9: Amina Okafor, Amina bunk/i,
-    }))
+    })
+    expect(stackBadge.querySelector('.game-icon')).toBeInTheDocument()
+    fireEvent.click(stackBadge)
 
     expect(screen.getByRole('dialog', { name: 'Choose an item' })).toBeVisible()
   })

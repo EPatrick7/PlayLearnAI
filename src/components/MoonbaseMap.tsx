@@ -490,6 +490,7 @@ export function MoonbaseMap({
   const [stackPicker, setStackPicker] = useState<{
     tile: MapTileInspection
     trigger: HTMLElement | null
+    preferredItemKey: string | null
   } | null>(null)
   const mapRef = useRef<HTMLDivElement>(null)
   const activePlan = plan.status !== 'completed'
@@ -760,16 +761,24 @@ export function MoonbaseMap({
     }
   }
 
-  const activateTile = (tile: MapTileInspection, trigger: HTMLElement | null) => {
+  const activateTile = (
+    tile: MapTileInspection,
+    trigger: HTMLElement | null,
+    preferredItemKey: string | null = null,
+  ) => {
     setSelectedCellKey(tile.key)
     setRovingCellKey(tile.key)
     if (tile.contents.length > 1) {
-      setStackPicker({ tile, trigger })
+      setStackPicker({ tile, trigger, preferredItemKey })
       return
     }
     setStackPicker(null)
-    if (tile.contents.length === 1) {
-      dispatchInspectable(tile, tile.contents[0])
+    const preferredItem = preferredItemKey
+      ? tile.contents.find((item) => item.key === preferredItemKey) ?? null
+      : null
+    const item = preferredItem ?? tile.contents[0] ?? null
+    if (item) {
+      dispatchInspectable(tile, item)
       return
     }
     onInspectTile?.(withFocusedMapItem(tile, null))
@@ -1044,9 +1053,17 @@ export function MoonbaseMap({
         const staged = plannedWorkIds.has(order.id)
         const module = moduleAt(order.location)
         const progress = Math.min(100, Math.round((order.progressHours / order.durationHours) * 100))
+        const cell = workCells.get(order.id)
+        const inspectionTile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
+        const inspectable = inspectionTile?.contents.find((candidate) => (
+          candidate.kind === 'work' && candidate.id === order.id
+        )) ?? null
+        const stacked = Boolean(inspectionTile && inspectionTile.contents.length > 1)
         return (
           <button
-            aria-label={`Select work order ${order.label}. ${words(order.status)} at ${module.name}. Priority ${order.priority}. ${progress} percent complete${staged ? '. Routed in the current plan' : ''}.`}
+            aria-expanded={stacked ? stackPicker?.tile.key === inspectionTile?.key : undefined}
+            aria-haspopup={stacked ? 'dialog' : undefined}
+            aria-label={`Select work order ${order.label}. ${words(order.status)} at ${module.name}. Priority ${order.priority}. ${progress} percent complete${staged ? '. Routed in the current plan' : ''}.${stacked ? ` ${inspectionTile!.contents.length} things share this tile; activate to choose.` : ''}`}
             aria-pressed={selectedWorkOrderId == null ? undefined : selected}
             className={[
               'work-hotspot',
@@ -1060,13 +1077,11 @@ export function MoonbaseMap({
             data-grid-y={workCells.get(order.id)?.y}
             onClick={(event) => {
               event.stopPropagation()
-              const cell = workCells.get(order.id)
-              const tile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
-              const item = tile?.contents.find((candidate) => (
-                candidate.kind === 'work' && candidate.id === order.id
-              ))
-              if (tile && item) dispatchInspectable(tile, item)
-              else onSelectWorkOrder?.(order.id)
+              if (inspectionTile && inspectable) {
+                activateTile(inspectionTile, event.currentTarget, inspectable.key)
+              } else {
+                onSelectWorkOrder?.(order.id)
+              }
             }}
             style={markerPosition(workCells.get(order.id) ?? markerCell(`work:${order.id}`, order.location, ordinal + locationPopulation(order.location), 2))}
             title={`${order.label} — ${words(order.status)}`}
@@ -1098,11 +1113,20 @@ export function MoonbaseMap({
         const activelyConstructing = Boolean(
           constructionOrder && !constructionPaused && !constructionOrder.block,
         )
+        const cell = crewCells.get(member.id)
+        const inspectionTile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
+        const inspectable = inspectionTile?.contents.find((candidate) => (
+          candidate.kind === 'crew' && candidate.id === member.id
+        )) ?? null
+        const stacked = Boolean(inspectionTile && inspectionTile.contents.length > 1)
+        const selectionLabel = constructionOrder
+          ? `Select ${member.name}, ${member.role}. ${constructionActivity}, ${constructionOrderLabel(constructionOrder)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} construction material` : ''}. Health ${member.health} percent, fatigue ${member.fatigue} percent.`
+          : `Select ${member.name}, ${member.role}. ${words(member.status)} in ${module.name}. Health ${member.health} percent, fatigue ${member.fatigue} percent.`
         return (
           <button
-            aria-label={constructionOrder
-              ? `Select ${member.name}, ${member.role}. ${constructionActivity}, ${constructionOrderLabel(constructionOrder)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} construction material` : ''}. Health ${member.health} percent, fatigue ${member.fatigue} percent.`
-              : `Select ${member.name}, ${member.role}. ${words(member.status)} in ${module.name}. Health ${member.health} percent, fatigue ${member.fatigue} percent.`}
+            aria-expanded={stacked ? stackPicker?.tile.key === inspectionTile?.key : undefined}
+            aria-haspopup={stacked ? 'dialog' : undefined}
+            aria-label={`${selectionLabel}${stacked ? ` ${inspectionTile!.contents.length} things share this tile; activate to choose.` : ''}`}
             aria-pressed={selectedCrewId == null ? undefined : selected}
             className={[
               'crew-marker',
@@ -1122,13 +1146,11 @@ export function MoonbaseMap({
             data-order-id={constructionOrder?.id}
             onClick={(event) => {
               event.stopPropagation()
-              const cell = crewCells.get(member.id)
-              const tile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
-              const item = tile?.contents.find((candidate) => (
-                candidate.kind === 'crew' && candidate.id === member.id
-              ))
-              if (tile && item) dispatchInspectable(tile, item)
-              else onSelectCrew?.(member.id)
+              if (inspectionTile && inspectable) {
+                activateTile(inspectionTile, event.currentTarget, inspectable.key)
+              } else {
+                onSelectCrew?.(member.id)
+              }
             }}
             style={markerPosition(crewCells.get(member.id) ?? markerCell(`crew:${member.id}`, member.location, ordinal))}
             title={`${member.name} — ${constructionActivity ?? words(member.status)}`}
@@ -1161,9 +1183,17 @@ export function MoonbaseMap({
         const selected = selectedEquipmentId === item.id
         const module = moduleAt(item.location)
         const presentation = equipmentPresentation[item.type]
+        const cell = equipmentCells.get(item.id)
+        const inspectionTile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
+        const inspectable = inspectionTile?.contents.find((candidate) => (
+          candidate.kind === 'equipment' && candidate.id === item.id
+        )) ?? null
+        const stacked = Boolean(inspectionTile && inspectionTile.contents.length > 1)
         return (
           <button
-            aria-label={`Select ${item.name}. ${words(item.status)} in ${module.name}. Condition ${item.condition} percent${item.reservedForWorkOrderId ? `. Reserved for ${item.reservedForWorkOrderId}` : ''}.`}
+            aria-expanded={stacked ? stackPicker?.tile.key === inspectionTile?.key : undefined}
+            aria-haspopup={stacked ? 'dialog' : undefined}
+            aria-label={`Select ${item.name}. ${words(item.status)} in ${module.name}. Condition ${item.condition} percent${item.reservedForWorkOrderId ? `. Reserved for ${item.reservedForWorkOrderId}` : ''}.${stacked ? ` ${inspectionTile!.contents.length} things share this tile; activate to choose.` : ''}`}
             aria-pressed={selectedEquipmentId == null ? undefined : selected}
             className={[
               'equipment-marker',
@@ -1178,13 +1208,11 @@ export function MoonbaseMap({
             data-grid-y={equipmentCells.get(item.id)?.y}
             onClick={(event) => {
               event.stopPropagation()
-              const cell = equipmentCells.get(item.id)
-              const tile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
-              const inspectable = tile?.contents.find((candidate) => (
-                candidate.kind === 'equipment' && candidate.id === item.id
-              ))
-              if (tile && inspectable) dispatchInspectable(tile, inspectable)
-              else onSelectEquipment?.(item.id)
+              if (inspectionTile && inspectable) {
+                activateTile(inspectionTile, event.currentTarget, inspectable.key)
+              } else {
+                onSelectEquipment?.(item.id)
+              }
             }}
             style={markerPosition(equipmentCells.get(item.id) ?? markerCell(`equipment:${item.id}`, item.location, ordinal + locationPopulation(item.location), 1))}
             title={`${item.name} — ${words(item.status)} at ${module.name}`}
@@ -1223,7 +1251,8 @@ export function MoonbaseMap({
             title={`Choose from ${tile.contents.length} things here`}
             type="button"
           >
-            {tile.contents.length}
+            <GameIcon name="inspect" />
+            <span>{tile.contents.length}</span>
           </button>
         ))}
 
@@ -1234,6 +1263,7 @@ export function MoonbaseMap({
           onClose={() => setStackPicker(null)}
           onSelectItem={dispatchInspectable}
           onSelectSurface={(tile) => onInspectTile?.(withFocusedMapItem(tile, null))}
+          preferredItemKey={stackPicker.preferredItemKey}
           tile={stackPicker.tile}
           trigger={stackPicker.trigger}
         />

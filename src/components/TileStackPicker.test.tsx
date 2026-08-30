@@ -126,6 +126,31 @@ describe('TileStackPicker', () => {
     window.removeEventListener('keydown', leakedKeyDown)
   })
 
+  it('pre-focuses and marks the directly hit item without skipping the chooser', async () => {
+    const trigger = triggerForTile()
+    render(
+      <TileStackPicker
+        gridHeight={18}
+        gridWidth={24}
+        onClose={vi.fn()}
+        onSelectItem={vi.fn()}
+        onSelectSurface={vi.fn()}
+        preferredItemKey={blueprint.key}
+        tile={tile}
+        trigger={trigger}
+      />,
+    )
+
+    const picker = screen.getByRole('dialog', { name: 'Choose an item' })
+    const blueprintChoice = within(picker).getByRole('button', {
+      name: /Wall blueprint.*Blueprint.*Targeted/i,
+    })
+    expect(blueprintChoice).toHaveAttribute('data-pointer-hit', 'true')
+    expect(within(picker).getByRole('button', { name: /Amina Okafor.*Colonist/i }))
+      .not.toHaveAttribute('data-pointer-hit')
+    await waitFor(() => expect(document.activeElement).toBe(blueprintChoice))
+  })
+
   it('closes and restores trigger focus after item and surface selection', async () => {
     const trigger = triggerForTile()
     const onClose = vi.fn()

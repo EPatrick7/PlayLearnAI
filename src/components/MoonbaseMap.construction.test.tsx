@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { getWorkstationCells, type WorkstationPlacement } from '../game/construction'
 import type { ConstructionOrder } from '../game/constructionJobs'
@@ -65,6 +65,28 @@ const bunkOrder = (): ConstructionOrder => ({
     construct: bunk,
     deconstruct: null,
   },
+})
+
+const wallBlueprintAt = (id: string, cell: { x: number; y: number }, sequence: number) => wallOrder({
+  id,
+  commandId: `${id}-command`,
+  sequence,
+  status: 'hauling',
+  assignedCrewId: null,
+  travelPhase: 'idle',
+  target: {
+    kind: 'boundary',
+    cells: [cell],
+    construct: { ...cell, kind: 'wall' },
+    deconstruct: null,
+  },
+  materials: {
+    required: 1,
+    reserved: 1,
+    delivered: 0,
+    recoverable: 0,
+  },
+  work: { required: 1, completed: 0 },
 })
 
 const renderMap = (overrides: Partial<MoonbaseMapProps> = {}) => {
@@ -158,6 +180,13 @@ describe('MoonbaseMap live construction layer', () => {
       .toHaveAccessibleName(/amina okafor, wall blueprint/i)
 
     fireEvent.click(builder)
+    const chooser = screen.getByRole('dialog', { name: 'Choose an item' })
+    const builderChoice = within(chooser).getByRole('button', {
+      name: /Amina Okafor.*Colonist.*Targeted/i,
+    })
+    expect(builderChoice).toHaveAttribute('data-pointer-hit', 'true')
+    expect(onInspectTile).not.toHaveBeenCalled()
+    fireEvent.click(builderChoice)
     expect(onInspectTile).toHaveBeenCalledWith(expect.objectContaining({
       cell: wallCell,
       focusedItem: expect.objectContaining({
@@ -179,5 +208,68 @@ describe('MoonbaseMap live construction layer', () => {
     expect(container.querySelector('.operations-blueprint')).not.toBeInTheDocument()
     expect(builder).not.toHaveAttribute('data-construction-worker-id')
     expect(builder).not.toHaveClass('operations-construction-worker')
+  })
+
+  it('routes stacked equipment and work marker activation through the chooser', () => {
+    const state = createInitialState()
+    const equipment = state.equipment[0]
+    const workOrder = state.workOrders[0]
+    const onSelectEquipment = vi.fn()
+    const onSelectWorkOrder = vi.fn()
+    const view = renderMap({
+      crew: [],
+      equipment: [equipment],
+      workOrders: [workOrder],
+      onSelectEquipment,
+      onSelectWorkOrder,
+    })
+
+    const equipmentMarker = screen.getByRole('button', {
+      name: new RegExp(`select ${equipment.name}`, 'i'),
+    })
+    const workMarker = screen.getByRole('button', {
+      name: new RegExp(`select work order ${workOrder.label}`, 'i'),
+    })
+    const equipmentCell = {
+      x: Number(equipmentMarker.dataset.gridX),
+      y: Number(equipmentMarker.dataset.gridY),
+    }
+    const workCell = {
+      x: Number(workMarker.dataset.gridX),
+      y: Number(workMarker.dataset.gridY),
+    }
+    const constructionOrders = [
+      wallBlueprintAt('equipment-overlap', equipmentCell, 3),
+      wallBlueprintAt('work-overlap', workCell, 4),
+    ]
+
+    view.rerender(<MoonbaseMap {...view.props} constructionOrders={constructionOrders} />)
+
+    const stackedEquipment = screen.getByRole('button', {
+      name: new RegExp(`select ${equipment.name}.*things share this tile`, 'i'),
+    })
+    expect(stackedEquipment).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(stackedEquipment).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(stackedEquipment)
+    expect(stackedEquipment).toHaveAttribute('aria-expanded', 'true')
+    const equipmentChooser = screen.getByRole('dialog', { name: 'Choose an item' })
+    const equipmentChoice = within(equipmentChooser).getByRole('button', {
+      name: new RegExp(`${equipment.name}.*Equipment.*Targeted`, 'i'),
+    })
+    expect(equipmentChoice).toHaveAttribute('data-pointer-hit', 'true')
+    fireEvent.click(equipmentChoice)
+    expect(onSelectEquipment).toHaveBeenCalledWith(equipment.id)
+
+    const stackedWork = screen.getByRole('button', {
+      name: new RegExp(`select work order ${workOrder.label}.*things share this tile`, 'i'),
+    })
+    expect(stackedWork).toHaveAttribute('aria-haspopup', 'dialog')
+    fireEvent.click(stackedWork)
+    const workChooser = screen.getByRole('dialog', { name: 'Choose an item' })
+    const workChoice = within(workChooser).getByRole('button', {
+      name: new RegExp(`${workOrder.label}.*Work order.*Targeted`, 'i'),
+    })
+    fireEvent.click(workChoice)
+    expect(onSelectWorkOrder).toHaveBeenCalledWith(workOrder.id)
   })
 })

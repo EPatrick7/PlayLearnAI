@@ -4567,21 +4567,28 @@ button:disabled {
 .tile-stack-trigger {
   position: relative;
   z-index: 2;
-  min-width: 15px;
-  height: 15px;
+  min-width: 22px;
+  height: 18px;
   margin: -5px -5px 0 0;
   padding: 0 3px;
-  display: grid;
+  display: inline-flex;
   place-self: start end;
-  place-items: center;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   border: 2px solid #252721;
-  border-radius: 8px;
+  border-radius: 9px;
   color: #d8c58f;
   background: #3b3d34;
   box-shadow: 0 2px 3px rgba(0, 0, 0, 0.42);
   font: 900 7px/1 ui-monospace, monospace;
   cursor: pointer;
   pointer-events: auto;
+}
+
+.tile-stack-trigger .game-icon {
+  width: 9px;
+  height: 9px;
 }
 
 .tile-stack-trigger:hover,
@@ -4726,6 +4733,7 @@ button:disabled {
 
 .tile-stack-item,
 .tile-stack-surface {
+  position: relative;
   width: 100%;
   min-height: 46px;
   padding: 5px 7px;
@@ -4740,6 +4748,36 @@ button:disabled {
   background: #252824;
   box-shadow: 0 1px rgba(255, 255, 255, 0.035) inset;
   text-align: left;
+}
+
+.tile-stack-item.is-direct-hit {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  background:
+    linear-gradient(90deg, rgba(211, 185, 119, 0.13), transparent 62%),
+    #292c27;
+}
+
+.tile-stack-item.is-direct-hit::before {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 0;
+  width: 2px;
+  background: #e1c47f;
+  box-shadow: 0 0 7px rgba(225, 196, 127, 0.42);
+  content: "";
+}
+
+.tile-stack-hit-label {
+  padding: 3px 5px;
+  border: 1px solid rgba(225, 196, 127, 0.24);
+  border-radius: 2px;
+  color: #d8c18a;
+  background: rgba(162, 119, 39, 0.09);
+  font: 750 7px/1 Inter, sans-serif;
+  font-style: normal;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .tile-stack-item:hover,

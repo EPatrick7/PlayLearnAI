@@ -281,6 +281,7 @@ export function SettlementBuilder({
   const [selection, setSelection] = useState<ArchitectSelection | null>(null)
   const [stackSnapshot, setStackSnapshot] = useState<MapTileInspection | null>(null)
   const [stackTrigger, setStackTrigger] = useState<HTMLElement | null>(null)
+  const [stackPreferredItemKey, setStackPreferredItemKey] = useState<string | null>(null)
   const [constructionQueueOpen, setConstructionQueueOpen] = useState(false)
   const [mapFocusTarget, setMapFocusTarget] = useState<{
     cell: GridPoint
@@ -297,6 +298,7 @@ export function SettlementBuilder({
         setSelection(null)
         setStackSnapshot(null)
         setStackTrigger(null)
+        setStackPreferredItemKey(null)
       }
       return !current
     })
@@ -455,6 +457,7 @@ export function SettlementBuilder({
     setSelection(null)
     setStackSnapshot(null)
     setStackTrigger(null)
+    setStackPreferredItemKey(null)
     setConstructionQueueOpen(true)
   }
 
@@ -464,6 +467,7 @@ export function SettlementBuilder({
     setSelectedTool(null)
     setStackSnapshot(null)
     setStackTrigger(null)
+    setStackPreferredItemKey(null)
     setSelection({
       cellKey: pointKey(command.targetCell),
       itemKey: `blueprint:${command.targetOrderId}`,
@@ -506,12 +510,18 @@ export function SettlementBuilder({
     constructionQueueOpen,
   ])
 
-  const openInspectionStack = (tile: MapTileInspection, trigger: HTMLElement | null) => {
+  const openInspectionStack = (
+    tile: MapTileInspection,
+    trigger: HTMLElement | null,
+    preferredItemKey: string | null = null,
+    preserveSelection = false,
+  ) => {
     setConstructionQueueOpen(false)
     setBuildOpen(false)
-    setSelection(null)
+    if (!preserveSelection) setSelection(null)
     setStackTrigger(trigger)
     setStackSnapshot(tile)
+    setStackPreferredItemKey(preferredItemKey)
   }
 
   const inspectCell = (
@@ -534,19 +544,21 @@ export function SettlementBuilder({
       : null) ?? document.querySelector<HTMLElement>(
       `[data-construction-cell][data-grid-x="${cell.x}"][data-grid-y="${cell.y}"]`,
     )
+    if (tile.contents.length > 1) {
+      openInspectionStack(tile, trigger, preferredItem?.key ?? null)
+      return
+    }
     if (preferredItem) {
       setStackSnapshot(null)
       setStackTrigger(null)
+      setStackPreferredItemKey(null)
       setSelection({ cellKey, itemKey: preferredItem.key })
       setAnnouncement(`${preferredItem.label} selected.`)
       return
     }
-    if (tile.contents.length > 1) {
-      openInspectionStack(tile, trigger)
-      return
-    }
     setStackSnapshot(null)
     setStackTrigger(null)
+    setStackPreferredItemKey(null)
     const item = tile.contents[0] ?? null
     setSelection({ cellKey, itemKey: item?.key ?? null })
     setAnnouncement(`${item?.label ?? tile.surfaceLabel} selected.`)
@@ -662,6 +674,7 @@ export function SettlementBuilder({
     setSelection(null)
     setStackSnapshot(null)
     setStackTrigger(null)
+    setStackPreferredItemKey(null)
     setToolActivationId((current) => current + 1)
     setSelectedTool(tool)
     setRotation(nextRotation)
@@ -682,6 +695,7 @@ export function SettlementBuilder({
     setSelection(null)
     setStackSnapshot(null)
     setStackTrigger(null)
+    setStackPreferredItemKey(null)
     const categoryChanged = nextCategory !== category
     if (categoryChanged && selectedTool) {
       setSelectedTool(null)
@@ -1081,6 +1095,7 @@ export function SettlementBuilder({
             rotation={rotation}
             selectedCell={selectedTile?.cell ?? stackSnapshot?.cell ?? null}
             selectedTool={constructionQueueOpen ? null : selectedTool}
+            stackOpenCell={stackSnapshot?.cell ?? null}
             toolActivationId={toolActivationId}
           />
         </div>
@@ -1106,10 +1121,16 @@ export function SettlementBuilder({
               <span className="selection-heading-actions">
                 {selectedTile.contents.length > 1 && (
                   <button
+                    aria-expanded={stackSnapshot?.key === selectedTile.key}
                     aria-haspopup="dialog"
                     aria-label={`Choose ${selectedTile.contents.length} overlapping items on this tile`}
                     className="selection-stack-button"
-                    onClick={(event) => openInspectionStack(selectedTile, event.currentTarget)}
+                    onClick={(event) => openInspectionStack(
+                      selectedTile,
+                      event.currentTarget,
+                      selectedItem?.key ?? null,
+                      true,
+                    )}
                     title="Choose another item on this tile"
                     type="button"
                   >
@@ -1293,11 +1314,13 @@ export function SettlementBuilder({
             onClose={() => {
               setStackSnapshot(null)
               setStackTrigger(null)
+              setStackPreferredItemKey(null)
             }}
             onSelectItem={(tile, item) => selectInspection(tile.key, item)}
             onSelectSurface={(tile) => selectInspection(tile.key, null)}
             tile={stackSnapshot}
             trigger={stackTrigger}
+            preferredItemKey={stackPreferredItemKey}
           />
         )}
       </main>

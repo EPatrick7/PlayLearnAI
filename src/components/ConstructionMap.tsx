@@ -81,6 +81,7 @@ interface ConstructionMapProps {
     preferredItemKey?: string | null,
   ) => void
   selectedCell?: GridPoint | null
+  stackOpenCell?: GridPoint | null
   overlapCounts?: ReadonlyMap<string, number>
   inspectionByCell?: ReadonlyMap<string, MapTileInspection>
 }
@@ -234,6 +235,7 @@ export function ConstructionMap({
   onUndo,
   onInspectCell,
   selectedCell = null,
+  stackOpenCell = null,
   overlapCounts = new Map(),
   inspectionByCell = new Map(),
 }: ConstructionMapProps) {
@@ -287,6 +289,10 @@ export function ConstructionMap({
     horizontal: 'start' | 'end'
     vertical: 'above' | 'below'
   }>({ horizontal: 'start', vertical: 'above' })
+  const stackOpenCellKey = stackOpenCell ? keyFor(stackOpenCell) : null
+  const overlappingCell = (cells: readonly GridPoint[]) => cells.find(
+    (cell) => (overlapCounts.get(keyFor(cell)) ?? 0) > 1,
+  ) ?? null
   const rooms = useMemo(() => detectRooms(layout), [layout])
   const plannedRooms = useMemo(() => detectRooms(planningLayout), [planningLayout])
 
@@ -1541,10 +1547,13 @@ export function ConstructionMap({
           const kind = workstation.type as WorkstationKind
           const spec = WORKSTATION_SPECS[kind]
           const footprint = getWorkstationFootprintSize(workstation)
+          const stackCell = overlappingCell(getWorkstationCells(workstation))
           if (!spec) return null
           return (
             <span
-              aria-label={`${workstation.label}, ${footprint.width} by ${footprint.height} tiles`}
+              aria-expanded={stackCell ? stackOpenCellKey === keyFor(stackCell) : undefined}
+              aria-haspopup={stackCell ? 'dialog' : undefined}
+              aria-label={`${workstation.label}, ${footprint.width} by ${footprint.height} tiles${stackCell ? `, ${overlapCounts.get(keyFor(stackCell))} things share this tile; activate to choose` : ''}`}
               className={`construction-workstation construction-inspect-target workstation-${kind}`}
               data-grid-height={footprint.height}
               data-grid-width={footprint.width}
@@ -1569,7 +1578,13 @@ export function ConstructionMap({
 
         {constructionStockpile && (
           <span
-            aria-label={`Construction pallet, ${Math.round(constructionStock * 10) / 10} material on hand`}
+            aria-expanded={(overlapCounts.get(keyFor(constructionStockpile)) ?? 0) > 1
+              ? stackOpenCellKey === keyFor(constructionStockpile)
+              : undefined}
+            aria-haspopup={(overlapCounts.get(keyFor(constructionStockpile)) ?? 0) > 1
+              ? 'dialog'
+              : undefined}
+            aria-label={`Construction pallet, ${Math.round(constructionStock * 10) / 10} material on hand${(overlapCounts.get(keyFor(constructionStockpile)) ?? 0) > 1 ? `, ${overlapCounts.get(keyFor(constructionStockpile))} things share this tile; activate to choose` : ''}`}
             className="construction-stockpile construction-inspect-target"
             data-grid-x={constructionStockpile.x}
             data-grid-y={constructionStockpile.y}
@@ -1594,9 +1609,12 @@ export function ConstructionMap({
             if (!boundary) return null
             const connectionLayout = order.target.construct ? planningLayout : layout
             const connection = getBoundaryConnection(connectionLayout, cell)
+            const stackCount = overlapCounts.get(keyFor(cell)) ?? 0
             return (
               <span
-                aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
+                aria-expanded={stackCount > 1 ? stackOpenCellKey === keyFor(cell) : undefined}
+                aria-haspopup={stackCount > 1 ? 'dialog' : undefined}
+                aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent${stackCount > 1 ? `, ${stackCount} things share this tile; activate to choose` : ''}`}
                 className={`construction-blueprint construction-blueprint-boundary construction-inspect-target construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
                 data-boundary-connection={connection.name}
                 data-boundary-mask={connection.mask}
@@ -1624,9 +1642,12 @@ export function ConstructionMap({
           const kind = workstation.type as WorkstationKind
           const spec = WORKSTATION_SPECS[kind]
           const footprint = getWorkstationFootprintSize(workstation)
+          const stackCell = overlappingCell(order.target.cells)
           return (
             <span
-              aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
+              aria-expanded={stackCell ? stackOpenCellKey === keyFor(stackCell) : undefined}
+              aria-haspopup={stackCell ? 'dialog' : undefined}
+              aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent${stackCell ? `, ${overlapCounts.get(keyFor(stackCell))} things share this tile; activate to choose` : ''}`}
               className={`construction-blueprint construction-blueprint-workstation construction-inspect-target blueprint-${order.operation} status-${order.status}`}
               data-construction-order-id={order.id}
               data-construction-order-status={order.status}
@@ -1665,11 +1686,14 @@ export function ConstructionMap({
           if (!cell) return null
           const name = member.name
           const workerInitials = name.split(' ').map((part) => part[0]).join('').slice(0, 2)
+          const stackCount = overlapCounts.get(keyFor(cell)) ?? 0
           return (
             <span
-              aria-label={order
+              aria-expanded={stackCount > 1 ? stackOpenCellKey === keyFor(cell) : undefined}
+              aria-haspopup={stackCount > 1 ? 'dialog' : undefined}
+              aria-label={`${order
                 ? `${name}, ${activity}, ${constructionOrderLabel(order)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} material` : ''}`
-                : `${name}, ${member.status}`}
+                : `${name}, ${member.status}`}${stackCount > 1 ? `, ${stackCount} things share this tile; activate to choose` : ''}`}
               className={`construction-pawn construction-inspect-target ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'} ${carriedMaterial > 0 ? 'worker-carrying' : ''}`}
               data-construction-worker-id={order ? member.id : undefined}
               data-construction-worker-state={order ? activityClass : undefined}

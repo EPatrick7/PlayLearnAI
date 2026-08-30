@@ -1998,10 +1998,10 @@
   appearance: none;
   position: relative;
   z-index: 20;
-  min-width: 28px;
-  height: 28px;
-  margin: -8px -8px 0 0;
-  padding: 0 4px;
+  min-width: 23px;
+  height: 23px;
+  margin: -5px -5px 0 0;
+  padding: 0 3px;
   place-self: start end;
   display: inline-flex;
   gap: 1px;
@@ -2009,17 +2009,17 @@
   justify-content: center;
   place-items: center;
   border: 2px solid #252721;
-  border-radius: 6px;
+  border-radius: 7px;
   color: #d8c58f;
   background: #3b3d34;
   box-shadow: 0 2px 3px rgba(0, 0, 0, 0.42);
-  font: 900 8px/1 ui-monospace, monospace;
+  font: 900 7px/1 ui-monospace, monospace;
   pointer-events: none;
 }
 
 .construction-stack-count .game-icon {
-  width: 13px;
-  height: 13px;
+  width: 10px;
+  height: 10px;
 }
 
 .construction-stack-count b { font: inherit; }
@@ -2066,16 +2066,16 @@
   .construction-designator-summary strong { font-size: 9px; }
   .construction-edge-pan-indicator { bottom: 72px; min-height: 30px; font-size: 8px; }
   .construction-stack-count {
-    min-width: 32px;
-    height: 32px;
-    margin: -8px -8px 0 0;
-    border-radius: 7px;
-    font-size: 9px;
+    min-width: 24px;
+    height: 24px;
+    margin: -5px -5px 0 0;
+    border-radius: 8px;
+    font-size: 8px;
   }
 
   .construction-stack-count .game-icon {
-    width: 14px;
-    height: 14px;
+    width: 11px;
+    height: 11px;
   }
 }
 
