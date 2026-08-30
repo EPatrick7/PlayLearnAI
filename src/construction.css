@@ -322,19 +322,47 @@
 .construction-boundary.boundary-connection-end-west { border-radius: 0 3px 3px 0; }
 
 .construction-boundary.boundary-door {
-  background-color: #68716d;
+  --door-bolt: #313a37;
+  --door-frame: #202826;
+  --door-frame-edge: #111715;
+  --door-latch: #e1b75b;
+  --door-panel: #7d8681;
+  --door-panel-deep: #555f5b;
+  --door-panel-highlight: rgba(239, 241, 223, 0.2);
+  --door-panel-shadow: rgba(15, 21, 19, 0.34);
+  --door-seam: #1b2321;
+  --door-seam-highlight: rgba(229, 232, 214, 0.18);
+  --door-panel-angle: 180deg;
+  --boundary-edge-east: var(--door-frame-edge);
+  --boundary-edge-north: rgba(222, 227, 211, 0.42);
+  --boundary-edge-south: #111715;
+  --boundary-edge-west: rgba(203, 210, 196, 0.24);
+  background-color: var(--door-frame);
+  background-image:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 38%),
+    linear-gradient(315deg, rgba(0, 0, 0, 0.2), transparent 42%);
+  background-attachment: local, local;
+  background-size: auto, auto;
 }
 
 .construction-boundary.boundary-door > i {
   position: absolute;
-  z-index: 3;
-  border: 2px solid #242d2a;
+  z-index: 1;
+  inset: 2px;
+  box-sizing: border-box;
+  border: 1px solid var(--door-frame-edge);
   border-radius: 1px;
-  background: #7e8782;
+  background:
+    radial-gradient(circle at 5px 5px, var(--door-bolt) 0 1px, transparent 1.6px),
+    radial-gradient(circle at calc(100% - 5px) 5px, var(--door-bolt) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 5px calc(100% - 5px), var(--door-bolt) 0 1px, transparent 1.6px),
+    radial-gradient(circle at calc(100% - 5px) calc(100% - 5px), var(--door-bolt) 0 1px, transparent 1.6px),
+    linear-gradient(135deg, var(--door-panel-highlight), transparent 31%),
+    linear-gradient(var(--door-panel-angle), var(--door-panel), var(--door-panel-deep));
   box-shadow:
-    0 0 0 1px rgba(148, 212, 220, 0.26),
-    1px 1px 0 rgba(239, 234, 214, 0.12) inset,
-    -1px -1px 0 rgba(16, 22, 20, 0.18) inset;
+    0 0 0 1px var(--door-panel-highlight),
+    2px 2px 0 var(--door-panel-highlight) inset,
+    -2px -2px 0 var(--door-panel-shadow) inset;
 }
 
 .construction-boundary.boundary-door > i::before,
@@ -346,49 +374,49 @@
 .construction-boundary.boundary-door > i::before {
   left: 50%;
   top: 0;
-  width: 1px;
+  width: 3px;
   height: 100%;
-  background: rgba(29, 36, 34, 0.66);
-  box-shadow: 1px 0 rgba(233, 224, 199, 0.14);
+  background: var(--door-seam);
+  box-shadow:
+    -1px 0 var(--door-panel-shadow),
+    1px 0 var(--door-seam-highlight);
+  transform: translateX(-50%);
 }
 
 .construction-boundary.boundary-door > i::after {
-  left: 50%;
+  right: 6px;
   top: 50%;
-  width: 5px;
-  height: 4px;
-  border: 1px solid rgba(35, 39, 36, 0.78);
+  width: 7px;
+  height: 5px;
+  border: 1px solid var(--door-frame-edge);
   border-radius: 1px;
-  background: #d2ad5d;
-  transform: translate(-50%, -50%);
+  background: var(--door-latch);
+  box-shadow: 0 0 3px color-mix(in srgb, var(--door-latch) 62%, transparent);
+  transform: translateY(-50%);
 }
 
 .construction-boundary.boundary-door.door-vertical > i {
-  left: 24%;
-  right: 24%;
-  top: -1px;
-  bottom: -1px;
-}
-
-.construction-boundary.boundary-door.door-horizontal > i {
-  left: -1px;
-  right: -1px;
-  top: 24%;
-  bottom: 24%;
+  --door-panel-angle: 90deg;
 }
 
 .construction-boundary.boundary-door.door-vertical > i::before {
   left: 0;
   top: 50%;
   width: 100%;
-  height: 1px;
-  box-shadow: 0 1px rgba(233, 224, 199, 0.14);
+  height: 3px;
+  box-shadow:
+    0 -1px var(--door-panel-shadow),
+    0 1px var(--door-seam-highlight);
+  transform: translateY(-50%);
 }
 
-.construction-boundary.boundary-door.door-horizontal[data-connect-east="true"] > i { border-right-color: transparent; }
-.construction-boundary.boundary-door.door-horizontal[data-connect-west="true"] > i { border-left-color: transparent; }
-.construction-boundary.boundary-door.door-vertical[data-connect-north="true"] > i { border-top-color: transparent; }
-.construction-boundary.boundary-door.door-vertical[data-connect-south="true"] > i { border-bottom-color: transparent; }
+.construction-boundary.boundary-door.door-vertical > i::after {
+  right: auto;
+  bottom: 6px;
+  left: 50%;
+  top: auto;
+  transform: translateX(-50%);
+}
 
 .construction-workstation {
   position: relative;
@@ -555,9 +583,17 @@
   display: none;
 }
 
-.construction-preview.preview-door.boundary-door > i {
-  border-color: rgba(70, 47, 13, 0.84);
-  background: #c49a47;
+.construction-preview.preview-door {
+  --door-bolt: #6a4917;
+  --door-frame: #5f4114;
+  --door-frame-edge: #3d290d;
+  --door-latch: #ffe39a;
+  --door-panel: #c69a43;
+  --door-panel-deep: #906727;
+  --door-panel-highlight: rgba(255, 238, 185, 0.26);
+  --door-panel-shadow: rgba(68, 42, 8, 0.34);
+  --door-seam: #5b3d12;
+  --door-seam-highlight: rgba(255, 235, 176, 0.24);
 }
 
 .construction-preview.invalid.preview-wall,
@@ -572,9 +608,17 @@
     linear-gradient(125deg, rgba(255, 255, 255, 0.08), transparent 43%, rgba(48, 15, 13, 0.12));
 }
 
-.construction-preview.invalid.preview-door.boundary-door > i {
-  border-color: rgba(66, 24, 20, 0.84);
-  background: #b0574c;
+.construction-preview.invalid.preview-door {
+  --door-bolt: #642823;
+  --door-frame: #57211d;
+  --door-frame-edge: #3d1714;
+  --door-latch: #ffd0c8;
+  --door-panel: #b65b50;
+  --door-panel-deep: #7f342e;
+  --door-panel-highlight: rgba(255, 205, 197, 0.22);
+  --door-panel-shadow: rgba(57, 14, 11, 0.36);
+  --door-seam: #5e211d;
+  --door-seam-highlight: rgba(255, 196, 187, 0.2);
 }
 
 .construction-preview[data-connect-north="true"] { --boundary-edge-north: transparent; }
@@ -1621,6 +1665,38 @@
   z-index: 10;
   opacity: 0.88;
   background-color: #8f433c;
+  background-image: repeating-linear-gradient(135deg, rgba(253, 184, 173, 0.2) 0 4px, transparent 4px 8px);
+}
+
+.construction-blueprint-boundary.boundary-door {
+  --door-bolt: #29565b;
+  --door-frame: #23494d;
+  --door-frame-edge: #173236;
+  --door-latch: #b9f2ed;
+  --door-panel: #57939a;
+  --door-panel-deep: #376c72;
+  --door-panel-highlight: rgba(210, 249, 251, 0.24);
+  --door-panel-shadow: rgba(12, 45, 48, 0.34);
+  --door-seam: #244f54;
+  --door-seam-highlight: rgba(203, 247, 250, 0.22);
+  background-color: var(--door-frame);
+  background-image: repeating-linear-gradient(135deg, rgba(213, 249, 251, 0.11) 0 4px, transparent 4px 8px);
+  background-attachment: local;
+  background-size: auto;
+}
+
+.construction-blueprint-boundary.blueprint-deconstruct.boundary-door {
+  --door-bolt: #672a25;
+  --door-frame: #54221e;
+  --door-frame-edge: #391613;
+  --door-latch: #f7c1b8;
+  --door-panel: #a75148;
+  --door-panel-deep: #76342e;
+  --door-panel-highlight: rgba(255, 204, 195, 0.22);
+  --door-panel-shadow: rgba(54, 13, 10, 0.36);
+  --door-seam: #57231f;
+  --door-seam-highlight: rgba(250, 193, 184, 0.2);
+  background-color: var(--door-frame);
   background-image: repeating-linear-gradient(135deg, rgba(253, 184, 173, 0.2) 0 4px, transparent 4px 8px);
 }
 

@@ -189,14 +189,23 @@ function OperationsConstructionLayer({
       if (!boundary) return null
       const connectionLayout = order.target.construct ? planningLayout : completedLayout
       const connection = getBoundaryConnection(connectionLayout, cell)
+      const doorAxis = boundary.kind === 'door'
+        ? getBoundaryDoorAxis(connection.mask)
+        : null
       return (
         <span
           aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
-          className={`operations-blueprint construction-blueprint construction-blueprint-boundary construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+          className={`operations-blueprint construction-blueprint construction-blueprint-boundary construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${doorAxis ? `door-airlock door-${doorAxis}` : ''}`}
           data-boundary-connection={connection.name}
           data-boundary-mask={connection.mask}
+          data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
+          data-connect-north={connection.mask & BOUNDARY_CONNECTION_BITS.north ? 'true' : undefined}
+          data-connect-south={connection.mask & BOUNDARY_CONNECTION_BITS.south ? 'true' : undefined}
+          data-connect-west={connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
           data-construction-order-id={order.id}
           data-construction-order-status={order.status}
+          data-door-axis={doorAxis ?? undefined}
+          data-door-texture={doorAxis ? 'airlock' : undefined}
           data-grid-x={cell.x}
           data-grid-y={cell.y}
           data-inspect-item-key={`blueprint:${order.id}`}
@@ -260,16 +269,21 @@ function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
 
       {layout.boundaries.map((boundary) => {
         const connection = getBoundaryConnection(layout, boundary)
+        const doorAxis = boundary.kind === 'door'
+          ? getBoundaryDoorAxis(connection.mask)
+          : null
         return (
           <span
             aria-hidden="true"
-            className={`construction-boundary boundary-${boundary.kind} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+            className={`construction-boundary boundary-${boundary.kind} ${connection.className} ${doorAxis ? `door-airlock door-${doorAxis}` : ''}`}
             data-boundary-connection={connection.name}
             data-boundary-mask={connection.mask}
             data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
             data-connect-north={connection.mask & BOUNDARY_CONNECTION_BITS.north ? 'true' : undefined}
             data-connect-south={connection.mask & BOUNDARY_CONNECTION_BITS.south ? 'true' : undefined}
             data-connect-west={connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
+            data-door-axis={doorAxis ?? undefined}
+            data-door-texture={doorAxis ? 'airlock' : undefined}
             data-freeform-boundary={boundary.kind}
             data-grid-x={boundary.x}
             data-grid-y={boundary.y}

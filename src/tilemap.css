@@ -206,27 +206,10 @@
 
 .tile-door-frame {
   z-index: 4;
+  inset: 2px;
   border: 2px solid #272f2e;
   background: #88908c;
   box-shadow: 0 0 0 1px rgba(213, 215, 204, 0.17);
-}
-
-.tile-door-east .tile-door-frame,
-.tile-door-west .tile-door-frame {
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 52%;
-  transform: translateX(-50%);
-}
-
-.tile-door-north .tile-door-frame,
-.tile-door-south .tile-door-frame {
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 52%;
-  transform: translateY(-50%);
 }
 
 .tile-door-east .tile-door-leaf,
