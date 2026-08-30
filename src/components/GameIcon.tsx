@@ -21,6 +21,7 @@ export type GameIconName =
   | 'close'
   | 'plus'
   | 'minus'
+  | 'pause'
   | 'play'
   | 'fastForward'
   | 'verify'
@@ -179,6 +180,13 @@ function IconArtwork({ name }: { name: GameIconName }) {
       return <path d="M12 4v16M4 12h16" />
     case 'minus':
       return <path d="M4 12h16" />
+    case 'pause':
+      return (
+        <>
+          <path d="M7 4h3v16H7z" />
+          <path d="M14 4h3v16h-3z" />
+        </>
+      )
     case 'play':
       return <path d="m7 4 12 8-12 8V4Z" />
     case 'fastForward':

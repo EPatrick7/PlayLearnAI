@@ -29,6 +29,7 @@ import {
 import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
 import type { Priority } from '../game/types'
+import { ConstructionClockControls } from './ConstructionClockControls'
 import { ConstructionMap } from './ConstructionMap'
 import {
   buildConstructionQueue,
@@ -806,12 +807,10 @@ export function SettlementBuilder({
             <GameIcon name="storage" />
             <span><strong>{materialAmount(availableStock)} free</strong><small>{materialAmount(reservedStock)} reserved</small></span>
           </span>
-          <div aria-label="Construction speed" className="construction-speed-controls" role="group">
-            <button aria-label="Pause construction" aria-pressed={simulationSpeed === 0} onClick={() => colony.setConstructionSpeed(0)} type="button">Ⅱ</button>
-            {([1, 2, 3] as const).map((speed) => (
-              <button aria-label={`${speed} times construction speed`} aria-pressed={simulationSpeed === speed} key={speed} onClick={() => colony.setConstructionSpeed(speed)} type="button">{speed}×</button>
-            ))}
-          </div>
+          <ConstructionClockControls
+            onChange={colony.setConstructionSpeed}
+            speed={simulationSpeed}
+          />
 
           {constructionQueueOpen && (
             <section

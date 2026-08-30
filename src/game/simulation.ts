@@ -27,11 +27,6 @@ import type {
 
 export const MAX_ADVANCE_HOURS = 12
 
-export interface AdvanceSimulationHooks {
-  /** Advance sibling simulations using eligibility at the start of this hour. */
-  beforeHour?: (state: MoonbaseState) => void
-}
-
 const OBJECTIVE_WORK_ORDER_IDS: WorkOrderId[] = [
   'work-seal-lab',
   'work-repressurize-lab',
@@ -1162,7 +1157,6 @@ export const advanceSimulation = (
   source: MoonbaseState,
   input: AdvanceInput | number,
   actor: 'manual' | 'agent' = 'manual',
-  hooks: AdvanceSimulationHooks = {},
 ): [MoonbaseState, AdvanceResult] => {
   let state = cloneState(source)
   const requestedHours = typeof input === 'number' ? input : input.hours
@@ -1193,9 +1187,7 @@ export const advanceSimulation = (
   if (hoursToAttempt === 0 && plan.status !== 'draft') stopReason = 'horizon_reached'
 
   for (let step = 0; step < hoursToAttempt && !stopReason; step += 1) {
-    const candidateSource = hooks.beforeHour ? cloneState(state) : state
-    hooks.beforeHour?.(candidateSource)
-    const candidate = stepOneHour(candidateSource)
+    const candidate = stepOneHour(state)
     const oxygenFloor =
       plan.status !== 'draft' ? plan.constraints.oxygenFloorHours : requestedStop?.kind === 'oxygen_below' ? 0 : null
     if (oxygenFloor !== null && candidate.reserves.oxygenHours < oxygenFloor) {

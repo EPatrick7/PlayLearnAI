@@ -3,7 +3,12 @@ import { GameIcon, type GameIconName } from './components/GameIcon'
 import { MoonbaseMap } from './components/MoonbaseMap'
 import type { MapTileInspection } from './components/mapInspection'
 import { PawnSprite, type PawnSpriteVariant } from './components/PawnSprite'
+import { ConstructionClockControls } from './components/ConstructionClockControls'
 import { SettlementBuilder } from './components/SettlementBuilder'
+import {
+  buildConstructionQueue,
+  type ConstructionQueueCommand,
+} from './components/constructionQueue'
 import type { ConstructionOrder } from './game/constructionJobs'
 import { useColonyStore } from './game/store'
 import type {
@@ -163,6 +168,19 @@ function App() {
   const unfinishedConstructionCount = colony.settlement.constructionOrders.filter(
     (order) => order.status !== 'complete',
   ).length
+  const colonyConstructionQueue = useMemo(() => buildConstructionQueue(
+    colony.settlement.constructionOrders,
+    {
+      paused: constructionSpeed === 0,
+      crewNames: new Map(colony.crew.map((member) => [member.id, member.name])),
+    },
+  ), [colony.crew, colony.settlement.constructionOrders, constructionSpeed])
+  const colonyConstructionStatus = colonyConstructionQueue.reduce<ConstructionQueueCommand | null>(
+    (strongest, command) => (
+      !strongest || command.statusRank < strongest.statusRank ? command : strongest
+    ),
+    null,
+  )
 
   const clearConstructionCompletion = () => {
     constructionCompletionReceipt.current.clear()
@@ -651,12 +669,42 @@ function App() {
           )}
         </section>}
 
-        <section className="time-controls" aria-label="Simulation controls">
-          <span className={`sim-state ${hasCommittedPlan ? 'ready' : 'paused'}`}><i />{hasCommittedPlan ? 'Plan live' : 'Paused'}</span>
-          <button disabled={!hasCommittedPlan || colony.scenarioStatus !== 'active'} onClick={() => colony.advanceTime({ hours: 1, stopCondition: plan.stopCondition ?? undefined })} title="Advance one hour" type="button"><GameIcon name="play" /><span>+1h</span></button>
-          <button disabled={!hasCommittedPlan || colony.scenarioStatus !== 'active'} onClick={() => colony.advanceTime({ hours: plan.horizonHours || 4, stopCondition: plan.stopCondition ?? undefined })} title="Advance to the plan stop condition" type="button"><GameIcon name="fastForward" /><span>To stop</span></button>
-          <button className="verify-control" disabled={!hasCommittedPlan || colony.elapsedHours === plan.baseline?.elapsedHours} onClick={() => colony.verifyPlan()} title="Verify the operation" type="button"><GameIcon name="verify" /><span>Verify</span></button>
-        </section>
+        {!drawerOpen && (
+          <section
+            aria-label="Simulation controls"
+            className="time-controls has-construction-clock"
+          >
+            <button
+              aria-label={unfinishedConstructionCount > 0
+                ? `Open Architect, ${unfinishedConstructionCount} unfinished construction ${unfinishedConstructionCount === 1 ? 'job' : 'jobs'}. ${colonyConstructionStatus?.activity ?? 'Waiting for a builder'}.`
+                : 'Open Architect. No unfinished construction jobs.'}
+              className="world-construction-status"
+              onClick={() => {
+                setDrawerOpen(false)
+                setArchitectOpen(true)
+              }}
+              title="Open Architect and inspect construction"
+              type="button"
+            >
+              <GameIcon name="work" />
+              {unfinishedConstructionCount > 0 && (
+                <b aria-hidden="true" className="world-construction-count">{unfinishedConstructionCount}</b>
+              )}
+              <span>
+                <strong>{unfinishedConstructionCount > 0
+                  ? `${unfinishedConstructionCount} build ${unfinishedConstructionCount === 1 ? 'job' : 'jobs'}`
+                  : 'No build jobs'}</strong>
+                <small>{colonyConstructionStatus?.activity ?? 'Open Architect to build'}</small>
+              </span>
+            </button>
+            <ConstructionClockControls
+              className="world-construction-speed"
+              label="Construction speed"
+              onChange={colony.setConstructionSpeed}
+              speed={constructionSpeed}
+            />
+          </section>
+        )}
 
         {colony.dust.active && <div className="dust-status"><GameIcon name="dust" />Dust front active · solar derated {colony.power.dustDeratePercent}%</div>}
 
@@ -676,6 +724,12 @@ function App() {
         >
           <header className="sheet-header">
             <span><GameIcon name={dockItems.find((item) => item.id === activeTab)?.icon ?? 'plan'} /><strong>{dockItems.find((item) => item.id === activeTab)?.label}</strong></span>
+            <ConstructionClockControls
+              className="sheet-construction-speed"
+              label="Construction speed"
+              onChange={colony.setConstructionSpeed}
+              speed={constructionSpeed}
+            />
             <button aria-label="Close command panel" onClick={() => setDrawerOpen(false)} type="button"><GameIcon name="close" /></button>
           </header>
 
@@ -838,7 +892,52 @@ function App() {
               )}
 
               <section className="plan-actions">
-                {isDraft ? <><button className="secondary-action" disabled={!plan.actions.length} onClick={() => colony.clearPlan()} type="button">Clear</button>{plan.basedOnWorldRevision !== colony.worldRevision && <button className="secondary-action" onClick={() => colony.rebasePlan()} type="button">Rebase</button>}<button className="smart-plan-button compact" onClick={stageRecommendedResponse} type="button"><GameIcon name="plan" /><span>Stage recommended</span></button><button className="commit-action" disabled={!validation.valid} onClick={commitPlan} type="button"><GameIcon name="check" /><span>Commit plan</span></button></> : <button className="secondary-action" onClick={() => colony.clearPlan()} type="button">Start next plan</button>}
+                {isDraft ? (
+                  <>
+                    <button className="secondary-action" disabled={!plan.actions.length} onClick={() => colony.clearPlan()} type="button">Clear</button>
+                    {plan.basedOnWorldRevision !== colony.worldRevision && <button className="secondary-action" onClick={() => colony.rebasePlan()} type="button">Rebase</button>}
+                    <button className="smart-plan-button compact" onClick={stageRecommendedResponse} type="button"><GameIcon name="plan" /><span>Load example</span></button>
+                    <button className="commit-action" disabled={!validation.valid} onClick={commitPlan} type="button"><GameIcon name="check" /><span>Commit plan</span></button>
+                  </>
+                ) : (
+                  <>
+                    <header className="plan-execution-heading">
+                      <strong>Plan time</strong>
+                      <small>Advance the committed simulation</small>
+                    </header>
+                    <button
+                      className="plan-time-action"
+                      disabled={!hasCommittedPlan || colony.scenarioStatus !== 'active'}
+                      onClick={() => colony.advanceTime({ hours: 1, stopCondition: plan.stopCondition ?? undefined })}
+                      title="Advance one hour"
+                      type="button"
+                    >
+                      <GameIcon name="clock" />
+                      <span><strong>Advance 1 hour</strong><small>Run one plan step</small></span>
+                    </button>
+                    <button
+                      className="plan-time-action"
+                      disabled={!hasCommittedPlan || colony.scenarioStatus !== 'active'}
+                      onClick={() => colony.advanceTime({ hours: plan.horizonHours || 4, stopCondition: plan.stopCondition ?? undefined })}
+                      title="Advance to the plan stop condition"
+                      type="button"
+                    >
+                      <GameIcon name="fastForward" />
+                      <span><strong>Run to stop</strong><small>{stopConditionLabel(plan.stopCondition)}</small></span>
+                    </button>
+                    <button
+                      className="plan-time-action plan-verify-action"
+                      disabled={!hasCommittedPlan || colony.elapsedHours === plan.baseline?.elapsedHours}
+                      onClick={() => colony.verifyPlan()}
+                      title="Verify the operation"
+                      type="button"
+                    >
+                      <GameIcon name="verify" />
+                      <span><strong>Verify outcome</strong><small>Compare against the plan</small></span>
+                    </button>
+                    <button className="secondary-action" onClick={() => colony.clearPlan()} type="button">Start next plan</button>
+                  </>
+                )}
               </section>
 
               {colony.verification && <section className={`verification-evidence ${colony.verification.status}`}><header><span><small>Outcome comparison</small><strong>{colony.verification.summary}</strong></span></header><div>{colony.verification.checks.map((check) => <span className={check.passed ? 'passed' : 'failed'} key={check.id} title={check.evidence}><GameIcon name={check.passed ? 'check' : 'alert'} />{check.label}</span>)}</div></section>}

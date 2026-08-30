@@ -249,11 +249,6 @@ const advanceConstructionInState = (
   }
 }
 
-const advanceConstructionBeforeHour = (state: MoonbaseState) => {
-  if (state.settlement.constructionSpeed === 0) return
-  advanceConstructionInState(state, 4)
-}
-
 const domainSnapshot = (state: MoonbaseStore): MoonbaseState => ({
   baseName: state.baseName,
   seed: state.seed,
@@ -624,16 +619,12 @@ export const useColonyStore = create<MoonbaseStore>()(
         return result
       },
       advanceTime: (input, actor = 'manual') => {
-        const [nextState, result] = advanceSimulation(get(), input, actor, {
-          beforeHour: advanceConstructionBeforeHour,
-        })
+        const [nextState, result] = advanceSimulation(get(), input, actor)
         set(nextState)
         return result
       },
       advanceHours: (hours, actor = 'manual') => {
-        const [nextState, result] = advanceSimulation(get(), { hours }, actor, {
-          beforeHour: advanceConstructionBeforeHour,
-        })
+        const [nextState, result] = advanceSimulation(get(), { hours }, actor)
         set(nextState)
         return result
       },

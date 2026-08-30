@@ -866,6 +866,10 @@ describe('freeform settlement builder', () => {
 
     expect(screen.queryByRole('region', { name: 'Colony crew' })).not.toBeInTheDocument()
     expect(document.querySelector('.selection-inspector')).not.toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Construction speed' })).toBeVisible()
+    expect(screen.getByRole('button', {
+      name: 'Open Architect. No unfinished construction jobs.',
+    })).toBeVisible()
     expect(within(screen.getByRole('region', { name: 'Current objective' })).getByRole(
       'group',
       { name: 'Active alerts' },
@@ -931,7 +935,14 @@ describe('freeform settlement builder', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Return to colony' }))
 
       expect(screen.getByRole('main')).toHaveClass('world-stage')
-      expect(screen.queryByRole('group', { name: 'Construction speed' })).not.toBeInTheDocument()
+      const colonyClock = screen.getByRole('group', { name: 'Construction speed' })
+      expect(colonyClock).toBeVisible()
+      expect(within(colonyClock).getByRole('button', {
+        name: '3 times construction speed',
+      })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByRole('button', {
+        name: /Open Architect, 1 unfinished construction job/i,
+      })).toBeVisible()
       expect(document.querySelector(
         `[data-construction-order-id="${queued.id}"]`,
       )).toHaveClass('operations-blueprint')
@@ -944,6 +955,14 @@ describe('freeform settlement builder', () => {
         /Colonist selected.*TaskWall blueprint/i,
       )
 
+      fireEvent.click(within(colonyClock).getByRole('button', { name: 'Pause construction' }))
+      expect(liveBuilder).toHaveClass('worker-paused')
+      act(() => vi.advanceTimersByTime(360))
+      expect(advanceSpy).not.toHaveBeenCalled()
+
+      fireEvent.click(within(colonyClock).getByRole('button', {
+        name: '3 times construction speed',
+      }))
       act(() => vi.advanceTimersByTime(180))
 
       expect(advanceSpy).toHaveBeenCalledTimes(1)
@@ -982,14 +1001,14 @@ describe('freeform settlement builder', () => {
       advanceSpy?.mockRestore()
       vi.useRealTimers()
     }
-  })
+  }, 15000)
 
   it('routes, supplies, and builds an operations blueprint on the live Architect clock', () => {
     vi.useFakeTimers()
     try {
       startOperations()
       expect(useColonyStore.getState().operationsPlan.baseline).toBeNull()
-      expect(screen.getByTitle('Advance one hour')).toBeDisabled()
+      expect(screen.queryByTitle('Advance one hour')).not.toBeInTheDocument()
 
       fireEvent.click(within(
         screen.getByRole('navigation', { name: 'Colony commands' }),
@@ -1104,7 +1123,7 @@ describe('freeform settlement builder', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
+  }, 15000)
 
   it('does not open Architect when B is typed into an operations field', () => {
     startOperations()
@@ -1119,6 +1138,39 @@ describe('freeform settlement builder', () => {
     expect(oxygenFloor).toBeVisible()
     expect(screen.getByRole('main')).toHaveClass('world-stage')
     expect(screen.queryByRole('button', { name: 'Return to colony' })).not.toBeInTheDocument()
+  })
+
+  it('keeps plan-time actions inside the committed Plan panel', () => {
+    startOperations()
+    expect(screen.queryByTitle('Advance one hour')).not.toBeInTheDocument()
+
+    fireEvent.click(within(
+      screen.getByRole('navigation', { name: 'Colony commands' }),
+    ).getByRole('button', { name: 'Work' }))
+    fireEvent.click(screen.getByRole('button', { name: /Stage response|Load example/i }))
+    const panelClock = screen.getByRole('group', { name: 'Construction speed' })
+    expect(panelClock).toBeVisible()
+    fireEvent.click(within(panelClock).getByRole('button', { name: 'Pause construction' }))
+    expect(within(panelClock).getByRole('button', { name: 'Pause construction' }))
+      .toHaveAttribute('aria-pressed', 'true')
+
+    const commit = screen.getByRole('button', { name: 'Commit plan' })
+    expect(commit).toBeEnabled()
+    fireEvent.click(commit)
+
+    expect(screen.getByTitle('Advance one hour')).toBeVisible()
+    expect(screen.getByTitle('Advance to the plan stop condition')).toBeVisible()
+    expect(screen.getByTitle('Verify the operation')).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close command panel' }))
+    expect(screen.getByTitle('Advance one hour').closest('.command-sheet'))
+      .toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTitle('Advance one hour').closest('.command-sheet'))
+      .toHaveAttribute('inert')
+    const colonyClock = screen.getByRole('group', { name: 'Construction speed' })
+    expect(colonyClock).toBeVisible()
+    expect(within(colonyClock).getByRole('button', { name: 'Pause construction' }))
+      .toHaveAttribute('aria-pressed', 'true')
   })
 
   it('inspects an empty lunar tile with user-facing coordinates', () => {

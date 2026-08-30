@@ -1544,10 +1544,25 @@
   width: 31px;
   min-height: 32px;
   padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
   border-left: 1px solid rgba(235, 226, 204, 0.08);
   color: #8f9189;
   background: rgba(0, 0, 0, 0.12);
   font: 750 9px/1 ui-monospace, monospace;
+}
+
+.construction-speed-controls button .game-icon {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+}
+
+.construction-speed-controls button span {
+  font-size: 8px;
+  letter-spacing: -0.04em;
 }
 
 .construction-speed-controls button:first-child { border-left: 0; }
@@ -2515,22 +2530,22 @@
   }
 
   .construction-speed-controls {
-    min-width: 168px;
-    width: 168px;
-    height: 42px;
-    min-height: 42px;
-    flex: 0 0 168px;
+    min-width: 176px;
+    width: 176px;
+    height: 44px;
+    min-height: 44px;
+    flex: 0 0 176px;
     grid-column: auto;
     grid-row: auto;
     justify-self: auto;
   }
 
   .construction-speed-controls button {
-    width: 42px;
-    height: 42px;
-    min-width: 42px;
-    min-height: 42px;
-    flex: 0 0 42px;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    flex: 0 0 44px;
     font-size: 10px;
   }
 
@@ -2685,15 +2700,15 @@
 
 @media (max-width: 360px) {
   .construction-speed-controls {
-    min-width: 160px;
-    width: 160px;
-    flex-basis: 160px;
+    min-width: 176px;
+    width: 176px;
+    flex-basis: 176px;
   }
 
   .construction-speed-controls button {
-    width: 40px;
-    min-width: 40px;
-    flex-basis: 40px;
+    width: 44px;
+    min-width: 44px;
+    flex-basis: 44px;
   }
 
   .construction-material-summary {
@@ -2748,4 +2763,139 @@
   .construction-queue-row-metrics { gap: 6px; }
   .construction-queue-row-metrics > span:nth-child(2) { display: none; }
   .construction-queue-jump small { display: none; }
+}
+
+/* The operations view shares the same truthful worker clock as Architect. */
+.time-controls .world-construction-status {
+  position: relative;
+  min-width: 138px;
+  padding: 0 9px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+.world-construction-count { display: none; }
+
+.world-construction-status > .game-icon {
+  width: 15px;
+  height: 15px;
+  color: #d9bd78;
+}
+
+.world-construction-status > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.world-construction-status strong,
+.world-construction-status small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.world-construction-status strong {
+  color: #e5dfcf;
+  font: 750 9px/1 system-ui, sans-serif;
+  text-transform: none;
+}
+
+.world-construction-status small {
+  color: #98988e;
+  font: 600 7px/1.1 ui-monospace, monospace;
+  text-transform: none;
+}
+
+.time-controls .world-construction-speed {
+  min-width: 0;
+  width: auto;
+  flex: 0 0 auto;
+  border-color: rgba(222, 209, 174, 0.16);
+}
+
+.time-controls .world-construction-speed button {
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.time-controls .world-construction-speed button span {
+  display: inline;
+}
+
+@media (max-width: 860px) {
+  .time-controls.has-construction-clock {
+    gap: 4px;
+    justify-content: center;
+  }
+
+  .time-controls .world-construction-status {
+    width: 52px;
+    min-width: 52px;
+    padding: 0;
+    grid-template-columns: 1fr;
+    place-items: center;
+  }
+
+  .time-controls .world-construction-status > span {
+    display: none;
+  }
+
+  .time-controls .world-construction-count {
+    position: absolute;
+    right: 5px;
+    top: 5px;
+    min-width: 13px;
+    height: 13px;
+    padding: 0 3px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(220, 190, 116, 0.34);
+    border-radius: 7px;
+    color: #e8d399;
+    background: #353124;
+    font: 750 7px/1 ui-monospace, monospace;
+  }
+
+  .time-controls .world-construction-speed {
+    min-width: 0;
+    width: auto;
+    flex-basis: auto;
+  }
+
+  .time-controls .world-construction-speed button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    flex: 0 0 44px;
+  }
+
+  .time-controls .world-construction-speed button .game-icon {
+    width: 11px;
+    height: 11px;
+  }
+
+  .time-controls .world-construction-speed button span {
+    display: inline;
+    font-size: 8px;
+  }
+}
+
+@media (max-width: 380px) {
+  .time-controls .world-construction-status {
+    width: 48px;
+    min-width: 48px;
+  }
+
+  .time-controls .world-construction-speed button {
+    width: 44px;
+    min-width: 44px;
+    flex-basis: 44px;
+  }
 }

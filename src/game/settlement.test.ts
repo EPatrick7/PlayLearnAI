@@ -508,6 +508,58 @@ describe('tiny-start settlement construction', () => {
     useColonyStore.getState().resetColony()
   })
 
+  it('keeps explicit colony-hour advances from applying a second construction clock', () => {
+    useColonyStore.getState().resetColony()
+    const target = { x: 12, y: 9 }
+    const queued = useColonyStore.getState().queueConstruction(
+      paintBoundaryCell(useColonyStore.getState().settlement.layout, target, 'wall'),
+    )
+    expect(queued.ok).toBe(true)
+    useColonyStore.getState().setConstructionSpeed(3)
+    const queuedState = useColonyStore.getState()
+    useColonyStore.setState({
+      settlement: { ...queuedState.settlement, phase: 'operations' },
+    })
+
+    const before = useColonyStore.getState()
+    const constructionBefore = structuredClone({
+      layout: before.settlement.layout,
+      orders: before.settlement.constructionOrders,
+      crew: before.settlement.constructionCrew,
+      stockpile: before.settlement.constructionStockpile,
+      stock: before.reserves.constructionStock,
+    })
+
+    const advanced = useColonyStore.getState().advanceTime({ hours: 1 })
+    expect(advanced.advancedHours).toBe(1)
+
+    const afterHour = useColonyStore.getState()
+    expect({
+      layout: afterHour.settlement.layout,
+      orders: afterHour.settlement.constructionOrders,
+      crew: afterHour.settlement.constructionCrew,
+      stockpile: afterHour.settlement.constructionStockpile,
+      stock: afterHour.reserves.constructionStock,
+    }).toEqual(constructionBefore)
+
+    const advancedAgain = useColonyStore.getState().advanceHours(1)
+    expect(advancedAgain.advancedHours).toBe(1)
+    const afterHoursAction = useColonyStore.getState()
+    expect({
+      layout: afterHoursAction.settlement.layout,
+      orders: afterHoursAction.settlement.constructionOrders,
+      crew: afterHoursAction.settlement.constructionCrew,
+      stockpile: afterHoursAction.settlement.constructionStockpile,
+      stock: afterHoursAction.reserves.constructionStock,
+    }).toEqual(constructionBefore)
+
+    useColonyStore.getState().advanceConstruction(0.5)
+    expect(useColonyStore.getState().settlement.constructionOrders).not.toEqual(
+      constructionBefore.orders,
+    )
+    useColonyStore.getState().resetColony()
+  })
+
   it('reassigns uncollected material to a newly urgent blueprint', () => {
     useColonyStore.getState().resetColony()
     const initial = useColonyStore.getState()
