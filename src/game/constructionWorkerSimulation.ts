@@ -39,6 +39,13 @@ export interface ConstructionWorkerSimulationResult extends ConstructionAdvanceR
   noPathOrderIds: string[]
 }
 
+/**
+ * Maximum deterministic slice consumed by the store-facing construction clock.
+ * Keeping dispatch bounded lets a worker finish one job and accept another during
+ * a larger advance instead of discarding the remainder of that advance.
+ */
+export const CONSTRUCTION_SIMULATION_STEP = 0.25
+
 const travelPhases = new Set<ConstructionTravelPhase>([
   'idle',
   'to_stockpile',
@@ -283,5 +290,60 @@ export const advanceConstructionWorkerSimulation = (
     crewPositions,
     atSiteWorkers: routing.atSiteWorkers,
     noPathOrderIds: routing.noPathOrderIds,
+  }
+}
+
+/**
+ * Advances spatial construction in deterministic slices. Calls whose elapsed
+ * values partition the same quarter-unit duration therefore cross the same
+ * dispatch, travel, and completion boundaries.
+ */
+export const advanceConstructionWorkerSimulationFixedStep = (
+  input: ConstructionWorkerSimulationInput,
+): ConstructionWorkerSimulationResult => {
+  const elapsed = Number.isFinite(input.elapsed) ? Math.max(0, input.elapsed) : 0
+  if (elapsed <= CONSTRUCTION_SIMULATION_STEP) {
+    return advanceConstructionWorkerSimulation({ ...input, elapsed })
+  }
+
+  let remaining = elapsed
+  let layout = input.layout
+  let orders = input.orders
+  let constructionStock = input.constructionStock
+  let stockpile = input.stockpile
+  let crewPositions = input.crewPositions
+  let recoveredMaterials = 0
+  const completedOrderIds: string[] = []
+  let latest: ConstructionWorkerSimulationResult | null = null
+
+  while (remaining > 0.000_000_001) {
+    const step = Math.min(CONSTRUCTION_SIMULATION_STEP, remaining)
+    latest = advanceConstructionWorkerSimulation({
+      ...input,
+      layout,
+      orders,
+      constructionStock,
+      stockpile,
+      crewPositions,
+      elapsed: step,
+    })
+    layout = latest.layout
+    orders = latest.orders
+    constructionStock = latest.constructionStock
+    stockpile = latest.stockpile
+    crewPositions = latest.crewPositions
+    recoveredMaterials += latest.recoveredMaterials
+    latest.completedOrderIds.forEach((orderId) => {
+      if (!completedOrderIds.includes(orderId)) completedOrderIds.push(orderId)
+    })
+    remaining = Math.max(0, remaining - step)
+    if (!orders.some((order) => order.status !== 'complete')) break
+  }
+
+  if (!latest) return advanceConstructionWorkerSimulation({ ...input, elapsed: 0 })
+  return {
+    ...latest,
+    recoveredMaterials,
+    completedOrderIds,
   }
 }

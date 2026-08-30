@@ -10,6 +10,7 @@ import {
 } from './constructionJobs'
 import {
   advanceConstructionWorkerSimulation,
+  advanceConstructionWorkerSimulationFixedStep,
   type ConstructionWorkerSimulationInput,
 } from './constructionWorkerSimulation'
 
@@ -44,6 +45,56 @@ const inputFor = (
 })
 
 describe('spatial construction worker simulation', () => {
+  it('produces the same multi-job result for one large fixed-step advance or equivalent partitions', () => {
+    const orders = [3, 5, 7, 9].map((x, index): ConstructionOrder => ({
+      ...wallOrder(),
+      id: `wall-${index + 1}`,
+      commandId: `wall-${index + 1}`,
+      sequence: index + 1,
+      target: {
+        kind: 'boundary',
+        cells: [{ x, y: 1 }],
+        construct: { x, y: 1, kind: 'wall' },
+        deconstruct: null,
+      },
+    }))
+    const input: ConstructionWorkerSimulationInput = {
+      layout: createConstructionLayout(),
+      orders,
+      constructionStock: 4,
+      stockpile: { x: 1, y: 1 },
+      crewPositions: [{ crewId: 'builder', cell: { x: 1, y: 1 }, moveCredit: 0 }],
+      workers: [{
+        id: 'builder',
+        canConstruct: true,
+        movementRate: 20,
+        engineeringRate: 10,
+        haulingRate: 1,
+      }],
+      elapsed: 4,
+    }
+
+    const whole = advanceConstructionWorkerSimulationFixedStep(input)
+    let partitioned = advanceConstructionWorkerSimulationFixedStep({ ...input, elapsed: 1 })
+    for (let step = 1; step < 4; step += 1) {
+      partitioned = advanceConstructionWorkerSimulationFixedStep({
+        ...input,
+        layout: partitioned.layout,
+        orders: partitioned.orders,
+        constructionStock: partitioned.constructionStock,
+        stockpile: partitioned.stockpile,
+        crewPositions: partitioned.crewPositions,
+        elapsed: 1,
+      })
+    }
+
+    expect(whole.orders.every((order) => order.status === 'complete')).toBe(true)
+    expect(partitioned.layout).toEqual(whole.layout)
+    expect(partitioned.orders).toEqual(whole.orders)
+    expect(partitioned.constructionStock).toBe(whole.constructionStock)
+    expect(partitioned.crewPositions).toEqual(whole.crewPositions)
+  })
+
   it('does not consume stock or progress work before the builder reaches the site', () => {
     const order = wallOrder()
     const approachingPallet = advanceConstructionWorkerSimulation(inputFor(order, 0.25))

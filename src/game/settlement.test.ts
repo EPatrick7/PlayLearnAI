@@ -216,16 +216,18 @@ describe('tiny-start settlement construction', () => {
     useColonyStore.getState().resetColony()
     const built = useColonyStore.getState().constructModule('solar_battery_skid', 'site-power-east')
     expect(built.ok).toBe(true)
+    expect(useColonyStore.getState().setConstructionSpeed(3)).toBe(true)
 
     const saved = JSON.parse(localStorage.getItem('playlearnai-moonbase-poc-v1') ?? '{}') as {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(7)
+    expect(saved.version).toBe(8)
     expect(saved.state?.settlement).toMatchObject({
       phase: 'power_online',
       constructionOrders: [],
       constructionSequence: 1,
+      constructionSpeed: 3,
       constructionStockpile: { x: 8, y: 9 },
       constructionCrew: expect.arrayContaining([
         expect.objectContaining({ crewId: 'crew-amina-okafor' }),
@@ -258,6 +260,11 @@ describe('tiny-start settlement construction', () => {
     expect(migratedV3.settlement.layout.boundaries).toHaveLength(16)
     expect(migratedV3.settlement.constructionOrders).toEqual([])
     expect(migratedV3.settlement.constructionSequence).toBe(1)
+
+    const legacyV7 = structuredClone(saved.state!) as unknown as Record<string, unknown>
+    delete (legacyV7.settlement as Record<string, unknown>).constructionSpeed
+    const migratedV7 = await migrate!(legacyV7, 7) as MoonbaseState
+    expect(migratedV7.settlement.constructionSpeed).toBe(1)
 
     const plannedWall = paintBoundaryCell(
       saved.state!.settlement.layout,
@@ -406,7 +413,11 @@ describe('tiny-start settlement construction', () => {
       materials: { reserved: 0 },
     })
 
-    const future = await migrate!(saved.state, 8) as MoonbaseState
+    const malformedSpeed = structuredClone(saved.state!) as unknown as Record<string, unknown>
+    ;(malformedSpeed.settlement as Record<string, unknown>).constructionSpeed = 99
+    expect(merge!(malformedSpeed, useColonyStore.getState()).settlement.constructionSpeed).toBe(3)
+
+    const future = await migrate!(saved.state, 9) as MoonbaseState
     expect(future).toMatchObject({ worldRevision: 1, settlement: { phase: 'landing' } })
   })
 
@@ -461,6 +472,54 @@ describe('tiny-start settlement construction', () => {
       (position) => position.crewId === 'crew-mateo-alvarez',
     )?.cell).not.toEqual(target)
     useColonyStore.getState().resetColony()
+  })
+
+  it('reassigns uncollected material to a newly urgent blueprint', () => {
+    useColonyStore.getState().resetColony()
+    const initial = useColonyStore.getState()
+    useColonyStore.setState({
+      reserves: { ...initial.reserves, constructionStock: 1 },
+    })
+
+    const first = useColonyStore.getState().queueConstruction(
+      paintBoundaryCell(useColonyStore.getState().settlement.layout, { x: 12, y: 9 }, 'wall'),
+    )
+    const afterFirst = useColonyStore.getState()
+    const firstProjection = projectConstructionOrders(
+      afterFirst.settlement.layout,
+      afterFirst.settlement.constructionOrders,
+    ).layout
+    const second = useColonyStore.getState().queueConstruction(
+      paintBoundaryCell(firstProjection, { x: 14, y: 9 }, 'wall'),
+    )
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+
+    let orders = useColonyStore.getState().settlement.constructionOrders
+    expect(orders.find((order) => order.id === first.orderIds[0])?.materials.reserved).toBe(1)
+    expect(orders.find((order) => order.id === second.orderIds[0])).toMatchObject({
+      status: 'blocked',
+      block: { kind: 'insufficient_materials' },
+      materials: { reserved: 0, delivered: 0 },
+    })
+
+    expect(useColonyStore.getState().setConstructionOrderPriority(
+      second.orderIds[0],
+      5,
+    )).toBe(true)
+
+    orders = useColonyStore.getState().settlement.constructionOrders
+    expect(orders.find((order) => order.id === first.orderIds[0])).toMatchObject({
+      status: 'blocked',
+      block: { kind: 'insufficient_materials' },
+      materials: { reserved: 0, delivered: 0 },
+    })
+    expect(orders.find((order) => order.id === second.orderIds[0])).toMatchObject({
+      priority: 5,
+      status: 'hauling',
+      block: null,
+      materials: { reserved: 1, delivered: 0 },
+    })
   })
 
   it('queues and advances a high-priority indoor fixture behind its projected room shell', () => {

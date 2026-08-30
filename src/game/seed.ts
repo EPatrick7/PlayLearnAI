@@ -466,6 +466,7 @@ export const createInitialState = (): MoonbaseState => ({
     layout: createStarterConstruction(),
     constructionOrders: [],
     constructionSequence: 1,
+    constructionSpeed: 1,
     constructionCrew: [
       { crewId: 'crew-amina-okafor', cell: { x: 9, y: 9 }, moveCredit: 0 },
       { crewId: 'crew-mateo-alvarez', cell: { x: 8, y: 10 }, moveCredit: 0 },

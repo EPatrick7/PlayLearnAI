@@ -4440,6 +4440,14 @@ button:disabled {
   transform: none !important;
 }
 
+.tile-stack-backdrop.portal-layer {
+  position: fixed;
+  z-index: 999;
+  inset: 0;
+  background: rgba(5, 8, 7, 0.24);
+  backdrop-filter: blur(0.5px);
+}
+
 .tile-stack-header {
   min-height: 64px;
   padding: 9px;

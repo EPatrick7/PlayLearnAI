@@ -23,12 +23,15 @@ const renderFreshApp = () => {
 
 const advanceAllConstruction = () => {
   act(() => {
+    const previousSpeed = useColonyStore.getState().settlement.constructionSpeed
+    useColonyStore.getState().setConstructionSpeed(1)
     for (let tick = 0; tick < 60; tick += 1) {
       if (!useColonyStore.getState().settlement.constructionOrders.some(
         (order) => order.status !== 'complete',
       )) break
       useColonyStore.getState().advanceConstruction(1)
     }
+    useColonyStore.getState().setConstructionSpeed(previousSpeed)
   })
 }
 
@@ -97,10 +100,10 @@ const selectTool = (
   const tool = within(tray).getByRole('button', { name: toolName })
   fireEvent.click(tool)
   expect(constructionMap()).toHaveClass('tool-active')
-  expect(screen.getByRole('region', { name: new RegExp(`^${category} build tools$`, 'i') })).toBeVisible()
-  fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
-  expect(constructionMap()).toHaveClass('tool-active')
   expect(screen.queryByRole('region', { name: new RegExp(`^${category} build tools$`, 'i') })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByRole('button', { name: 'Move / Select' })).toBeVisible()
+  expect(screen.getByRole('button', { name: /^Stop placing /i })).toBeVisible()
 }
 
 const layoutFrom = (result: ConstructionResult) => {
@@ -163,6 +166,18 @@ afterEach(() => {
 })
 
 describe('freeform settlement builder', () => {
+  it('persists the construction clock instead of resetting it when Architect remounts', () => {
+    const view = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '3 times construction speed' }))
+    expect(useColonyStore.getState().settlement.constructionSpeed).toBe(3)
+
+    view.unmount()
+    render(<App />)
+
+    expect(screen.getByRole('button', { name: '3 times construction speed' }))
+      .toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('starts with a semantic 24×18 grid, one room, two independent bunks, and no prefab controls', () => {
     renderFreshApp()
 
@@ -225,6 +240,9 @@ describe('freeform settlement builder', () => {
     expect(state.settlement.constructionOrders.every(
       (order) => order.status === 'hauling' && order.commandId === 'construction-1',
     )).toBe(true)
+    expect(document.querySelector('.construction-toast')).toHaveTextContent(
+      /use Move \/ Select to edit blueprints/i,
+    )
     expect(constructionMap().querySelectorAll(
       '[data-construction-order-status="hauling"]',
     )).toHaveLength(5)
@@ -246,6 +264,7 @@ describe('freeform settlement builder', () => {
         `[data-tile-kind="wall"][data-grid-x="${x}"][data-grid-y="6"]`,
       )).toBeInTheDocument()
     }
+    expect(screen.queryByRole('button', { name: 'Undo last construction order' })).not.toBeInTheDocument()
   })
 
   it('keeps unaffordable blueprints visible and blocked instead of creating material', () => {
@@ -287,10 +306,12 @@ describe('freeform settlement builder', () => {
     const structureTools = openCategory('Structure')
 
     fireEvent.click(within(structureTools).getByRole('button', { name: /^Wall:/i }))
-    expect(screen.getByRole('button', { name: 'Pan' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Cancel active construction tool' })).toBeVisible()
+    expect(screen.queryByRole('region', { name: /^Structure build tools$/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Move / Select' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Stop placing Wall' })).toBeVisible()
     expect(constructionMap()).toHaveClass('tool-active')
 
+    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
     fireEvent.click(screen.getByRole('button', { name: /^Furniture$/i }))
     expect(constructionMap()).toHaveClass('pan-active')
     expect(screen.getByRole('button', { name: 'Resume Wall construction' })).toBeVisible()
@@ -298,7 +319,7 @@ describe('freeform settlement builder', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Resume Wall construction' }))
     expect(constructionMap()).toHaveClass('tool-active')
-    expect(screen.getByRole('button', { name: 'Pan' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Move / Select' })).toBeVisible()
   })
 
   it('inspects empty tiles and colonists with the same deliberate click gesture', () => {
@@ -336,10 +357,12 @@ describe('freeform settlement builder', () => {
     renderFreshApp()
     selectTool('Structure', /^Wall/i)
     clickConstructionCell({ x: 9, y: 6 })
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel active construction tool' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Stop placing Wall' }))
 
     act(() => {
+      useColonyStore.getState().setConstructionSpeed(1)
       useColonyStore.getState().advanceConstruction(0.1)
+      useColonyStore.getState().setConstructionSpeed(0)
     })
     const order = useColonyStore.getState().settlement.constructionOrders[0]
     expect(order.assignedCrewId).toBeTruthy()
@@ -394,31 +417,39 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('raises one blueprint priority and refunds staged material when it is cancelled', () => {
+  it('edits priority and cancellation for every unfinished job in a placement command', () => {
     renderFreshApp()
     selectTool('Structure', /^Wall/i)
-    clickConstructionCell({ x: 9, y: 6 })
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel active construction tool' }))
-    clickConstructionCell({ x: 9, y: 6 }, 2)
+    dragConstructionTool({ x: 9, y: 6 }, { x: 11, y: 6 })
+    fireEvent.click(screen.getByRole('button', { name: 'Move / Select' }))
+    clickConstructionCell({ x: 10, y: 6 }, 2)
 
     const inspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })
     expect(inspector).toHaveTextContent('P3')
     expect(inspector).toHaveTextContent('0 / 1 delivered · 1 reserved')
-    expect(screen.getByText('13 free')).toBeVisible()
+    expect(inspector).toHaveTextContent('Placement priority · 3 jobs')
+    expect(within(inspector).getByRole('button', {
+      name: 'Cancel placement · 3 jobs',
+    })).toBeVisible()
+    expect(screen.getByText('11 free')).toBeVisible()
 
+    const revisionBeforePriorityChange = useColonyStore.getState().worldRevision
     fireEvent.click(within(inspector).getByRole('button', { name: 'Raise blueprint priority' }))
-    expect(useColonyStore.getState().settlement.constructionOrders[0].priority).toBe(4)
+    expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(3)
+    expect(useColonyStore.getState().settlement.constructionOrders.every(
+      (order) => order.priority === 4,
+    )).toBe(true)
+    expect(useColonyStore.getState().worldRevision).toBe(revisionBeforePriorityChange + 1)
     expect(inspector).toHaveTextContent('P4')
 
-    act(() => {
-      useColonyStore.getState().advanceConstruction(3.5)
-    })
-    expect(useColonyStore.getState().reserves.constructionStock).toBeLessThan(14)
-    fireEvent.click(within(inspector).getByRole('button', { name: /Cancel blueprint/i }))
+    fireEvent.click(within(inspector).getByRole('button', {
+      name: 'Cancel placement · 3 jobs',
+    }))
 
     expect(useColonyStore.getState().settlement.constructionOrders).toEqual([])
     expect(useColonyStore.getState().reserves.constructionStock).toBeCloseTo(14)
     expect(screen.getByRole('region', { name: 'Lunar regolith inspector' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Undo last construction order' })).not.toBeInTheDocument()
   })
 
   it('opens the current tile inspector from the keyboard in select mode', () => {

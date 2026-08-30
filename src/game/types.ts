@@ -63,6 +63,7 @@ export type WorkOrderType = 'seal_breach' | 'repressurize_lab' | 'research' | 'c
 export type WorkOrderStatus = 'blocked' | 'ready' | 'queued' | 'active' | 'complete' | 'paused'
 export type WorkHazard = 'indoor' | 'vacuum' | 'eva'
 export type Priority = 1 | 2 | 3 | 4 | 5
+export type ConstructionSpeed = 0 | 1 | 2 | 3
 export type Actor = 'manual' | 'agent' | 'simulation' | 'system'
 export type LearningPhase = 'ground' | 'plan' | 'supervise' | 'verify'
 export type ActivityPhase = 'observed' | 'planned' | 'changed' | 'verified' | 'system'
@@ -92,6 +93,7 @@ export interface SettlementState {
   layout: ConstructionLayout
   constructionOrders: ConstructionOrder[]
   constructionSequence: number
+  constructionSpeed: ConstructionSpeed
   constructionCrew: ConstructionCrewPosition[]
   constructionStockpile: GridPoint
   buildSites: BuildSiteState[]

@@ -84,14 +84,18 @@ describe('SettlementBuilder inspection selection', () => {
       y: Number(mateo.dataset.gridY),
     }
     inspectCell(idleCell)
-    expect(screen.getByRole('region', { name: 'Mateo Alvarez inspector' })).toBeVisible()
+    const inspector = screen.getByRole('region', { name: 'Mateo Alvarez inspector' })
+    expect(inspector).toBeVisible()
+    expect(inspector).not.toHaveAttribute('aria-live')
 
     const target = { x: 9, y: 6 }
     act(() => {
       const state = useColonyStore.getState()
       const result = paintBoundaryCell(state.settlement.layout, target, 'wall')
       expect(state.queueConstruction(result).ok).toBe(true)
+      useColonyStore.getState().setConstructionSpeed(1)
       useColonyStore.getState().advanceConstruction(0.1)
+      useColonyStore.getState().setConstructionSpeed(0)
     })
 
     await waitFor(() => {
@@ -111,9 +115,11 @@ describe('SettlementBuilder inspection selection', () => {
     })
 
     act(() => {
+      useColonyStore.getState().setConstructionSpeed(1)
       for (let tick = 0; tick < 20; tick += 1) {
         useColonyStore.getState().advanceConstruction(1)
       }
+      useColonyStore.getState().setConstructionSpeed(0)
     })
 
     await waitFor(() => {

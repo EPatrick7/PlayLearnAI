@@ -96,6 +96,10 @@ function App() {
   const [architectOpen, setArchitectOpen] = useState(false)
   const [selectedOrderId, setSelectedOrderId] = useState<WorkOrderId>('work-seal-lab')
   const [selection, setSelection] = useState<Selection | null>(null)
+  const openConstructionCount = colony.settlement.constructionOrders.filter(
+    (order) => order.status !== 'complete',
+  ).length
+  const constructionSpeed = colony.settlement.constructionSpeed
 
   const plan = colony.operationsPlan
   const validation = colony.validatePlan()
@@ -154,6 +158,24 @@ function App() {
     window.addEventListener('keydown', closeDrawer)
     return () => window.removeEventListener('keydown', closeDrawer)
   }, [colony.settlement.phase])
+
+  useEffect(() => {
+    if (
+      colony.settlement.phase !== 'landing' ||
+      constructionSpeed === 0 ||
+      openConstructionCount === 0
+    ) return
+    const interval = window.setInterval(() => {
+      const state = useColonyStore.getState()
+      if (
+        state.settlement.phase === 'landing' &&
+        state.settlement.constructionSpeed > 0
+      ) {
+        state.advanceConstruction(state.settlement.constructionSpeed * 0.135)
+      }
+    }, 180)
+    return () => window.clearInterval(interval)
+  }, [colony.settlement.phase, constructionSpeed, openConstructionCount])
 
   if (colony.settlement.phase !== 'operations') {
     return <SettlementBuilder />

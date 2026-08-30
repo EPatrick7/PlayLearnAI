@@ -108,7 +108,7 @@ const toolName = (tool: ConstructionTool | null) => {
 }
 
 const instructionFor = (tool: ConstructionTool | null) => {
-  if (!tool) return 'Drag the map to look around. Open Build when you want to construct.'
+  if (!tool) return 'Move / Select: drag the map to look around or select something to inspect it.'
   if (tool === 'wall') return 'Drag across cells to draw a one-tile-thick wall run.'
   if (tool === 'door') return 'Click any existing wall tile to replace it with a door.'
   if (tool === 'erase') return 'Click or drag across anything to deconstruct it.'
@@ -185,7 +185,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const [rotation, setRotation] = useState<WorkstationRotation>(0)
   const [announcement, setAnnouncement] = useState('Build freely. Rooms are enclosed shapes with at least one door.')
   const [toastVisible, setToastVisible] = useState(false)
-  const [simulationSpeed, setSimulationSpeed] = useState<0 | 1 | 2 | 3>(1)
+  const simulationSpeed = colony.settlement.constructionSpeed
   const [undoCount, setUndoCount] = useState(0)
   const [selection, setSelection] = useState<ArchitectSelection | null>(null)
   const [stackSnapshot, setStackSnapshot] = useState<MapTileInspection | null>(null)
@@ -268,6 +268,12 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const selectedBlueprint = selectedItem?.kind === 'blueprint'
     ? constructionOrders.find((order) => order.id === selectedItem.id) ?? null
     : null
+  const selectedBlueprintCommandOrders = selectedBlueprint
+    ? constructionOrders.filter((order) => (
+        order.status !== 'complete' && order.commandId === selectedBlueprint.commandId
+      ))
+    : []
+  const selectedBlueprintCommandCount = selectedBlueprintCommandOrders.length
   const selectedRemovalQueued = Boolean(selectedTile && selectedItem && constructionOrders.some((order) => {
     if (order.status === 'complete' || !order.target.deconstruct) return false
     if (selectedItem.kind === 'boundary' && order.target.kind === 'boundary') {
@@ -307,11 +313,15 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     }
     setStackSnapshot(null)
     setStackTrigger(null)
-    setSelection({ cellKey, itemKey: tile.contents[0]?.key ?? null })
+    const item = tile.contents[0] ?? null
+    setSelection({ cellKey, itemKey: item?.key ?? null })
+    setAnnouncement(`${item?.label ?? tile.surfaceLabel} selected.`)
   }
 
   const selectInspection = (tileKey: string, item: MapInspectable | null) => {
     setSelection({ cellKey: tileKey, itemKey: item?.key ?? null })
+    const tile = inspectionByCell.get(tileKey)
+    setAnnouncement(`${item?.label ?? tile?.surfaceLabel ?? 'Tile'} selected.`)
   }
 
   const applyConstruction = (result: ConstructionResult, label: string) => {
@@ -329,8 +339,8 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
       setUndoCount(undoStack.current.length)
       const blockedCount = queued.blockedOrderIds?.length ?? 0
       announce(blockedCount > 0
-        ? `${label} queued · ${blockedCount} ${blockedCount === 1 ? 'job needs' : 'jobs need'} material.`
-        : `${label} blueprint queued · ${queued.orderIds.length} ${queued.orderIds.length === 1 ? 'job' : 'jobs'}.`)
+        ? `${label} queued · ${blockedCount} ${blockedCount === 1 ? 'job needs' : 'jobs need'} material. Use Move / Select to edit blueprints.`
+        : `${label} blueprint queued · ${queued.orderIds.length} ${queued.orderIds.length === 1 ? 'job' : 'jobs'}. Use Move / Select to edit blueprints.`)
     } else {
       announce('Pending blueprint cancelled.')
     }
@@ -347,25 +357,41 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     const cancelled = colony.cancelConstructionCommand(commandId)
     announce(cancelled.length > 0
       ? `Cancelled ${cancelled.length} unfinished ${cancelled.length === 1 ? 'job' : 'jobs'}.`
-      : 'That order is already built; deconstruct it to remove it.')
+      : 'Nothing unfinished remains in that placement.')
+  }
+
+  const pruneUndoCommand = (commandId: string) => {
+    const nextStack = undoStack.current.filter((candidate) => candidate !== commandId)
+    if (nextStack.length === undoStack.current.length) return
+    undoStack.current = nextStack
+    setUndoCount(nextStack.length)
   }
 
   const cancelSelectedBlueprint = () => {
     if (!selectedBlueprint) return
-    const cancelled = colony.cancelConstructionOrder(selectedBlueprint.id)
-    if (!cancelled) {
-      announce('That blueprint is already complete.')
+    const cancelled = colony.cancelConstructionCommand(selectedBlueprint.commandId)
+    if (cancelled.length === 0) {
+      announce('Nothing unfinished remains in that placement.')
       return
     }
+    pruneUndoCommand(selectedBlueprint.commandId)
     setSelection(selectedTile ? { cellKey: selectedTile.key, itemKey: null } : null)
-    announce('Blueprint cancelled. Delivered material returned to storage.')
+    announce(cancelled.length === 1
+      ? 'Blueprint cancelled. Delivered material returned to storage.'
+      : `${cancelled.length}-job placement cancelled. Delivered material returned to storage.`)
   }
 
   const changeSelectedPriority = (change: -1 | 1) => {
     if (!selectedBlueprint) return
     const priority = Math.min(5, Math.max(1, selectedBlueprint.priority + change)) as Priority
-    if (colony.setConstructionOrderPriority(selectedBlueprint.id, priority)) {
-      announce(`${selectedItem?.label ?? 'Blueprint'} set to priority ${priority}.`)
+    const changedCount = colony.setConstructionCommandPriority(
+      selectedBlueprint.commandId,
+      priority,
+    )
+    if (changedCount > 0) {
+      announce(selectedBlueprintCommandCount === 1
+        ? `${selectedItem?.label ?? 'Blueprint'} set to priority ${priority}.`
+        : `${selectedBlueprintCommandCount}-job placement set to priority ${priority}.`)
     }
   }
 
@@ -389,14 +415,14 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const cancelTool = () => {
     setSelectedTool(null)
     setParkedTool(null)
-    announce('Pan mode.')
+    announce('Placement stopped. Move / Select mode.')
   }
 
   const togglePan = () => {
     if (selectedTool) {
       setParkedTool(selectedTool)
       setSelectedTool(null)
-      announce(`${toolName(selectedTool)} paused. Pan the map, then resume it from the toolbar.`)
+      announce(`${toolName(selectedTool)} paused. Drag to pan or select a blueprint to edit it, then resume from the toolbar.`)
       return
     }
     if (parkedTool) {
@@ -405,7 +431,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
       announce(`${toolName(parkedTool)} resumed.`)
       return
     }
-    announce('Pan mode.')
+    announce('Move / Select mode.')
   }
 
   const chooseTool = (tool: ConstructionTool) => {
@@ -419,6 +445,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     setSelectedTool(tool)
     setParkedTool(null)
     setRotation(0)
+    setBuildOpen(false)
     announce(`${toolName(tool)} selected.`)
   }
 
@@ -477,12 +504,12 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
       if (event.key === 'Escape') {
         if (selection) {
           setSelection(null)
-          setAnnouncement('Select mode.')
+          setAnnouncement('Move / Select mode.')
           setToastVisible(true)
         } else if (selectedTool || parkedTool) {
           setSelectedTool(null)
           setParkedTool(null)
-          setAnnouncement('Select mode.')
+          setAnnouncement('Move / Select mode.')
           setToastVisible(true)
         } else if (buildOpen) {
           setBuildOpen(false)
@@ -502,12 +529,17 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   }, [announcement, toastVisible])
 
   useEffect(() => {
-    if (simulationSpeed === 0 || openOrders.length === 0) return
-    const interval = window.setInterval(() => {
-      useColonyStore.getState().advanceConstruction(simulationSpeed * 0.135)
-    }, 180)
-    return () => window.clearInterval(interval)
-  }, [openOrders.length, simulationSpeed])
+    if (undoStack.current.length === 0) return
+    const unfinishedCommands = new Set(
+      constructionOrders
+        .filter((order) => order.status !== 'complete')
+        .map((order) => order.commandId),
+    )
+    const nextStack = undoStack.current.filter((commandId) => unfinishedCommands.has(commandId))
+    if (nextStack.length === undoStack.current.length) return
+    undoStack.current = nextStack
+    setUndoCount(nextStack.length)
+  }, [constructionOrders])
 
   const activeTools = toolsByCategory[category]
   const currentTool = selectedTool ?? parkedTool
@@ -516,9 +548,9 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     : null
   const nextRotation = (rotation + 90) % 360
   const toolInstruction = selectedTool
-    ? `${instructionFor(selectedTool)} Space-drag or wheel pans.`
+    ? `${instructionFor(selectedTool)} Choose Move / Select to pan or edit blueprints; Space-drag or wheel also pans.`
     : parkedTool
-      ? `${toolName(parkedTool)} is paused. Move around, then resume without choosing it again.`
+      ? `${toolName(parkedTool)} is paused. Drag to pan or select a blueprint to change priority or cancel it, then resume.`
     : buildOpen
       ? 'Pick a tool. Walls and objects are placed cell by cell—there are no room templates.'
       : readyForShift
@@ -573,6 +605,8 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
                     ? `${materialBlockedOrders.length} ${materialBlockedOrders.length === 1 ? 'job needs' : 'jobs need'} material`
                     : simulationSpeed === 0
                       ? 'Construction paused'
+                      : colony.settlement.phase === 'operations'
+                        ? 'Ready for mission advance · return to colony to move crews'
                       : assignedBuilders > 0
                         ? activeConstructionSummary
                         : 'Waiting for a builder'
@@ -583,12 +617,19 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
             <GameIcon name="storage" />
             <span><strong>{materialAmount(availableStock)} free</strong><small>{materialAmount(reservedStock)} reserved</small></span>
           </span>
-          <div aria-label="Construction speed" className="construction-speed-controls" role="group">
-            <button aria-label="Pause construction" aria-pressed={simulationSpeed === 0} onClick={() => setSimulationSpeed(0)} type="button">Ⅱ</button>
-            {([1, 2, 3] as const).map((speed) => (
-              <button aria-label={`${speed} times construction speed`} aria-pressed={simulationSpeed === speed} key={speed} onClick={() => setSimulationSpeed(speed)} type="button">{speed}×</button>
-            ))}
-          </div>
+          {colony.settlement.phase === 'landing' ? (
+            <div aria-label="Construction speed" className="construction-speed-controls" role="group">
+              <button aria-label="Pause construction" aria-pressed={simulationSpeed === 0} onClick={() => colony.setConstructionSpeed(0)} type="button">Ⅱ</button>
+              {([1, 2, 3] as const).map((speed) => (
+                <button aria-label={`${speed} times construction speed`} aria-pressed={simulationSpeed === speed} key={speed} onClick={() => colony.setConstructionSpeed(speed)} type="button">{speed}×</button>
+              ))}
+            </div>
+          ) : (
+            <div aria-label="Construction scheduling" className="construction-speed-controls construction-mission-controls" role="group">
+              <button aria-label="Pause construction" aria-pressed={simulationSpeed === 0} onClick={() => colony.setConstructionSpeed(0)} type="button">Ⅱ</button>
+              <button aria-label="Resume construction on mission advance" aria-pressed={simulationSpeed > 0} onClick={() => colony.setConstructionSpeed(1)} type="button">▶</button>
+            </div>
+          )}
         </section>
         <div className="construction-map-scroll">
           <ConstructionMap
@@ -617,7 +658,6 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
         {selectedTile && (
           <section
             aria-label={`${selectedItem?.label ?? selectedTile.surfaceLabel} inspector`}
-            aria-live="polite"
             className={`selection-inspector construction-selection-inspector ${selectedItem ? `selection-${selectedItem.kind}` : 'selection-surface'}`}
             data-inspected-kind={selectedItem?.kind ?? 'surface'}
           >
@@ -664,7 +704,9 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
             {selectedBlueprint && (
               <div className="construction-inspector-actions">
                 <span className="construction-priority-stepper">
-                  <small>Work priority</small>
+                  <small>{selectedBlueprintCommandCount > 1
+                    ? `Placement priority · ${selectedBlueprintCommandCount} jobs`
+                    : 'Blueprint priority'}</small>
                   <span>
                     <button aria-label="Lower blueprint priority" disabled={selectedBlueprint.priority <= 1} onClick={() => changeSelectedPriority(-1)} type="button"><GameIcon name="minus" /></button>
                     <strong>P{selectedBlueprint.priority}</strong>
@@ -672,7 +714,9 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
                   </span>
                 </span>
                 <button className="construction-destructive-action" onClick={cancelSelectedBlueprint} type="button">
-                  <GameIcon name="close" /><span>Cancel blueprint</span>
+                  <GameIcon name="close" /><span>{selectedBlueprintCommandCount > 1
+                    ? `Cancel placement · ${selectedBlueprintCommandCount} jobs`
+                    : 'Cancel blueprint'}</span>
                 </button>
               </div>
             )}
@@ -748,19 +792,19 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
 
             {!buildOpen && currentTool && (
               <button
-                aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Pan'}
+                aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Move / Select'}
                 aria-pressed={selectedTool === null}
                 className="pan-button"
                 onClick={togglePan}
                 type="button"
               >
-                <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? 'Resume' : 'Move'}</span>
+                <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? 'Resume' : 'Move / Select'}</span>
               </button>
             )}
 
             {!buildOpen && currentTool && (
-              <button aria-label="Cancel active construction tool" className="cancel-tool" onClick={cancelTool} type="button">
-                <GameIcon name="close" /><span>Cancel</span>
+              <button aria-label={`Stop placing ${toolName(currentTool)}`} className="cancel-tool" onClick={cancelTool} type="button">
+                <GameIcon name="close" /><span>Stop placing</span>
               </button>
             )}
           </nav>
@@ -790,18 +834,18 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
                   )}
                   {currentTool && (
                     <button
-                      aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Pan'}
+                      aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Move / Select'}
                       aria-pressed={selectedTool === null}
                       className="pan-button"
                       onClick={togglePan}
                       type="button"
                     >
-                      <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? 'Resume' : 'Move'}</span>
+                      <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? 'Resume' : 'Move / Select'}</span>
                     </button>
                   )}
                   {currentTool && (
-                    <button aria-label="Cancel active construction tool" className="cancel-tool" onClick={cancelTool} type="button">
-                      <GameIcon name="close" /><span>Cancel</span>
+                    <button aria-label={`Stop placing ${toolName(currentTool)}`} className="cancel-tool" onClick={cancelTool} type="button">
+                      <GameIcon name="close" /><span>Stop placing</span>
                     </button>
                   )}
                 </div>

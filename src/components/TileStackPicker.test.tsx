@@ -89,6 +89,7 @@ describe('TileStackPicker', () => {
     )
 
     const picker = screen.getByRole('dialog', { name: 'Choose an item' })
+    expect(picker).toHaveAttribute('aria-modal', 'true')
     expect(picker).toHaveClass('tile-stack-popover', 'portal-layer', 'anchor-right', 'anchor-bottom')
     expect(picker).toHaveAttribute('data-grid-x', '20')
     expect(picker).toHaveTextContent('Tile 21 · 15')
@@ -270,5 +271,46 @@ describe('TileStackPicker', () => {
 
     expect(onClose).toHaveBeenCalledOnce()
     await waitFor(() => expect(document.activeElement).toBe(map))
+  })
+
+  it('makes the app background inert while open and restores its prior state', () => {
+    const appRoot = document.createElement('div')
+    appRoot.id = 'root'
+    document.body.append(appRoot)
+    const trigger = triggerForTile()
+
+    const view = render(
+      <TileStackPicker
+        gridHeight={18}
+        gridWidth={24}
+        onClose={vi.fn()}
+        onSelectItem={vi.fn()}
+        onSelectSurface={vi.fn()}
+        tile={tile}
+        trigger={trigger}
+      />,
+    )
+
+    expect(appRoot).toHaveAttribute('inert')
+    view.unmount()
+    expect(appRoot).not.toHaveAttribute('inert')
+
+    appRoot.setAttribute('inert', '')
+    const inertView = render(
+      <TileStackPicker
+        gridHeight={18}
+        gridWidth={24}
+        onClose={vi.fn()}
+        onSelectItem={vi.fn()}
+        onSelectSurface={vi.fn()}
+        tile={tile}
+        trigger={trigger}
+      />,
+    )
+
+    expect(appRoot).toHaveAttribute('inert')
+    inertView.unmount()
+    expect(appRoot).toHaveAttribute('inert')
+    appRoot.remove()
   })
 })

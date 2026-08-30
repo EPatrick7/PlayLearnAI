@@ -192,7 +192,14 @@
 .construction-map { touch-action: none; }
 .construction-map.pan-active { cursor: grab; user-select: none; }
 .construction-map.is-panning { cursor: grabbing; }
-.construction-map:focus-visible { box-shadow: 0 0 0 1px rgba(219, 217, 201, 0.08), 0 0 44px rgba(0, 0, 0, 0.24) inset; }
+.construction-map:focus-visible {
+  outline: 3px solid #b8eef2;
+  outline-offset: -3px;
+  box-shadow:
+    0 0 0 1px rgba(219, 217, 201, 0.08),
+    0 0 0 5px rgba(18, 27, 27, 0.76),
+    0 0 44px rgba(0, 0, 0, 0.24) inset;
+}
 
 .construction-zoom-controls {
   position: fixed;
@@ -578,6 +585,12 @@
 }
 
 .construction-map:not(:focus-within) .construction-cursor { opacity: 0; }
+.construction-map:focus-visible .construction-cursor {
+  outline: 3px solid #f2d99d;
+  outline-offset: -3px;
+  background: rgba(242, 217, 157, 0.14);
+  box-shadow: 0 0 0 1px rgba(17, 20, 18, 0.88) inset;
+}
 
 .construction-draft-label {
   position: relative;
@@ -1245,6 +1258,7 @@
 }
 
 .construction-speed-controls button:first-child { border-left: 0; }
+.construction-mission-controls { min-width: 64px; }
 .construction-speed-controls button:hover,
 .construction-speed-controls button[aria-pressed="true"] { color: #f0dfb7; background: rgba(148, 110, 49, 0.2); }
 
@@ -1795,19 +1809,74 @@
 
 @media (max-width: 700px) {
   .construction-job-hud {
-    max-width: calc(100% - 112px);
+    right: 7px;
+    width: auto;
+    max-width: none;
+    min-height: 102px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 178px;
+    grid-template-rows: 44px 46px;
+    gap: 4px;
+  }
+
+  .construction-job-summary {
+    grid-row: 1 / span 2;
+    min-height: 94px;
+    padding: 6px;
+    align-content: center;
+    grid-template-columns: 17px minmax(0, 1fr);
+  }
+
+  .construction-job-summary strong { font-size: 11px; line-height: 1.15; }
+  .construction-job-summary small {
+    max-width: none;
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 10px;
+    line-height: 1.25;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
   }
 
   .construction-material-summary {
-    min-width: 62px;
-    padding-inline: 4px;
-    grid-template-columns: 14px minmax(0, 1fr);
-    gap: 3px;
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding-inline: 7px;
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 5px;
+    border-left: 0;
+    border-bottom: 1px solid rgba(235, 226, 204, 0.09);
   }
 
-  .construction-material-summary > .game-icon { width: 13px; height: 13px; }
-  .construction-material-summary strong { font-size: 8px; }
-  .construction-material-summary small { display: none; }
+  .construction-material-summary > .game-icon { width: 15px; height: 15px; }
+  .construction-material-summary strong { font-size: 10px; }
+  .construction-material-summary small { display: block; font-size: 9px; }
+
+  .construction-speed-controls {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 178px;
+    min-height: 46px;
+    justify-self: end;
+    flex: 0 0 auto;
+  }
+
+  .construction-speed-controls button {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    flex: 0 0 44px;
+    font-size: 10px;
+  }
+
+  .construction-mission-controls {
+    min-width: 90px;
+  }
+
+  .construction-zoom-controls { top: 160px; }
 
   .construction-tool-list > button {
     grid-template-columns: 26px minmax(0, 1fr) auto;

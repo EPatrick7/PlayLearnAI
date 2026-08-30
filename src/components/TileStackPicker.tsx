@@ -85,6 +85,16 @@ export function TileStackPicker({
     onCloseRef.current = onClose
   }, [onClose])
 
+  useEffect(() => {
+    const background = document.getElementById('root')
+    if (!background || background.contains(pickerRef.current)) return
+    const wasInert = background.hasAttribute('inert')
+    background.setAttribute('inert', '')
+    return () => {
+      if (!wasInert) background.removeAttribute('inert')
+    }
+  }, [])
+
   const restoreTriggerFocus = useCallback(() => {
     requestAnimationFrame(() => {
       if (!trigger?.isConnected) return
@@ -182,8 +192,11 @@ export function TileStackPicker({
   }, [contentKeys, tile.key])
 
   return createPortal((
+    <>
+    <div aria-hidden="true" className="tile-stack-backdrop portal-layer" />
     <section
       aria-labelledby={titleId}
+      aria-modal="true"
       className={[
         'tile-stack-popover',
         'portal-layer',
@@ -241,5 +254,6 @@ export function TileStackPicker({
         <GameIcon className="tile-stack-chevron" name="chevron" />
       </button>
     </section>
+    </>
   ), document.body)
 }

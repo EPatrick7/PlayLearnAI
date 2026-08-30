@@ -27,7 +27,7 @@ import {
   normalizeConstructionStockpile,
   normalizePersistedConstructionCrewPositions,
 } from './constructionWorkerRouting'
-import { advanceConstructionWorkerSimulation } from './constructionWorkerSimulation'
+import { advanceConstructionWorkerSimulationFixedStep } from './constructionWorkerSimulation'
 import {
   beginOperations as beginOperationsInState,
   buildBlueprints,
@@ -51,6 +51,7 @@ import type {
   BuildResult,
   BuildableModuleId,
   CommitResult,
+  ConstructionSpeed,
   LearningPhase,
   MoonbaseState,
   PlanActionInput,
@@ -81,10 +82,12 @@ export interface MoonbaseActions {
   resetColony: () => void
   resetMoonbase: () => void
   setConstructionLayout: (layout: ConstructionLayout) => void
+  setConstructionSpeed: (speed: ConstructionSpeed) => boolean
   queueConstruction: (result: ConstructionResult) => QueueConstructionResult
   cancelConstructionCommand: (commandId: string) => string[]
   cancelConstructionOrder: (orderId: string) => boolean
   setConstructionOrderPriority: (orderId: string, priority: Priority) => boolean
+  setConstructionCommandPriority: (commandId: string, priority: Priority) => number
   advanceConstruction: (elapsed?: number) => ConstructionAdvanceSummary
   constructModule: (
     blueprintId: BuildableModuleId,
@@ -149,6 +152,25 @@ const removesOnlyPendingTarget = (
   (sameBoundaryTarget(existing.target, candidate.target) ||
     sameWorkstationTarget(existing.target, candidate.target))
 
+const reallocateUncollectedConstructionReservations = (
+  sourceOrders: readonly ConstructionOrder[],
+  constructionStock: number,
+) => reserveConstructionMaterials(sourceOrders.map((order) => {
+  const uncollectedReservation = (
+    order.status !== 'complete' &&
+    order.materials.reserved > 0 &&
+    order.materials.delivered <= Number.EPSILON
+  )
+  if (!uncollectedReservation) return order
+  return {
+    ...order,
+    assignedCrewId: null,
+    travelPhase: 'idle' as const,
+    routeBlockedContextKey: null,
+    materials: { ...order.materials, reserved: 0 },
+  }
+}), constructionStock).orders
+
 const eligibleConstructionWorkers = (state: MoonbaseState) =>
   (state.settlement.phase === 'landing' ? state.crew.slice(0, 2) : state.crew)
     .filter((member) => member.health > 0 && member.taskId === null)
@@ -190,7 +212,7 @@ const advanceConstructionInState = (
   if (!state.settlement.constructionOrders.some((order) => order.status !== 'complete')) {
     return { completedOrderIds: [], blockedOrderIds: [] }
   }
-  const advanced = advanceConstructionWorkerSimulation({
+  const advanced = advanceConstructionWorkerSimulationFixedStep({
     layout: state.settlement.layout,
     orders: state.settlement.constructionOrders,
     constructionStock: state.reserves.constructionStock,
@@ -214,6 +236,11 @@ const advanceConstructionInState = (
     completedOrderIds: advanced.completedOrderIds,
     blockedOrderIds: advanced.blockedOrderIds,
   }
+}
+
+const advanceConstructionBeforeHour = (state: MoonbaseState) => {
+  if (state.settlement.constructionSpeed === 0) return
+  advanceConstructionInState(state, 4)
 }
 
 const domainSnapshot = (state: MoonbaseStore): MoonbaseState => ({
@@ -248,6 +275,13 @@ const normalizedConstructionStock = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isFinite(value)
     ? Math.max(0, value)
     : fallback
+
+const normalizedConstructionSpeed = (
+  value: unknown,
+  fallback: ConstructionSpeed,
+): ConstructionSpeed => value === 0 || value === 1 || value === 2 || value === 3
+  ? value
+  : fallback
 
 const persistedGridPoint = (value: unknown): GridPoint | null => {
   if (!value || typeof value !== 'object') return null
@@ -301,6 +335,15 @@ export const useColonyStore = create<MoonbaseStore>()(
         },
         worldRevision: state.worldRevision + 1,
       })),
+      setConstructionSpeed: (speed) => {
+        if (speed !== 0 && speed !== 1 && speed !== 2 && speed !== 3) return false
+        const state = get()
+        if (state.settlement.constructionSpeed === speed) return false
+        set({
+          settlement: { ...state.settlement, constructionSpeed: speed },
+        })
+        return true
+      },
       queueConstruction: (result) => {
         if (!result.ok) return { ok: false, orderIds: [], error: result.error }
         const state = get()
@@ -432,14 +475,47 @@ export const useColonyStore = create<MoonbaseStore>()(
           return { ...order, priority }
         })
         if (!changed) return false
+        const reprioritizedOrders = reallocateUncollectedConstructionReservations(
+          constructionOrders,
+          state.reserves.constructionStock,
+        )
         set({
-          settlement: { ...state.settlement, constructionOrders },
+          settlement: { ...state.settlement, constructionOrders: reprioritizedOrders },
           worldRevision: state.worldRevision + 1,
         })
         return true
       },
+      setConstructionCommandPriority: (commandId, priority) => {
+        if (![1, 2, 3, 4, 5].includes(priority)) return 0
+        const state = get()
+        let changedCount = 0
+        const constructionOrders = state.settlement.constructionOrders.map((order) => {
+          if (
+            order.commandId !== commandId ||
+            order.status === 'complete' ||
+            order.priority === priority
+          ) return order
+          changedCount += 1
+          return { ...order, priority }
+        })
+        if (changedCount === 0) return 0
+        set({
+          settlement: {
+            ...state.settlement,
+            constructionOrders: reallocateUncollectedConstructionReservations(
+              constructionOrders,
+              state.reserves.constructionStock,
+            ),
+          },
+          worldRevision: state.worldRevision + 1,
+        })
+        return changedCount
+      },
       advanceConstruction: (elapsed = 1) => {
         const before = get()
+        if (before.settlement.constructionSpeed === 0) {
+          return { completedOrderIds: [], blockedOrderIds: [] }
+        }
         const state = structuredClone(domainSnapshot(before))
         const summary = advanceConstructionInState(state, elapsed)
         if (
@@ -527,14 +603,16 @@ export const useColonyStore = create<MoonbaseStore>()(
         return result
       },
       advanceTime: (input, actor = 'manual') => {
-        const [nextState, result] = advanceSimulation(get(), input, actor)
-        advanceConstructionInState(nextState, result.advancedHours * 4)
+        const [nextState, result] = advanceSimulation(get(), input, actor, {
+          beforeHour: advanceConstructionBeforeHour,
+        })
         set(nextState)
         return result
       },
       advanceHours: (hours, actor = 'manual') => {
-        const [nextState, result] = advanceSimulation(get(), { hours }, actor)
-        advanceConstructionInState(nextState, result.advancedHours * 4)
+        const [nextState, result] = advanceSimulation(get(), { hours }, actor, {
+          beforeHour: advanceConstructionBeforeHour,
+        })
         set(nextState)
         return result
       },
@@ -549,11 +627,11 @@ export const useColonyStore = create<MoonbaseStore>()(
     }),
     {
       name: 'playlearnai-moonbase-poc-v1',
-      version: 7,
+      version: 8,
       partialize: domainSnapshot,
       migrate: (persistedState, version) => {
         const initialState = createInitialState()
-        if (version > 7) return initialState
+        if (version > 8) return initialState
         const state = persistedState as Partial<MoonbaseState>
         if (!state.settlement) return initialState
         const layout = version < 4
@@ -563,6 +641,10 @@ export const useColonyStore = create<MoonbaseStore>()(
         const constructionStock = normalizedConstructionStock(
           state.reserves?.constructionStock,
           initialState.reserves.constructionStock,
+        )
+        const constructionSpeed = normalizedConstructionSpeed(
+          state.settlement.constructionSpeed,
+          initialState.settlement.constructionSpeed,
         )
         const sourceOrders = version < 5 || !Array.isArray(state.settlement.constructionOrders)
           ? []
@@ -606,6 +688,7 @@ export const useColonyStore = create<MoonbaseStore>()(
           settlement: {
             ...state.settlement,
             layout,
+            constructionSpeed,
             constructionOrders,
             constructionCrew,
             constructionStockpile,
@@ -624,6 +707,10 @@ export const useColonyStore = create<MoonbaseStore>()(
         const constructionStock = normalizedConstructionStock(
           persisted.reserves?.constructionStock,
           currentState.reserves.constructionStock,
+        )
+        const constructionSpeed = normalizedConstructionSpeed(
+          persisted.settlement.constructionSpeed,
+          currentState.settlement.constructionSpeed,
         )
         const constructionOrders = normalizePersistedConstructionOrders(
           persisted.settlement.constructionOrders,
@@ -660,6 +747,7 @@ export const useColonyStore = create<MoonbaseStore>()(
           settlement: {
             ...currentState.settlement,
             ...persisted.settlement,
+            constructionSpeed,
             constructionOrders: repairedOrders,
             constructionCrew,
             constructionStockpile,
