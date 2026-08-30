@@ -1,5 +1,6 @@
 import {
   boundaryAt,
+  detectRooms,
   eraseAt,
   getWorkstationCells,
   isInConstructionBounds,
@@ -27,13 +28,27 @@ export type ConstructionOrderStatus =
 
 export type ConstructionOperation = 'construct' | 'deconstruct' | 'replace'
 
+export type ConstructionTravelPhase =
+  | 'idle'
+  | 'to_stockpile'
+  | 'to_site'
+  | 'at_site'
+
 export type ConstructionBlock =
   | {
       kind: 'insufficient_materials'
       message: string
     }
   | {
+      kind: 'prerequisite'
+      message: string
+    }
+  | {
       kind: 'target_changed'
+      message: string
+    }
+  | {
+      kind: 'no_path'
       message: string
     }
 
@@ -69,6 +84,16 @@ export interface ConstructionOrder {
   status: ConstructionOrderStatus
   block: ConstructionBlock | null
   assignedCrewId: string | null
+  /** Persisted physical phase used by the spatial worker simulation. */
+  travelPhase?: ConstructionTravelPhase
+  /** Spatial context in which a route was last proven impossible. */
+  routeBlockedContextKey?: string | null
+  /**
+   * Earlier construction orders whose completed targets make this target
+   * executable. Optional only so pre-dependency saves and hand-authored test
+   * fixtures remain source-compatible; derived and normalized orders emit it.
+   */
+  prerequisiteOrderIds?: string[]
   target: ConstructionOrderTarget
   materials: {
     required: number
@@ -84,7 +109,11 @@ export interface ConstructionOrder {
 
 export type LegacyConstructionOrderV5 = Omit<
   ConstructionOrder,
-  'block' | 'materials'
+  | 'block'
+  | 'materials'
+  | 'prerequisiteOrderIds'
+  | 'travelPhase'
+  | 'routeBlockedContextKey'
 > & {
   materials: {
     required: number
@@ -102,6 +131,10 @@ export interface DeriveConstructionOrdersOptions {
   commandId: string
   priority?: number
   sequenceStart?: number
+  /** The authoritative layout containing completed construction only. */
+  completedLayout?: ConstructionLayout
+  /** Existing projected orders that precede the newly derived command. */
+  prerequisiteOrders?: readonly ConstructionOrder[]
 }
 
 export interface ConstructionProjectionIssue {
@@ -206,6 +239,7 @@ const cloneTarget = (target: ConstructionOrderTarget): ConstructionOrderTarget =
 const cloneOrder = (order: ConstructionOrder): ConstructionOrder => ({
   ...order,
   block: order.block ? { ...order.block } : null,
+  prerequisiteOrderIds: [...(order.prerequisiteOrderIds ?? [])],
   target: cloneTarget(order.target),
   materials: { ...order.materials },
   work: { ...order.work },
@@ -283,6 +317,15 @@ const targetChanged = (order: ConstructionOrder, detail: string): RejectedTarget
   error: `Order ${order.id} cannot be completed because ${detail}`,
 })
 
+const prerequisiteWaitBlock = (
+  prerequisiteOrderIds: readonly string[],
+): ConstructionBlock => ({
+  kind: 'prerequisite',
+  message: prerequisiteOrderIds.length === 1
+    ? `Waiting for prerequisite ${prerequisiteOrderIds[0]}.`
+    : `Waiting for ${prerequisiteOrderIds.length} prerequisite construction orders.`,
+})
+
 const fromConstructionResult = (
   result: ConstructionResult,
 ): ApplyTargetResult =>
@@ -358,6 +401,74 @@ const applyOrderTarget = (
     ? applyBoundaryTarget(layout, order, order.target)
     : applyWorkstationTarget(layout, order, order.target)
 
+const indoorTargetFitsCompletedRoom = (
+  layout: ConstructionLayout,
+  order: ConstructionOrder,
+) => {
+  if (order.target.kind !== 'workstation' || !order.target.construct) return true
+  const spec = WORKSTATION_SPECS[order.target.construct.type as WorkstationKind]
+  if (!spec?.indoor) return true
+
+  const roomByCell = new Map(
+    detectRooms(layout).flatMap((room) =>
+      room.cells.map((cell) => [pointKey(cell), room.id] as const),
+    ),
+  )
+  const roomIds = order.target.cells.map((cell) => roomByCell.get(pointKey(cell)))
+  return Boolean(
+    roomIds[0] && roomIds.every((roomId) => roomId === roomIds[0]),
+  )
+}
+
+const targetIsExecutable = (
+  layout: ConstructionLayout,
+  order: ConstructionOrder,
+) => {
+  const applied = applyOrderTarget(layout, order)
+  return applied.ok && indoorTargetFitsCompletedRoom(applied.layout, order)
+}
+
+const targetIsExecutableAfter = (
+  completedLayout: ConstructionLayout,
+  prerequisiteOrders: readonly ConstructionOrder[],
+  order: ConstructionOrder,
+) => {
+  let layout = cloneLayout(completedLayout)
+  for (const prerequisite of [...prerequisiteOrders].sort(compareProjectionOrder)) {
+    const applied = applyOrderTarget(layout, prerequisite)
+    if (!applied.ok) return false
+    layout = applied.layout
+  }
+  return targetIsExecutable(layout, order)
+}
+
+/**
+ * Reduces the preceding projected ledger to an inclusion-minimal, deterministic
+ * set whose completed targets make `order` executable from the completed
+ * layout. Keeping transitive prerequisites is intentionally conservative: it
+ * also guarantees the selected targets can themselves be projected in order.
+ */
+const derivePrerequisiteOrderIds = (
+  completedLayout: ConstructionLayout,
+  sourceOrders: readonly ConstructionOrder[],
+  order: ConstructionOrder,
+) => {
+  const candidates = sourceOrders
+    .filter((candidate) => candidate.status !== 'complete')
+    .map(cloneOrder)
+    .sort(compareProjectionOrder)
+  if (targetIsExecutableAfter(completedLayout, [], order)) return []
+
+  let required = candidates
+  for (const candidate of candidates) {
+    const withoutCandidate = required.filter((item) => item.id !== candidate.id)
+    if (targetIsExecutableAfter(completedLayout, withoutCandidate, order)) {
+      required = withoutCandidate
+    }
+  }
+  return required.map((candidate) => candidate.id)
+}
+
 /**
  * Converts the diff between the layout a player saw and a successful projected
  * construction result into worker-executable orders. The source layout is not
@@ -426,7 +537,7 @@ export const deriveConstructionOrders = (
     ? options.sequenceStart!
     : 0
 
-  return targets.map((target, index) => {
+  const orders = targets.map((target, index): ConstructionOrder => {
     const requirements = orderRequirements(target)
     const sequence = sequenceStart + index
     return {
@@ -443,6 +554,9 @@ export const deriveConstructionOrders = (
           }
         : null,
       assignedCrewId: null,
+      travelPhase: 'idle',
+      routeBlockedContextKey: null,
+      prerequisiteOrderIds: [],
       target,
       materials: {
         required: requirements.materialRequired,
@@ -456,6 +570,23 @@ export const deriveConstructionOrders = (
       },
     }
   })
+
+  if (!options.completedLayout || !options.prerequisiteOrders) return orders
+
+  orders.forEach((order, index) => {
+    order.prerequisiteOrderIds = derivePrerequisiteOrderIds(
+      options.completedLayout!,
+      [...options.prerequisiteOrders!, ...orders.slice(0, index)],
+      order,
+    )
+    if (order.prerequisiteOrderIds.length === 0) return
+    order.status = 'blocked'
+    order.block = prerequisiteWaitBlock(order.prerequisiteOrderIds)
+    order.assignedCrewId = null
+    order.materials.reserved = 0
+  })
+
+  return orders
 }
 
 /**
@@ -686,6 +817,13 @@ const normalizePersistedOrder = (
 
   const target = persistedTarget(value.target)
   if (!target) return null
+  const prerequisiteOrderIds = !legacyV5 && Array.isArray(value.prerequisiteOrderIds)
+    ? [...new Set(
+        value.prerequisiteOrderIds.filter(
+          (id): id is string => typeof id === 'string' && Boolean(id.trim()),
+        ),
+      )].filter((id) => id !== value.id)
+    : []
   const requirements = orderRequirements(target)
   const isComplete = value.status === 'complete'
   const work = isRecord(value.work) ? value.work : {}
@@ -693,6 +831,13 @@ const normalizePersistedOrder = (
   const priority = typeof value.priority === 'number' && Number.isFinite(value.priority)
     ? Math.min(5, Math.max(1, Math.round(value.priority)))
     : 3
+  const persistedTravelPhase: ConstructionTravelPhase =
+    !legacyV5 &&
+    (value.travelPhase === 'to_stockpile' ||
+      value.travelPhase === 'to_site' ||
+      value.travelPhase === 'at_site')
+      ? value.travelPhase
+      : 'idle'
 
   if (isComplete) {
     return {
@@ -704,6 +849,9 @@ const normalizePersistedOrder = (
       status: 'complete',
       block: null,
       assignedCrewId: null,
+      travelPhase: 'idle',
+      routeBlockedContextKey: null,
+      prerequisiteOrderIds,
       target,
       materials: {
         required: requirements.materialRequired,
@@ -790,6 +938,14 @@ const normalizePersistedOrder = (
       value.assignedCrewId.trim()
         ? value.assignedCrewId
         : null,
+    travelPhase: persistedTravelPhase,
+    routeBlockedContextKey:
+      !legacyV5 &&
+      typeof value.routeBlockedContextKey === 'string' &&
+      value.routeBlockedContextKey.length <= 20_000
+        ? value.routeBlockedContextKey
+        : null,
+    prerequisiteOrderIds,
     target,
     materials: {
       required: requirements.materialRequired,
@@ -821,6 +977,15 @@ export const normalizePersistedConstructionOrders = (
     seenOrderIds.add(order.id)
     return [order]
   })
+  const ordersById = new Map(orders.map((order) => [order.id, order]))
+  orders.forEach((order) => {
+    order.prerequisiteOrderIds = (order.prerequisiteOrderIds ?? []).filter((id) => {
+      const prerequisite = ordersById.get(id)
+      return Boolean(
+        prerequisite && compareProjectionOrder(prerequisite, order) < 0,
+      )
+    })
+  })
   return reserveConstructionMaterials(orders, constructionStock)
 }
 
@@ -839,6 +1004,13 @@ export const availableConstructionStock = (
   return Math.max(0, nonnegativeFinite(constructionStock) - reserved)
 }
 
+const constructionPrerequisitesComplete = (
+  order: ConstructionOrder,
+  ordersById: ReadonlyMap<string, ConstructionOrder>,
+) => (order.prerequisiteOrderIds ?? []).every(
+  (id) => ordersById.get(id)?.status === 'complete',
+)
+
 /**
  * Reconciles whole-order material promises against physical stock. Existing
  * valid promises are kept before newly affordable orders are funded. A job is
@@ -849,6 +1021,7 @@ export const reserveConstructionMaterials = (
   constructionStock: number,
 ): ConstructionMaterialReservationResult => {
   const orders = sourceOrders.map(cloneOrder)
+  const ordersById = new Map(orders.map((order) => [order.id, order]))
   let unpromisedStock = nonnegativeFinite(constructionStock)
   const fundedOrderIds = new Set<string>()
   const previouslyFundedOrderIds = new Set(
@@ -859,6 +1032,7 @@ export const reserveConstructionMaterials = (
         const remaining = Math.max(0, required - delivered)
         return (
           order.status !== 'complete' &&
+          constructionPrerequisitesComplete(order, ordersById) &&
           remaining > MATERIAL_EPSILON &&
           Math.abs(nonnegativeFinite(order.materials.reserved) - remaining) <=
             MATERIAL_EPSILON
@@ -882,13 +1056,30 @@ export const reserveConstructionMaterials = (
       order.materials.reserved = 0
       order.block = null
       order.assignedCrewId = null
+      order.travelPhase = 'idle'
+      order.routeBlockedContextKey = null
       return
     }
 
-    if (order.block?.kind === 'target_changed') {
+    if (
+      order.block?.kind === 'target_changed' ||
+      order.block?.kind === 'no_path'
+    ) {
       order.materials.reserved = 0
       order.status = 'blocked'
       order.assignedCrewId = null
+      order.travelPhase = 'idle'
+      if (order.block.kind === 'target_changed') order.routeBlockedContextKey = null
+      return
+    }
+
+    if (!constructionPrerequisitesComplete(order, ordersById)) {
+      order.materials.reserved = 0
+      order.status = 'blocked'
+      order.block = prerequisiteWaitBlock(order.prerequisiteOrderIds ?? [])
+      order.assignedCrewId = null
+      order.travelPhase = 'idle'
+      order.routeBlockedContextKey = null
       return
     }
 
@@ -898,6 +1089,7 @@ export const reserveConstructionMaterials = (
       order.materials.reserved = 0
       order.status = 'building'
       order.block = null
+      order.routeBlockedContextKey = null
       return
     }
 
@@ -913,7 +1105,9 @@ export const reserveConstructionMaterials = (
     .forEach((order) => {
       if (
         order.status === 'complete' ||
-        order.block?.kind === 'target_changed'
+        order.block?.kind === 'target_changed' ||
+        order.block?.kind === 'no_path' ||
+        !constructionPrerequisitesComplete(order, ordersById)
       ) return
       const remaining = Math.max(
         0,
@@ -929,6 +1123,7 @@ export const reserveConstructionMaterials = (
       order.materials.reserved = remaining
       order.status = 'hauling'
       order.block = null
+      order.routeBlockedContextKey = null
       unpromisedStock = Math.max(0, unpromisedStock - remaining)
       fundedOrderIds.add(order.id)
     })
@@ -938,6 +1133,8 @@ export const reserveConstructionMaterials = (
       if (
         order.status === 'complete' ||
         order.block?.kind === 'target_changed' ||
+        order.block?.kind === 'no_path' ||
+        !constructionPrerequisitesComplete(order, ordersById) ||
         fundedOrderIds.has(order.id)
       ) return false
       return order.materials.required - order.materials.delivered > MATERIAL_EPSILON
@@ -949,6 +1146,7 @@ export const reserveConstructionMaterials = (
         order.materials.reserved = remaining
         order.status = 'hauling'
         order.block = null
+        order.routeBlockedContextKey = null
         unpromisedStock = Math.max(0, unpromisedStock - remaining)
         fundedOrderIds.add(order.id)
       } else {
@@ -956,11 +1154,13 @@ export const reserveConstructionMaterials = (
         order.status = 'blocked'
         order.block = insufficientMaterialsBlock(remaining)
         order.assignedCrewId = null
+        order.travelPhase = 'idle'
+        order.routeBlockedContextKey = null
       }
     })
 
   const blockedOrderIds = orders
-    .filter((order) => order.block?.kind === 'insufficient_materials')
+    .filter((order) => order.status === 'blocked')
     .map((order) => order.id)
   const reservedOrderIds = [...fundedOrderIds].filter(
     (id) => !previouslyFundedOrderIds.has(id),
@@ -972,6 +1172,47 @@ export const reserveConstructionMaterials = (
     reservedOrderIds,
     blockedOrderIds,
   }
+}
+
+/**
+ * Reconstructs dependency edges for pre-v7 saves, whose projected orders were
+ * valid as a ledger but did not record which earlier primitives had to become
+ * real first. This keeps upgraded high-priority indoor jobs behind their shell.
+ */
+export const rebuildConstructionOrderPrerequisites = (
+  completedLayout: ConstructionLayout,
+  sourceOrders: readonly ConstructionOrder[],
+  constructionStock: number,
+): ConstructionMaterialReservationResult => {
+  const orders = sourceOrders.map(cloneOrder)
+  const ordered = [...orders].sort(compareProjectionOrder)
+
+  ordered.forEach((order) => {
+    if (order.status === 'complete') {
+      order.prerequisiteOrderIds = []
+      return
+    }
+    const earlierOrders = ordered.filter(
+      (candidate) => compareProjectionOrder(candidate, order) < 0,
+    )
+    order.prerequisiteOrderIds = derivePrerequisiteOrderIds(
+      completedLayout,
+      earlierOrders,
+      order,
+    )
+    if (order.prerequisiteOrderIds.length > 0) {
+      order.status = 'blocked'
+      order.block = prerequisiteWaitBlock(order.prerequisiteOrderIds)
+      order.assignedCrewId = null
+      order.travelPhase = 'idle'
+      order.routeBlockedContextKey = null
+      order.materials.reserved = 0
+    } else if (order.block?.kind === 'prerequisite') {
+      order.block = null
+    }
+  })
+
+  return reserveConstructionMaterials(orders, constructionStock)
 }
 
 /**
@@ -1009,12 +1250,14 @@ export const advanceConstructionOrders = (
 
   // A fully worked order may have been blocked by another queued job. Retry it
   // before dispatching workers so dependencies can resolve without losing work.
+  const retryOrdersById = new Map(orders.map((order) => [order.id, order]))
   orders
     .filter(
       (order) =>
         order.status === 'blocked' &&
         order.block?.kind === 'target_changed' &&
-        order.work.completed >= order.work.required,
+        order.work.completed >= order.work.required &&
+        constructionPrerequisitesComplete(order, retryOrdersById),
     )
     .sort(compareProjectionOrder)
     .forEach((order) => {
@@ -1024,6 +1267,8 @@ export const advanceConstructionOrders = (
       order.status = 'complete'
       order.block = null
       order.assignedCrewId = null
+      order.travelPhase = 'idle'
+      order.routeBlockedContextKey = null
       order.materials.reserved = 0
       if (applied.changed && order.materials.recoverable > 0) {
         constructionStock += order.materials.recoverable
@@ -1048,8 +1293,13 @@ export const advanceConstructionOrders = (
   })
 
   const workers = normalizedWorkers(eligibleWorkers)
+  const ordersById = new Map(orders.map((order) => [order.id, order]))
   const activeOrders = orders
-    .filter((order) => order.status === 'hauling' || order.status === 'building')
+    .filter(
+      (order) =>
+        (order.status === 'hauling' || order.status === 'building') &&
+        constructionPrerequisitesComplete(order, ordersById),
+    )
     .sort(compareWorkOrder)
 
   activeOrders.slice(0, workers.length).forEach((order, index) => {
@@ -1071,6 +1321,8 @@ export const advanceConstructionOrders = (
         order.status = 'blocked'
         order.block = insufficientMaterialsBlock(remaining)
         order.assignedCrewId = null
+        order.travelPhase = 'idle'
+        order.routeBlockedContextKey = null
         return
       }
       constructionStock = Math.max(0, constructionStock - delivered)
@@ -1106,6 +1358,8 @@ export const advanceConstructionOrders = (
       layout = applied.layout
       order.status = 'complete'
       order.block = null
+      order.travelPhase = 'idle'
+      order.routeBlockedContextKey = null
       order.materials.reserved = 0
       if (applied.changed && order.materials.recoverable > 0) {
         constructionStock += order.materials.recoverable
@@ -1158,44 +1412,57 @@ export const cancelConstructionOrders = (
       (issue) => issue.orderId,
     ),
   )
-  const cancelledOrderIds: string[] = []
-  const cancelledOrders: ConstructionOrder[] = []
+  const cancelledIds = new Set(
+    sourceOrders
+      .filter(
+        (order) => requestedOrderIds.has(order.id) && order.status !== 'complete',
+      )
+      .map((order) => order.id),
+  )
+
+  const addExplicitDependants = () => {
+    let added: boolean
+    do {
+      added = false
+      sourceOrders.forEach((order) => {
+        if (
+          order.status !== 'complete' &&
+          !cancelledIds.has(order.id) &&
+          (order.prerequisiteOrderIds ?? []).some((id) => cancelledIds.has(id))
+        ) {
+          cancelledIds.add(order.id)
+          added = true
+        }
+      })
+    } while (added)
+  }
+  addExplicitDependants()
+
   let orders = sourceOrders
-    .filter((order) => {
-      const cancel = requestedOrderIds.has(order.id) && order.status !== 'complete'
-      if (cancel) {
-        cancelledOrderIds.push(order.id)
-        cancelledOrders.push(order)
-      }
-      return !cancel
-    })
+    .filter((order) => !cancelledIds.has(order.id))
     .map(cloneOrder)
 
   const layout = cloneLayout(completedLayout)
   let projection = projectConstructionOrders(layout, orders)
   while (true) {
-    const dependentOrderIds = new Set(
-      projection.issues
-        .filter((issue) => !baselineIssueIds.has(issue.orderId))
-        .map((issue) => issue.orderId),
-    )
-    if (dependentOrderIds.size === 0) break
-
-    const retainedOrders: ConstructionOrder[] = []
-    let removedDependent = false
-    orders.forEach((order) => {
-      if (dependentOrderIds.has(order.id) && order.status !== 'complete') {
-        cancelledOrderIds.push(order.id)
-        cancelledOrders.push(order)
-        removedDependent = true
-      } else {
-        retainedOrders.push(order)
-      }
+    const dependentOrderIds = projection.issues
+      .filter((issue) => !baselineIssueIds.has(issue.orderId))
+      .map((issue) => issue.orderId)
+    const previousSize = cancelledIds.size
+    dependentOrderIds.forEach((id) => {
+      const order = sourceOrders.find((candidate) => candidate.id === id)
+      if (order && order.status !== 'complete') cancelledIds.add(id)
     })
-    if (!removedDependent) break
-    orders = retainedOrders
+    if (cancelledIds.size === previousSize) break
+    addExplicitDependants()
+    orders = sourceOrders
+      .filter((order) => !cancelledIds.has(order.id))
+      .map(cloneOrder)
     projection = projectConstructionOrders(layout, orders)
   }
+
+  const cancelledOrders = sourceOrders.filter((order) => cancelledIds.has(order.id))
+  const cancelledOrderIds = cancelledOrders.map((order) => order.id)
 
   return {
     layout,

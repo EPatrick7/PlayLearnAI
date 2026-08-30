@@ -20,6 +20,7 @@ import {
   migrateV5ConstructionOrders,
   normalizePersistedConstructionOrders,
   projectConstructionOrders,
+  rebuildConstructionOrderPrerequisites,
   reserveConstructionMaterials,
   returnedConstructionMaterials,
   type ConstructionOrder,
@@ -60,6 +61,19 @@ const advance = (
     )
   }
   return state
+}
+
+const projectRoomShell = (source: ConstructionLayout) => {
+  let layout = layoutFrom(
+    paintBoundaryLine(source, { x: 4, y: 4 }, { x: 9, y: 4 }, 'wall'),
+  )
+  layout = layoutFrom(
+    paintBoundaryLine(layout, { x: 4, y: 9 }, { x: 9, y: 9 }, 'wall'),
+  )
+  layout = layoutFrom(
+    paintBoundaryLine(layout, { x: 4, y: 5 }, { x: 4, y: 8 }, 'wall'),
+  )
+  return paintBoundaryLine(layout, { x: 9, y: 5 }, { x: 9, y: 8 }, 'wall')
 }
 
 describe('construction order derivation and projection', () => {
@@ -215,6 +229,194 @@ describe('construction order derivation and projection', () => {
     expect(cancelled.projection.layout.workstations.map((item) => item.id)).toEqual([
       'bench',
     ])
+  })
+})
+
+describe('construction order prerequisites', () => {
+  it('keeps a P5 indoor life-support job inert until every P3 shell and door prerequisite completes', () => {
+    const completed = createConstructionLayout()
+    const wallOrders = deriveConstructionOrders(
+      completed,
+      projectRoomShell(completed),
+      {
+        commandId: 'p3-shell',
+        priority: 3,
+        sequenceStart: 0,
+        completedLayout: completed,
+        prerequisiteOrders: [],
+      },
+    )
+    const wallProjection = projectConstructionOrders(completed, wallOrders).layout
+    const doorOrders = deriveConstructionOrders(
+      wallProjection,
+      paintBoundaryCell(wallProjection, { x: 6, y: 4 }, 'door'),
+      {
+        commandId: 'p3-door',
+        priority: 3,
+        sequenceStart: wallOrders.length,
+        completedLayout: completed,
+        prerequisiteOrders: wallOrders,
+      },
+    )
+    const shellOrders = [...wallOrders, ...doorOrders]
+    const enclosedProjection = projectConstructionOrders(completed, shellOrders).layout
+    const [lifeSupportOrder] = deriveConstructionOrders(
+      enclosedProjection,
+      placeWorkstation(enclosedProjection, {
+        id: 'p5-life-support',
+        type: 'life-support',
+        label: 'P5 life support',
+        origin: { x: 5, y: 5 },
+        size: { width: 2, height: 2 },
+      }),
+      {
+        commandId: 'p5-life-support',
+        priority: 5,
+        sequenceStart: shellOrders.length,
+        completedLayout: completed,
+        prerequisiteOrders: shellOrders,
+      },
+    )
+
+    expect(doorOrders[0].prerequisiteOrderIds).toEqual(['p3-shell:2'])
+    const cornerKeys = new Set(['4:4', '9:4', '4:9', '9:9'])
+    const executableShellOrders = shellOrders.filter((order) =>
+      order.target.kind !== 'boundary' ||
+      !cornerKeys.has(`${order.target.cells[0].x}:${order.target.cells[0].y}`),
+    )
+    expect(lifeSupportOrder.prerequisiteOrderIds).toEqual(
+      executableShellOrders.map((order) => order.id),
+    )
+
+    const constrained = reserveConstructionMaterials(
+      [...shellOrders, lifeSupportOrder],
+      4,
+    )
+    expect(constrained.orders.at(-1)).toMatchObject({
+      status: 'blocked',
+      block: { kind: 'prerequisite' },
+      materials: { reserved: 0 },
+    })
+    expect(constrained.orders.filter(
+      (order) => order.commandId === 'p3-shell' && order.materials.reserved === 1,
+    )).toHaveLength(4)
+
+    const cascade = cancelConstructionOrder(
+      completed,
+      [...shellOrders, lifeSupportOrder],
+      'p3-shell:1',
+    )
+    expect(cascade.cancelledOrderIds).toEqual([
+      'p3-shell:1',
+      'p5-life-support:21',
+    ])
+    expect(cascade.projection.valid).toBe(true)
+
+    let state = {
+      layout: completed,
+      orders: reserveConstructionMaterials(
+        [...shellOrders, lifeSupportOrder],
+        100,
+      ).orders,
+      constructionStock: 100,
+    }
+    expect(state.orders.at(-1)).toMatchObject({
+      status: 'blocked',
+      block: { kind: 'prerequisite' },
+      assignedCrewId: null,
+      materials: { reserved: 0, delivered: 0 },
+      work: { completed: 0 },
+    })
+
+    for (let tick = 0; tick < 100; tick += 1) {
+      const lifeSupport = state.orders.find((order) => order.id === lifeSupportOrder.id)!
+      const ordersById = new Map(state.orders.map((order) => [order.id, order]))
+      const prerequisitesComplete = lifeSupport.prerequisiteOrderIds!.every(
+        (id) => ordersById.get(id)?.status === 'complete',
+      )
+      if (!prerequisitesComplete) {
+        expect(lifeSupport).toMatchObject({
+          status: 'blocked',
+          block: { kind: 'prerequisite' },
+          assignedCrewId: null,
+          materials: { reserved: 0, delivered: 0 },
+          work: { completed: 0 },
+        })
+      }
+      if (lifeSupport.status === 'complete') break
+
+      state = advanceConstructionOrders(
+        state.layout,
+        state.orders,
+        [{ id: 'priority-builder', engineeringRate: 10, haulingRate: 10 }],
+        { constructionStock: state.constructionStock },
+      )
+    }
+
+    const finishedLifeSupport = state.orders.find(
+      (order) => order.id === lifeSupportOrder.id,
+    )!
+    const finalOrdersById = new Map(state.orders.map((order) => [order.id, order]))
+    expect(finishedLifeSupport.status).toBe('complete')
+    expect(finishedLifeSupport.prerequisiteOrderIds!.every(
+      (id) => finalOrdersById.get(id)?.status === 'complete',
+    )).toBe(true)
+    expect(state.layout.workstations.map((workstation) => workstation.id)).toContain(
+      'p5-life-support',
+    )
+  })
+
+  it('rebuilds missing dependency edges when upgrading a projected legacy queue', () => {
+    const completed = createConstructionLayout()
+    const wallOrders = deriveConstructionOrders(
+      completed,
+      projectRoomShell(completed),
+      { commandId: 'legacy-shell', sequenceStart: 0 },
+    )
+    const wallProjection = projectConstructionOrders(completed, wallOrders).layout
+    const doorOrders = deriveConstructionOrders(
+      wallProjection,
+      paintBoundaryCell(wallProjection, { x: 6, y: 4 }, 'door'),
+      {
+        commandId: 'legacy-door',
+        sequenceStart: wallOrders.length,
+      },
+    )
+    const legacyShell = [...wallOrders, ...doorOrders]
+    const enclosedProjection = projectConstructionOrders(completed, legacyShell).layout
+    const [legacyLifeSupport] = deriveConstructionOrders(
+      enclosedProjection,
+      placeWorkstation(enclosedProjection, {
+        id: 'legacy-life-support',
+        type: 'life-support',
+        label: 'Legacy life support',
+        origin: { x: 5, y: 5 },
+        size: { width: 2, height: 2 },
+      }),
+      {
+        commandId: 'legacy-life-support',
+        priority: 5,
+        sequenceStart: legacyShell.length,
+      },
+    )
+
+    expect(legacyLifeSupport.prerequisiteOrderIds).toEqual([])
+    const rebuilt = rebuildConstructionOrderPrerequisites(
+      completed,
+      [...legacyShell, legacyLifeSupport],
+      100,
+    )
+    const lifeSupport = rebuilt.orders.find(
+      (order) => order.id === legacyLifeSupport.id,
+    )!
+
+    expect(lifeSupport.prerequisiteOrderIds?.length).toBeGreaterThan(0)
+    expect(lifeSupport).toMatchObject({
+      status: 'blocked',
+      block: { kind: 'prerequisite' },
+      assignedCrewId: null,
+      materials: { reserved: 0 },
+    })
   })
 })
 
@@ -490,26 +692,29 @@ describe('construction material ledger', () => {
     const doorOrders = deriveConstructionOrders(
       withWall,
       paintBoundaryCell(withWall, { x: 8, y: 8 }, 'door'),
-      { commandId: 'dependent-door', sequenceStart: 1 },
+      {
+        commandId: 'dependent-door',
+        sequenceStart: 1,
+        completedLayout: completed,
+        prerequisiteOrders: wallOrders,
+      },
     )
-    const reserved = reserveConstructionMaterials(
-      [...wallOrders, ...doorOrders],
-      2,
-    ).orders
-    const staged = advanceConstructionOrders(
-      completed,
-      reserved,
-      [
-        { id: 'builder-a', engineeringRate: 1, haulingRate: 2 },
-        { id: 'builder-b', engineeringRate: 1, haulingRate: 2 },
-      ],
-      { constructionStock: 2 },
-    )
-    expect(staged.orders.every((order) => order.materials.delivered === 1)).toBe(true)
+    expect(doorOrders[0].prerequisiteOrderIds).toEqual(['prerequisite-wall:0'])
+    const staged = [...wallOrders, ...doorOrders].map((order) => ({
+      ...order,
+      status: 'building' as const,
+      block: null,
+      materials: {
+        ...order.materials,
+        reserved: 0,
+        delivered: order.materials.required,
+      },
+    }))
+    expect(staged.every((order) => order.materials.delivered === 1)).toBe(true)
 
     const commandCancellation = cancelConstructionCommand(
       completed,
-      staged.orders,
+      staged,
       'prerequisite-wall',
     )
     expect(commandCancellation.cancelledOrderIds).toEqual([
@@ -522,7 +727,7 @@ describe('construction material ledger', () => {
 
     const orderCancellation = cancelConstructionOrder(
       completed,
-      staged.orders,
+      staged,
       'prerequisite-wall:0',
     )
     expect(orderCancellation.cancelledOrderIds).toEqual([
@@ -733,6 +938,13 @@ describe('construction material ledger', () => {
       ...source,
       id: 'persisted-wall-without-ledger',
       sequence: 18,
+      prerequisiteOrderIds: [
+        source.id,
+        source.id,
+        'persisted-wall-without-ledger',
+        'missing-order',
+        42,
+      ],
       materials: undefined,
       work: undefined,
     }
@@ -750,6 +962,7 @@ describe('construction material ledger', () => {
     expect(normalized.orders).toHaveLength(2)
     expect(normalized.orders[0]).toMatchObject({
       id: 'persisted-wall:17',
+      prerequisiteOrderIds: [],
       priority: 5,
       operation: 'construct',
       status: 'blocked',
@@ -759,6 +972,7 @@ describe('construction material ledger', () => {
     })
     expect(normalized.orders[1]).toMatchObject({
       id: 'persisted-wall-without-ledger',
+      prerequisiteOrderIds: ['persisted-wall:17'],
       materials: { required: 1, reserved: 0, delivered: 0, recoverable: 0 },
       work: { required: 1, completed: 0 },
     })

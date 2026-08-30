@@ -15,7 +15,6 @@ import {
   type BuildCategory,
   type ConstructionTool,
 } from '../game/constructionCatalog'
-import { deriveConstructionCrewCells } from '../game/constructionCrew'
 import {
   availableConstructionStock,
   projectConstructionOrders,
@@ -28,7 +27,9 @@ import { GameIcon, type GameIconName } from './GameIcon'
 import { TileStackPicker } from './TileStackPicker'
 import {
   buildMapInspection,
+  constructionPhaseSummary,
   type MapInspectable,
+  type MapTileInspection,
 } from './mapInspection'
 
 interface ToolDefinition {
@@ -164,6 +165,14 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const materialBlockedOrders = openOrders.filter(
     (order) => order.block?.kind === 'insufficient_materials',
   )
+  const routeBlockedOrders = openOrders.filter(
+    (order) => order.block?.kind === 'no_path',
+  )
+  const prerequisiteBlockedOrders = openOrders.filter(
+    (order) => order.block?.kind === 'prerequisite',
+  )
+  const assignedOrders = openOrders.filter((order) => order.assignedCrewId)
+  const activeConstructionSummary = constructionPhaseSummary(assignedOrders)
   const availableStock = availableConstructionStock(
     colony.reserves.constructionStock,
     constructionOrders,
@@ -179,7 +188,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const [simulationSpeed, setSimulationSpeed] = useState<0 | 1 | 2 | 3>(1)
   const [undoCount, setUndoCount] = useState(0)
   const [selection, setSelection] = useState<ArchitectSelection | null>(null)
-  const [stackCellKey, setStackCellKey] = useState<string | null>(null)
+  const [stackSnapshot, setStackSnapshot] = useState<MapTileInspection | null>(null)
   const [stackTrigger, setStackTrigger] = useState<HTMLElement | null>(null)
   const undoStack = useRef<string[]>([])
   const rooms = useMemo(() => detectRooms(layout), [layout])
@@ -189,8 +198,15 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     [colony.crew, colony.settlement.phase],
   )
   const crewCells = useMemo(
-    () => deriveConstructionCrewCells(layout, visibleCrew, constructionOrders),
-    [constructionOrders, layout, visibleCrew],
+    () => {
+      const visibleCrewIds = new Set(visibleCrew.map((member) => member.id))
+      return new Map(
+        colony.settlement.constructionCrew
+          .filter((position) => visibleCrewIds.has(position.crewId))
+          .map((position) => [position.crewId, position.cell]),
+      )
+    },
+    [colony.settlement.constructionCrew, visibleCrew],
   )
   const inspectionByCell = useMemo(() => buildMapInspection({
     width: layout.width,
@@ -206,8 +222,26 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     },
     constructionLayout: layout,
     constructionOrders,
+    constructionPaused: simulationSpeed === 0,
     constructionCrewNames: new Map(colony.crew.map((member) => [member.id, member.name])),
-  }), [colony.crew, constructionOrders, crewCells, layout, visibleCrew])
+    constructionStockpile: {
+      cell: colony.settlement.constructionStockpile,
+      stored: colony.reserves.constructionStock,
+      reserved: reservedStock,
+      available: availableStock,
+    },
+  }), [
+    availableStock,
+    colony.crew,
+    colony.reserves.constructionStock,
+    colony.settlement.constructionStockpile,
+    constructionOrders,
+    crewCells,
+    layout,
+    reservedStock,
+    simulationSpeed,
+    visibleCrew,
+  ])
   const selectedCrewCellKey = selection?.itemKey?.startsWith('crew:')
     ? [...inspectionByCell.entries()].find(([, tile]) =>
         tile.contents.some((item) => item.key === selection.itemKey),
@@ -244,7 +278,6 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     }
     return false
   }))
-  const stackTile = stackCellKey ? inspectionByCell.get(stackCellKey) ?? null : null
   const overlapCounts = useMemo(() => new Map(
     [...inspectionByCell.entries()]
       .filter(([, tile]) => tile.contents.length > 1)
@@ -269,10 +302,10 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     if (tile.contents.length > 1) {
       setSelection(null)
       setStackTrigger(trigger)
-      setStackCellKey(cellKey)
+      setStackSnapshot(tile)
       return
     }
-    setStackCellKey(null)
+    setStackSnapshot(null)
     setStackTrigger(null)
     setSelection({ cellKey, itemKey: tile.contents[0]?.key ?? null })
   }
@@ -377,7 +410,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
 
   const chooseTool = (tool: ConstructionTool) => {
     setSelection(null)
-    setStackCellKey(null)
+    setStackSnapshot(null)
     setStackTrigger(null)
     if (selectedTool === tool) {
       cancelTool()
@@ -391,7 +424,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
 
   const chooseCategory = (nextCategory: BuildCategory) => {
     setSelection(null)
-    setStackCellKey(null)
+    setStackSnapshot(null)
     setStackTrigger(null)
     if (nextCategory !== category && selectedTool) {
       setParkedTool(selectedTool)
@@ -435,7 +468,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
         setBuildOpen((current) => {
           if (!current) {
             setSelection(null)
-            setStackCellKey(null)
+            setStackSnapshot(null)
             setStackTrigger(null)
           }
           return !current
@@ -471,8 +504,8 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   useEffect(() => {
     if (simulationSpeed === 0 || openOrders.length === 0) return
     const interval = window.setInterval(() => {
-      useColonyStore.getState().advanceConstruction(simulationSpeed * 0.72)
-    }, 900)
+      useColonyStore.getState().advanceConstruction(simulationSpeed * 0.135)
+    }, 180)
     return () => window.clearInterval(interval)
   }, [openOrders.length, simulationSpeed])
 
@@ -483,14 +516,14 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     : null
   const nextRotation = (rotation + 90) % 360
   const toolInstruction = selectedTool
-    ? instructionFor(selectedTool)
+    ? `${instructionFor(selectedTool)} Space-drag or wheel pans.`
     : parkedTool
       ? `${toolName(parkedTool)} is paused. Move around, then resume without choosing it again.`
     : buildOpen
       ? 'Pick a tool. Walls and objects are placed cell by cell—there are no room templates.'
       : readyForShift
         ? 'Your first expansion is habitable. Begin the first shift when you are ready.'
-      : 'Drag to pan · scroll to zoom · B opens Architect.'
+      : 'Drag/WASD/wheel to pan · Ctrl/⌘-wheel or pinch to zoom · B opens Architect.'
 
   return (
     <div className="game-shell construction-shell">
@@ -532,20 +565,22 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
             <span>
               <strong>{openOrders.length > 0 ? `${openOrders.length} queued` : 'No blueprints'}</strong>
               <small>{openOrders.length > 0
-                ? simulationSpeed === 0
-                  ? materialBlockedOrders.length > 0
-                    ? `Paused · ${materialBlockedOrders.length} ${materialBlockedOrders.length === 1 ? 'job needs' : 'jobs need'} material`
-                    : 'Construction paused'
-                  : materialBlockedOrders.length > 0
+                ? routeBlockedOrders.length > 0
+                  ? `${routeBlockedOrders.length} ${routeBlockedOrders.length === 1 ? 'blueprint has' : 'blueprints have'} no route`
+                  : prerequisiteBlockedOrders.length > 0
+                    ? `${prerequisiteBlockedOrders.length} waiting on earlier construction`
+                    : materialBlockedOrders.length > 0
                     ? `${materialBlockedOrders.length} ${materialBlockedOrders.length === 1 ? 'job needs' : 'jobs need'} material`
-                    : assignedBuilders > 0
-                  ? `${assignedBuilders} ${assignedBuilders === 1 ? 'builder' : 'builders'} working`
-                  : 'Waiting for a builder'
+                    : simulationSpeed === 0
+                      ? 'Construction paused'
+                      : assignedBuilders > 0
+                        ? activeConstructionSummary
+                        : 'Waiting for a builder'
                 : toolInstruction}</small>
             </span>
           </span>
           <span className="construction-material-summary" title={`${materialAmount(colony.reserves.constructionStock)} material physically in storage`}>
-            <GameIcon name="gear" />
+            <GameIcon name="storage" />
             <span><strong>{materialAmount(availableStock)} free</strong><small>{materialAmount(reservedStock)} reserved</small></span>
           </span>
           <div aria-label="Construction speed" className="construction-speed-controls" role="group">
@@ -559,8 +594,11 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
           <ConstructionMap
             constructionPaused={simulationSpeed === 0}
             constructionOrders={constructionOrders}
+            constructionStock={colony.reserves.constructionStock}
+            constructionStockpile={colony.settlement.constructionStockpile}
             crew={visibleCrew}
             crewCells={crewCells}
+            inspectionByCell={inspectionByCell}
             layout={layout}
             onApply={applyConstruction}
             onCancelTool={cancelTool}
@@ -571,7 +609,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
             overlapCounts={overlapCounts}
             planningLayout={projection.layout}
             rotation={rotation}
-            selectedCell={selectedTile?.cell ?? stackTile?.cell ?? null}
+            selectedCell={selectedTile?.cell ?? stackSnapshot?.cell ?? null}
             selectedTool={selectedTool}
           />
         </div>
@@ -665,7 +703,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
                 setBuildOpen((current) => {
                   if (!current) {
                     setSelection(null)
-                    setStackCellKey(null)
+                    setStackSnapshot(null)
                     setStackTrigger(null)
                   }
                   return !current
@@ -797,17 +835,17 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
           {announcement}
         </div>
 
-        {stackTile && (
+        {stackSnapshot && (
           <TileStackPicker
             gridHeight={layout.height}
             gridWidth={layout.width}
             onClose={() => {
-              setStackCellKey(null)
+              setStackSnapshot(null)
               setStackTrigger(null)
             }}
             onSelectItem={(tile, item) => selectInspection(tile.key, item)}
             onSelectSurface={(tile) => selectInspection(tile.key, null)}
-            tile={stackTile}
+            tile={stackSnapshot}
             trigger={stackTrigger}
           />
         )}

@@ -1337,11 +1337,58 @@
 
 .blueprint-deconstruct .construction-job-progress > i { background: #e58376; }
 
-.construction-worker { z-index: 15; transform: translate(18%, -12%); }
+.construction-worker { z-index: 15; transform: translate(-50%, -50%); }
 .construction-worker:not(.worker-paused) .pawn-sprite__art {
   animation: construction-worker-bob 520ms steps(2, end) infinite;
   filter: drop-shadow(0 0 3px rgba(146, 218, 225, 0.62)) drop-shadow(0 3px 2px rgba(7, 11, 10, 0.48));
 }
+
+.construction-worker.worker-no-route .pawn-sprite__art {
+  animation: none;
+  filter: drop-shadow(0 0 3px rgba(226, 116, 99, 0.78)) drop-shadow(0 3px 2px rgba(7, 11, 10, 0.48));
+}
+
+.construction-worker.worker-no-route .construction-worker-task {
+  color: #f0a79b;
+  border-color: rgba(226, 116, 99, 0.72);
+}
+
+.construction-stockpile {
+  position: relative;
+  z-index: 10;
+  align-self: center;
+  justify-self: center;
+  width: 76%;
+  aspect-ratio: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  place-items: center;
+  padding: 3px;
+  border: 2px solid #7e6842;
+  border-radius: 3px;
+  color: #efd48e;
+  background:
+    linear-gradient(135deg, rgba(255, 242, 197, 0.12), transparent 48%),
+    #4a3f2d;
+  box-shadow: 0 2px 0 rgba(246, 219, 155, 0.14) inset, 0 4px 6px rgba(0, 0, 0, 0.42);
+  font: 900 7px/1 ui-monospace, monospace;
+  pointer-events: none;
+}
+
+.construction-stockpile::before,
+.construction-stockpile::after {
+  position: absolute;
+  right: 3px;
+  left: 3px;
+  height: 2px;
+  background: rgba(222, 184, 105, 0.26);
+  content: "";
+}
+
+.construction-stockpile::before { top: 4px; }
+.construction-stockpile::after { bottom: 4px; }
+.construction-stockpile .game-icon { position: relative; z-index: 1; width: 12px; height: 12px; }
+.construction-stockpile strong { position: relative; z-index: 1; }
 
 .construction-worker.worker-paused .pawn-sprite__art {
   animation: none;
@@ -1407,6 +1454,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .construction-worker .pawn-sprite__art { animation: none; }
+  .construction-pawn { transition: none; }
 }
 
 /* Camera workspace: the lunar grid always has enough travel to clear fixed HUDs. */

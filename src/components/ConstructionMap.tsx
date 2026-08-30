@@ -8,7 +8,6 @@ import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
   boundaryAt,
@@ -44,6 +43,10 @@ import {
   getBoundaryDoorAxis,
 } from '../game/boundaryConnections'
 import { GameIcon } from './GameIcon'
+import {
+  constructionOrderActivity,
+  type MapTileInspection,
+} from './mapInspection'
 import { PawnSprite } from './PawnSprite'
 
 interface ConstructionMapProps {
@@ -51,6 +54,8 @@ interface ConstructionMapProps {
   planningLayout?: ConstructionLayout
   constructionOrders?: readonly ConstructionOrder[]
   constructionPaused?: boolean
+  constructionStock?: number
+  constructionStockpile?: GridPoint | null
   crew?: readonly CrewMember[]
   crewCells?: ReadonlyMap<string, GridPoint>
   selectedTool: ConstructionTool | null
@@ -63,6 +68,7 @@ interface ConstructionMapProps {
   onInspectCell?: (cell: GridPoint, anchor: PointerPosition) => void
   selectedCell?: GridPoint | null
   overlapCounts?: ReadonlyMap<string, number>
+  inspectionByCell?: ReadonlyMap<string, MapTileInspection>
 }
 
 interface DraftPreview {
@@ -88,8 +94,18 @@ const MIN_ZOOM = 0.7
 const MAX_ZOOM = 1.8
 const ZOOM_STEP = 0.1
 const PAN_DRAG_THRESHOLD = 6
+const KEYBOARD_PAN_STEP = 48
+const MAX_WHEEL_ZOOM_DELTA = 240
 
 const clampZoom = (zoom: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))
+
+const isEditableTarget = (target: EventTarget | null) => (
+  target instanceof HTMLButtonElement ||
+  target instanceof HTMLInputElement ||
+  target instanceof HTMLSelectElement ||
+  target instanceof HTMLTextAreaElement ||
+  (target instanceof HTMLElement && target.isContentEditable)
+)
 
 const constructionProgress = (order: ConstructionOrder) => {
   const haulingShare = order.materials.required > 0 ? 0.35 : 0
@@ -113,6 +129,13 @@ const constructionOrderLabel = (order: ConstructionOrder) => {
   return order.operation === 'deconstruct'
     ? `Deconstruct ${workstation?.label ?? 'workstation'}`
     : workstation?.label ?? 'Workstation'
+}
+
+const constructionActivityIcon = (order: ConstructionOrder) => {
+  if (order.block?.kind === 'no_path') return 'warning' as const
+  if (order.travelPhase === 'to_stockpile') return 'storage' as const
+  if (order.travelPhase === 'to_site') return 'map' as const
+  return 'work' as const
 }
 
 const workerVariants = ['umber', 'gold', 'olive', 'rose', 'copper', 'slate'] as const
@@ -160,6 +183,8 @@ export function ConstructionMap({
   planningLayout = layout,
   constructionOrders = [],
   constructionPaused = false,
+  constructionStock = 0,
+  constructionStockpile = null,
   crew = [],
   crewCells = new Map(),
   selectedTool,
@@ -172,6 +197,7 @@ export function ConstructionMap({
   onInspectCell,
   selectedCell = null,
   overlapCounts = new Map(),
+  inspectionByCell = new Map(),
 }: ConstructionMapProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const surfaceRef = useRef<HTMLDivElement>(null)
@@ -181,11 +207,15 @@ export function ConstructionMap({
   const panStartPointRef = useRef<PointerPosition | null>(null)
   const panStartCellRef = useRef<GridPoint | null>(null)
   const panMovedRef = useRef(false)
+  const panInspectsStationaryPointerRef = useRef(true)
   const cameraInitializedRef = useRef(false)
   const zoomAnchorRef = useRef<ZoomAnchor | null>(null)
+  const zoomRef = useRef(1)
   const dragStartRef = useRef<GridPoint | null>(null)
   const dragEndRef = useRef<GridPoint | null>(null)
   const keyboardAnchorRef = useRef<GridPoint | null>(null)
+  const spacePressedRef = useRef(false)
+  const spacePanUsedRef = useRef(false)
   const touchPointsRef = useRef(new Map<number, PointerPosition>())
   const touchPanCenterRef = useRef<PointerPosition | null>(null)
   const touchPinchDistanceRef = useRef<number | null>(null)
@@ -280,20 +310,32 @@ export function ConstructionMap({
     else if (cellBounds.bottom > bottomEdge) container.scrollTop += cellBounds.bottom - bottomEdge
   }
 
-  const beginPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const panCameraBy = (deltaX: number, deltaY: number) => {
+    const container = scrollContainer()
+    if (!container) return
+    container.scrollLeft += deltaX
+    container.scrollTop += deltaY
+  }
+
+  const beginPan = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    inspectStationaryPointer = true,
+  ) => {
     event.preventDefault()
+    mapRef.current?.focus({ preventScroll: true })
     panPointerIdRef.current = event.pointerId
     panLastPointRef.current = { x: event.clientX, y: event.clientY }
     panStartPointRef.current = { x: event.clientX, y: event.clientY }
     panStartCellRef.current = pointerPoint(event)
     panMovedRef.current = false
+    panInspectsStationaryPointerRef.current = inspectStationaryPointer
     setIsPanning(true)
     event.currentTarget.setPointerCapture?.(event.pointerId)
   }
 
   const endPan = (
     event: ReactPointerEvent<HTMLDivElement>,
-    inspectStationaryPointer = true,
+    inspectStationaryPointer = panInspectsStationaryPointerRef.current,
   ) => {
     if (panPointerIdRef.current !== event.pointerId) return false
     const clicked = !panMovedRef.current
@@ -303,6 +345,7 @@ export function ConstructionMap({
     panStartPointRef.current = null
     panStartCellRef.current = null
     panMovedRef.current = false
+    panInspectsStationaryPointerRef.current = true
     setIsPanning(false)
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
@@ -337,13 +380,16 @@ export function ConstructionMap({
 
   const resetView = () => {
     zoomAnchorRef.current = null
+    zoomRef.current = 1
     setZoom(1)
     requestAnimationFrame(() => requestAnimationFrame(centerMapInViewport))
   }
 
-  const setZoomAround = (nextZoom: number, clientX: number, clientY: number) => {
+  const setZoomAround = useCallback((nextZoom: number, clientX: number, clientY: number) => {
     const map = mapRef.current
     if (!map) return
+    const clampedZoom = clampZoom(nextZoom)
+    if (clampedZoom === zoomRef.current) return
     const rect = map.getBoundingClientRect()
     zoomAnchorRef.current = {
       clientX,
@@ -351,26 +397,67 @@ export function ConstructionMap({
       mapX: rect.width ? (clientX - rect.left) / rect.width : 0.5,
       mapY: rect.height ? (clientY - rect.top) / rect.height : 0.5,
     }
-    setZoom(clampZoom(nextZoom))
-  }
+    zoomRef.current = clampedZoom
+    setZoom(clampedZoom)
+  }, [])
 
   const zoomFromViewportCenter = (direction: -1 | 1) => {
     const container = scrollContainer()
     if (!container) return
     const rect = container.getBoundingClientRect()
     setZoomAround(
-      Math.round((zoom + direction * ZOOM_STEP) * 10) / 10,
+      Math.round((zoomRef.current + direction * ZOOM_STEP) * 10) / 10,
       rect.left + rect.width / 2,
       rect.top + rect.height / 2,
     )
   }
 
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (event.deltaY === 0) return
-    event.preventDefault()
-    const factor = Math.exp(-event.deltaY * 0.0015)
-    setZoomAround(zoom * factor, event.clientX, event.clientY)
-  }
+  useEffect(() => {
+    const surface = surfaceRef.current
+    if (!surface) return
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaX === 0 && event.deltaY === 0) return
+
+      const container = mapRef.current?.closest<HTMLElement>('.construction-map-scroll') ?? null
+      if (!container) return
+      const lineHeight = 16
+      const pageWidth = container.clientWidth || 800
+      const pageHeight = container.clientHeight || 600
+      const deltaX = event.deltaMode === 1
+        ? event.deltaX * lineHeight
+        : event.deltaMode === 2
+          ? event.deltaX * pageWidth
+          : event.deltaX
+      const deltaY = event.deltaMode === 1
+        ? event.deltaY * lineHeight
+        : event.deltaMode === 2
+          ? event.deltaY * pageHeight
+          : event.deltaY
+      const modifierZoom = event.ctrlKey || event.metaKey
+      const pixelPan = event.deltaMode === WheelEvent.DOM_DELTA_PIXEL && !modifierZoom
+
+      if (pixelPan || (!modifierZoom && event.shiftKey)) {
+        event.preventDefault()
+        if (event.shiftKey && deltaX === 0) container.scrollLeft += deltaY
+        else {
+          container.scrollLeft += deltaX
+          container.scrollTop += deltaY
+        }
+        return
+      }
+
+      if (deltaY === 0) return
+      event.preventDefault()
+      const boundedDelta = Math.min(
+        MAX_WHEEL_ZOOM_DELTA,
+        Math.max(-MAX_WHEEL_ZOOM_DELTA, deltaY),
+      )
+      const factor = Math.exp(-boundedDelta * 0.0015)
+      setZoomAround(zoomRef.current * factor, event.clientX, event.clientY)
+    }
+    surface.addEventListener('wheel', handleWheel, { passive: false })
+    return () => surface.removeEventListener('wheel', handleWheel)
+  }, [setZoomAround])
 
   useLayoutEffect(() => {
     const anchor = zoomAnchorRef.current
@@ -504,10 +591,21 @@ export function ConstructionMap({
         setIsPanning(true)
         touchPanCenterRef.current = touchCenter()
         touchPinchDistanceRef.current = touchDistance()
-        touchPinchZoomRef.current = zoom
+        touchPinchZoomRef.current = zoomRef.current
         event.currentTarget.setPointerCapture?.(event.pointerId)
         return
       }
+    }
+    const temporarySpacePan = (
+      event.pointerType !== 'touch' &&
+      event.button === 0 &&
+      spacePressedRef.current
+    )
+    if (temporarySpacePan) {
+      spacePanUsedRef.current = true
+      clearDraft()
+      beginPan(event, false)
+      return
     }
     const panButton = (!selectedTool && event.button === 0) || (selectedTool && event.button === 1)
     if (panButton) {
@@ -635,18 +733,52 @@ export function ConstructionMap({
     commitAt(point)
   }
 
+  const activateKeyboardCursor = () => {
+    if (selectedTool) {
+      commitKeyboardDraft(cursor)
+      return
+    }
+    if (!onInspectCell) return
+    const cell = mapRef.current?.querySelector<HTMLElement>(
+      `[data-construction-cell][data-grid-x="${cursor.x}"][data-grid-y="${cursor.y}"]`,
+    )
+    const rect = cell?.getBoundingClientRect()
+    onInspectCell(cursor, {
+      x: rect ? rect.left + rect.width / 2 : 0,
+      y: rect ? rect.top + rect.height / 2 : 0,
+    })
+  }
+
   const handleKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const movement: Record<string, GridPoint> = {
+    if (isEditableTarget(event.target)) return
+    const cursorMovement: Record<string, GridPoint> = {
       ArrowUp: { x: 0, y: -1 },
       ArrowRight: { x: 1, y: 0 },
       ArrowDown: { x: 0, y: 1 },
       ArrowLeft: { x: -1, y: 0 },
     }
-    if (movement[event.key]) {
+    const cameraMovement: Record<string, GridPoint> = {
+      arrowup: { x: 0, y: -1 },
+      arrowright: { x: 1, y: 0 },
+      arrowdown: { x: 0, y: 1 },
+      arrowleft: { x: -1, y: 0 },
+      w: { x: 0, y: -1 },
+      d: { x: 1, y: 0 },
+      s: { x: 0, y: 1 },
+      a: { x: -1, y: 0 },
+    }
+    const cameraDirection = cameraMovement[event.key.toLowerCase()]
+    if (cameraDirection && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault()
+      panCameraBy(
+        cameraDirection.x * KEYBOARD_PAN_STEP,
+        cameraDirection.y * KEYBOARD_PAN_STEP,
+      )
+      const movement = cursorMovement[event.key]
+      if (!movement) return
       const next = {
-        x: Math.min(layout.width - 1, Math.max(0, cursor.x + movement[event.key].x)),
-        y: Math.min(layout.height - 1, Math.max(0, cursor.y + movement[event.key].y)),
+        x: Math.min(layout.width - 1, Math.max(0, cursor.x + movement.x)),
+        y: Math.min(layout.height - 1, Math.max(0, cursor.y + movement.y)),
       }
       setCursor(next)
       setHoverCell(next)
@@ -654,21 +786,17 @@ export function ConstructionMap({
       if (keyboardAnchorRef.current && draftTool === selectedTool) setDragEnd(next)
       return
     }
-    if ((event.key === 'Enter' || event.key === ' ') && selectedTool) {
+    if (event.key === ' ' || event.code === 'Space') {
       event.preventDefault()
-      commitKeyboardDraft(cursor)
+      if (!event.repeat) {
+        spacePressedRef.current = true
+        spacePanUsedRef.current = false
+      }
       return
     }
-    if ((event.key === 'Enter' || event.key === ' ') && !selectedTool && onInspectCell) {
+    if (event.key === 'Enter') {
       event.preventDefault()
-      const cell = mapRef.current?.querySelector<HTMLElement>(
-        `[data-construction-cell][data-grid-x="${cursor.x}"][data-grid-y="${cursor.y}"]`,
-      )
-      const rect = cell?.getBoundingClientRect()
-      onInspectCell(cursor, {
-        x: rect ? rect.left + rect.width / 2 : 0,
-        y: rect ? rect.top + rect.height / 2 : 0,
-      })
+      activateKeyboardCursor()
       return
     }
     if (event.key.toLowerCase() === 'r' && isWorkstationTool(selectedTool)) {
@@ -678,6 +806,8 @@ export function ConstructionMap({
     }
     if (event.key === 'Escape') {
       event.preventDefault()
+      spacePressedRef.current = false
+      spacePanUsedRef.current = false
       keyboardAnchorRef.current = null
       clearDraft()
       onCancelTool()
@@ -687,6 +817,22 @@ export function ConstructionMap({
       event.preventDefault()
       onUndo()
     }
+  }
+
+  const handleKeyboardRelease = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (isEditableTarget(event.target)) return
+    if (event.key !== ' ' && event.code !== 'Space') return
+    event.preventDefault()
+    const wasPressed = spacePressedRef.current
+    const usedForPan = spacePanUsedRef.current
+    spacePressedRef.current = false
+    spacePanUsedRef.current = false
+    if (wasPressed && !usedForPan) activateKeyboardCursor()
+  }
+
+  const clearSpaceGesture = () => {
+    spacePressedRef.current = false
+    spacePanUsedRef.current = false
   }
 
   useEffect(() => {
@@ -705,15 +851,21 @@ export function ConstructionMap({
     order.target.cells.some((cell) => cell.x === cursor.x && cell.y === cursor.y),
   )
   const cursorRoom = roomByCell.get(keyFor(cursor))
-  const cursorContents = cursorOrder
-    ? `${constructionOrderLabel(cursorOrder)} blueprint, ${cursorOrder.block?.message ?? cursorOrder.status}.`
-    : cursorBoundary
-      ? cursorBoundary.kind === 'door' ? 'Door.' : 'Wall.'
-      : cursorWorkstation
-        ? `${cursorWorkstation.label}.`
-      : cursorRoom
-        ? `Room ${cursorRoom.id.replace('room-', '')} floor.`
-        : 'Open lunar ground.'
+  const cursorInspection = inspectionByCell.get(keyFor(cursor))
+  const inspectableLabels = cursorInspection?.contents.map((item) => item.label) ?? []
+  const cursorContents = inspectableLabels.length > 1
+    ? `${inspectableLabels.length} inspectable items: ${inspectableLabels.join(', ')}. Press Enter to choose.`
+    : inspectableLabels.length === 1
+      ? `${inspectableLabels[0]}. ${cursorInspection?.contents[0]?.subtitle ?? ''}. Press Enter to inspect.`
+      : cursorOrder
+        ? `${constructionOrderLabel(cursorOrder)} blueprint, ${cursorOrder.block?.message ?? constructionOrderActivity(cursorOrder, constructionPaused)}.`
+        : cursorBoundary
+          ? cursorBoundary.kind === 'door' ? 'Door.' : 'Wall.'
+          : cursorWorkstation
+            ? `${cursorWorkstation.label}.`
+            : cursorRoom
+              ? `Room ${cursorRoom.id.replace('room-', '')} floor.`
+              : 'Open lunar ground.'
   const cursorStatus = [
     `Column ${cursor.x + 1}, row ${cursor.y + 1}.`,
     cursorContents,
@@ -727,8 +879,12 @@ export function ConstructionMap({
   return (
     <>
       <p className="sr-only" id="construction-grid-help">
-        Choose a build tool, then point and drag on the map. Arrow keys move the grid cursor.
-        Space starts and finishes a wall line. Enter places an object. R rotates. Escape cancels.
+        Choose a build tool, then point and drag on the map. W A S D and Arrow keys pan;
+        Arrow keys also move the grid cursor. Hold Space and left-drag, or middle-drag, to pan
+        without leaving the active tool. Unmodified pixel scrolling pans. Pinch or Control or
+        Command plus scrolling zooms; coarse line or page wheel input also zooms around the
+        pointer. Tap Space to start or finish a wall line. Enter places an object. R rotates.
+        Escape cancels.
       </p>
       <p aria-atomic="true" aria-live="polite" className="sr-only" id="construction-grid-status" role="status">
         {cursorStatus}
@@ -774,18 +930,20 @@ export function ConstructionMap({
         }}
         onPointerMove={movePointer}
         onPointerUp={finishPointer}
-        onWheel={handleWheel}
         ref={surfaceRef}
         style={{ '--construction-zoom': zoom } as CSSProperties}
       >
       <div
         aria-describedby="construction-grid-help construction-grid-status"
+        aria-keyshortcuts="ArrowUp ArrowRight ArrowDown ArrowLeft W A S D Enter Space R Escape Control+Z Meta+Z"
         aria-label={`Freeform construction grid, ${layout.width} columns by ${layout.height} rows. ${rooms.length} ${rooms.length === 1 ? 'room' : 'rooms'}.`}
         aria-roledescription="freeform tile construction grid"
         className={`construction-map ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''}`}
         data-grid-height={layout.height}
         data-grid-width={layout.width}
+        onBlur={clearSpaceGesture}
         onKeyDown={handleKeyboard}
+        onKeyUp={handleKeyboardRelease}
         ref={mapRef}
         role="group"
         style={{
@@ -874,8 +1032,26 @@ export function ConstructionMap({
           )
         })}
 
+        {constructionStockpile && (
+          <span
+            aria-label={`Construction pallet, ${Math.round(constructionStock * 10) / 10} material on hand`}
+            className="construction-stockpile"
+            data-grid-x={constructionStockpile.x}
+            data-grid-y={constructionStockpile.y}
+            role="img"
+            style={{
+              gridColumn: `${constructionStockpile.x + 1}`,
+              gridRow: `${constructionStockpile.y + 1}`,
+            }}
+          >
+            <GameIcon name="storage" />
+            <strong>{Math.round(constructionStock * 10) / 10}</strong>
+          </span>
+        )}
+
         {openOrders.map((order) => {
           const progress = constructionProgress(order)
+          const activity = constructionOrderActivity(order, constructionPaused)
           if (order.target.kind === 'boundary') {
             const cell = order.target.cells[0]
             const boundary = order.target.construct ?? order.target.deconstruct
@@ -884,7 +1060,7 @@ export function ConstructionMap({
             const connection = getBoundaryConnection(connectionLayout, cell)
             return (
               <span
-                aria-label={`${constructionOrderLabel(order)} blueprint, ${order.status}, ${progress} percent`}
+                aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
                 className={`construction-blueprint construction-blueprint-boundary construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
                 data-boundary-connection={connection.name}
                 data-boundary-mask={connection.mask}
@@ -913,7 +1089,7 @@ export function ConstructionMap({
           const footprint = getWorkstationFootprintSize(workstation)
           return (
             <span
-              aria-label={`${constructionOrderLabel(order)} blueprint, ${order.status}, ${progress} percent`}
+              aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
               className={`construction-blueprint construction-blueprint-workstation blueprint-${order.operation} status-${order.status}`}
               data-construction-order-id={order.id}
               data-construction-order-status={order.status}
@@ -930,7 +1106,7 @@ export function ConstructionMap({
             >
               <span className="blueprint-workstation-art"><GameIcon name={spec?.icon ?? 'work'} /></span>
               <strong>{order.operation === 'deconstruct' ? 'Remove' : spec?.shortLabel ?? workstation.label}</strong>
-              <small>{order.status === 'hauling' ? 'Hauling' : order.block?.kind === 'insufficient_materials' ? 'Needs material' : order.status === 'blocked' ? 'Blocked' : 'Building'}</small>
+              <small>{activity}</small>
               <b className="construction-job-progress"><i style={{ width: `${progress}%` }} /></b>
             </span>
           )
@@ -938,7 +1114,11 @@ export function ConstructionMap({
 
         {crew.map((member, memberIndex) => {
           const order = assignedOrderByCrew.get(member.id)
-          const workerActive = Boolean(order && !constructionPaused)
+          const activity = order ? constructionOrderActivity(order, constructionPaused) : null
+          const activityClass = activity?.toLowerCase().replaceAll(' ', '-') ?? 'idle'
+          const workerActive = Boolean(
+            order && !constructionPaused && !order.block,
+          )
           const cell = crewCells.get(member.id)
           if (!cell) return null
           const name = member.name
@@ -946,20 +1126,22 @@ export function ConstructionMap({
           return (
             <span
               aria-label={order
-                ? constructionPaused
-                  ? `${name}, waiting, construction paused`
-                  : `${name}, ${order.status} ${constructionOrderLabel(order)}`
+                ? `${name}, ${activity}, ${constructionOrderLabel(order)}`
                 : `${name}, ${member.status}`}
-              className={`construction-pawn ${order ? `construction-worker ${constructionPaused ? 'worker-paused' : `worker-${order.status}`}` : 'construction-idle-pawn'}`}
+              className={`construction-pawn ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'}`}
               data-construction-worker-id={order ? member.id : undefined}
-              data-construction-worker-state={order ? constructionPaused ? 'paused' : order.status : undefined}
+              data-construction-worker-state={order ? activityClass : undefined}
               data-crew-id={member.id}
               data-grid-x={cell.x}
               data-grid-y={cell.y}
               data-order-id={order?.id}
               key={member.id}
               role="img"
-              style={{ gridColumn: `${cell.x + 1}`, gridRow: `${cell.y + 1}` }}
+              style={{
+                left: `calc(${cell.x + 0.5} * var(--construction-cell-size))`,
+                position: 'absolute',
+                top: `calc(${cell.y + 0.5} * var(--construction-cell-size))`,
+              }}
             >
               <PawnSprite
                 accent={workerAccents[memberIndex % workerAccents.length]}
@@ -969,7 +1151,11 @@ export function ConstructionMap({
                 status={workerActive ? 'working' : member.status}
                 variant={workerVariants[memberIndex % workerVariants.length]}
               />
-              {workerActive && <span className="construction-worker-task"><GameIcon name="work" /></span>}
+              {order && workerActive && (
+                <span className="construction-worker-task">
+                  <GameIcon name={constructionActivityIcon(order)} />
+                </span>
+              )}
               <small className="construction-pawn-label">{name.split(' ')[0]}</small>
             </span>
           )

@@ -21,6 +21,9 @@
   background: transparent;
   box-shadow: none;
   pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition: left 140ms linear, top 140ms linear;
+  will-change: left, top;
 }
 
 .construction-pawn .pawn-sprite { grid-area: 1 / 1; }

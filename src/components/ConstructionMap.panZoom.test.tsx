@@ -8,13 +8,14 @@ afterEach(cleanup)
 
 const renderMap = (selectedTool: 'wall' | null = null) => {
   const onApply = vi.fn()
+  const onCancelTool = vi.fn()
   const onInspectCell = vi.fn()
   const view = render(
     <div className="construction-map-scroll">
       <ConstructionMap
         layout={createConstructionLayout()}
         onApply={onApply}
-        onCancelTool={vi.fn()}
+        onCancelTool={onCancelTool}
         onError={vi.fn()}
         onInspectCell={onInspectCell}
         onRotate={vi.fn()}
@@ -30,7 +31,7 @@ const renderMap = (selectedTool: 'wall' | null = null) => {
   const cell = ({ x, y }: GridPoint) => map.querySelector<HTMLElement>(
     `[data-construction-cell][data-grid-x="${x}"][data-grid-y="${y}"]`,
   )!
-  return { cell, map, onApply, onInspectCell, scroll, surface }
+  return { cell, map, onApply, onCancelTool, onInspectCell, scroll, surface }
 }
 
 describe('ConstructionMap pan and zoom', () => {
@@ -75,6 +76,33 @@ describe('ConstructionMap pan and zoom', () => {
 
     expect(scroll.scrollLeft).toBe(150)
     expect(scroll.scrollTop).toBe(110)
+  })
+
+  it('focuses the construction grid when a normal pan begins so keyboard controls keep working', () => {
+    const { map, scroll, surface } = renderMap()
+    const zoomIn = screen.getByRole('button', { name: /zoom in construction map/i })
+    zoomIn.focus()
+    scroll.scrollTop = 80
+
+    fireEvent.pointerDown(surface, {
+      button: 0,
+      clientX: 150,
+      clientY: 120,
+      pointerId: 70,
+      pointerType: 'mouse',
+    })
+
+    expect(map).toHaveFocus()
+    fireEvent.keyDown(document.activeElement!, { key: 'w' })
+    expect(scroll.scrollTop).toBe(32)
+
+    fireEvent.pointerUp(surface, {
+      button: 0,
+      clientX: 150,
+      clientY: 120,
+      pointerId: 70,
+      pointerType: 'mouse',
+    })
   })
 
   it('treats a stationary click as inspection but suppresses inspection after a pan', () => {
@@ -239,11 +267,95 @@ describe('ConstructionMap pan and zoom', () => {
     fireEvent.pointerUp(map, { pointerId: 40, pointerType: 'touch' })
   })
 
-  it('zooms with the wheel and exposes clamped accessible controls', () => {
+  it('pans both axes for precise trackpad scrolling without using the active tool', () => {
+    const { map, onApply, scroll } = renderMap('wall')
+    scroll.scrollLeft = 90
+    scroll.scrollTop = 70
+
+    const wheelEvent = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 200,
+      clientY: 150,
+      deltaMode: 0,
+      deltaX: 24,
+      deltaY: -18,
+    })
+    fireEvent(map, wheelEvent)
+
+    expect(wheelEvent).toHaveProperty('defaultPrevented', true)
+    expect(scroll.scrollLeft).toBe(114)
+    expect(scroll.scrollTop).toBe(52)
+    expect(screen.getByText('100%')).toBeVisible()
+    expect(onApply).not.toHaveBeenCalled()
+    expect(map).toHaveClass('tool-active')
+  })
+
+  it('pans every unmodified pixel wheel delta and reserves coarse line/page input for zoom', () => {
+    const { map, scroll } = renderMap()
+    scroll.scrollTop = 70
+
+    fireEvent.wheel(map, { deltaMode: 0, deltaY: 18 })
+    expect(scroll.scrollTop).toBe(88)
+    expect(screen.getByText('100%')).toBeVisible()
+
+    fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaMode: 0, deltaY: 160 })
+    expect(scroll.scrollTop).toBe(248)
+    expect(screen.getByText('100%')).toBeVisible()
+
+    fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaMode: 2, deltaY: -1 })
+    expect(Number.parseInt(screen.getByText(/%/).textContent ?? '0')).toBeGreaterThan(100)
+  })
+
+  it.each(['ctrlKey', 'metaKey'] as const)(
+    'treats %s wheel input as pointer-anchored pinch zoom',
+    (modifier) => {
+      const { map, scroll } = renderMap('wall')
+      scroll.scrollLeft = 50
+      scroll.scrollTop = 60
+      vi.spyOn(map, 'getBoundingClientRect')
+        .mockReturnValueOnce({
+          bottom: 350,
+          height: 300,
+          left: 100,
+          right: 500,
+          top: 50,
+          width: 400,
+          x: 100,
+          y: 50,
+          toJSON: () => ({}),
+        })
+        .mockReturnValueOnce({
+          bottom: 390,
+          height: 360,
+          left: 80,
+          right: 560,
+          top: 30,
+          width: 480,
+          x: 80,
+          y: 30,
+          toJSON: () => ({}),
+        })
+
+      fireEvent.wheel(map, {
+        clientX: 300,
+        clientY: 200,
+        deltaMode: 0,
+        deltaY: -20,
+        [modifier]: true,
+      })
+
+      expect(Number.parseInt(screen.getByText(/%/).textContent ?? '0')).toBeGreaterThan(100)
+      expect(scroll.scrollLeft).toBe(70)
+      expect(scroll.scrollTop).toBe(70)
+    },
+  )
+
+  it('zooms with a coarse wheel and exposes clamped accessible controls', () => {
     const { map } = renderMap()
     const output = screen.getByText('100%')
 
-    fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaY: -120 })
+    fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaMode: 1, deltaY: -3 })
     expect(Number.parseInt(output.textContent ?? '0')).toBeGreaterThan(100)
 
     const zoomIn = screen.getByRole('button', { name: /zoom in construction map/i })
@@ -256,6 +368,49 @@ describe('ConstructionMap pan and zoom', () => {
     expect(output).toHaveTextContent('70%')
     expect(zoomOut).toBeDisabled()
     expect(screen.getByRole('button', { name: /center construction map/i })).toBeVisible()
+    expect(map).toHaveAttribute('aria-keyshortcuts', expect.stringContaining('Space'))
+    expect(map).toHaveAccessibleDescription(/hold space and left-drag.*unmodified pixel scrolling pans/i)
+  })
+
+  it('temporarily pans with Space and left drag without parking or applying the active tool', () => {
+    const { cell, map, onApply, onCancelTool, scroll } = renderMap('wall')
+    scroll.scrollLeft = 80
+    scroll.scrollTop = 70
+
+    expect(fireEvent.keyDown(map, { code: 'Space', key: ' ' })).toBe(false)
+    fireEvent.pointerDown(cell({ x: 2, y: 2 }), {
+      button: 0,
+      clientX: 120,
+      clientY: 110,
+      pointerId: 50,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 95,
+      clientY: 90,
+      pointerId: 50,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(map, { button: 0, pointerId: 50, pointerType: 'mouse' })
+    fireEvent.keyUp(map, { code: 'Space', key: ' ' })
+
+    expect(scroll.scrollLeft).toBe(105)
+    expect(scroll.scrollTop).toBe(90)
+    expect(onApply).not.toHaveBeenCalled()
+    expect(onCancelTool).not.toHaveBeenCalled()
+    expect(map).toHaveClass('tool-active')
+
+    fireEvent.pointerDown(cell({ x: 3, y: 2 }), {
+      button: 0,
+      pointerId: 51,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(cell({ x: 3, y: 2 }), {
+      button: 0,
+      pointerId: 51,
+      pointerType: 'mouse',
+    })
+    expect(onApply).toHaveBeenCalledOnce()
   })
 
   it('keeps the pan surface larger than the grid so margins also accept camera drags', () => {
@@ -282,7 +437,7 @@ describe('ConstructionMap pan and zoom', () => {
     expect(surface).toContainElement(map)
   })
 
-  it('pans the camera to keep the keyboard cursor in view', () => {
+  it('pans with WASD and arrows while preserving Arrow-key cursor navigation', () => {
     const { cell, map, scroll } = renderMap()
     scroll.scrollLeft = 40
     scroll.scrollTop = 25
@@ -311,8 +466,21 @@ describe('ConstructionMap pan and zoom', () => {
 
     fireEvent.keyDown(map, { key: 'ArrowRight' })
 
-    expect(scroll.scrollLeft).toBe(114)
+    expect(scroll.scrollLeft).toBe(162)
     expect(scroll.scrollTop).toBe(25)
     expect(screen.getByRole('status')).toHaveTextContent(/column 10, row 10/i)
+
+    fireEvent.keyDown(map, { key: 'w' })
+    expect(scroll.scrollTop).toBe(-23)
+    expect(screen.getByRole('status')).toHaveTextContent(/column 10, row 10/i)
+
+    const input = document.createElement('input')
+    map.append(input)
+    input.focus()
+    expect(fireEvent.keyDown(input, { key: 'd' })).toBe(true)
+    expect(fireEvent.keyDown(input, { key: ' ' })).toBe(true)
+    expect(fireEvent.keyUp(input, { key: ' ' })).toBe(true)
+    expect(scroll.scrollLeft).toBe(162)
+    expect(scroll.scrollTop).toBe(-23)
   })
 })

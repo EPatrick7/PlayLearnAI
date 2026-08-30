@@ -23,6 +23,7 @@ export type MapInspectableKind =
   | 'crew'
   | 'equipment'
   | 'work'
+  | 'stockpile'
   | 'blueprint'
   | 'workstation'
   | 'boundary'
@@ -90,8 +91,17 @@ export interface BuildMapInspectionInput {
    * represented by `constructionLayout`.
    */
   constructionOrders?: readonly ConstructionOrder[]
+  /** Whether construction simulation is currently paused. */
+  constructionPaused?: boolean
   /** Optional display-name override for workers referenced by construction orders. */
   constructionCrewNames?: ReadonlyMap<string, string>
+  /** Physical pickup point for worker-built construction material. */
+  constructionStockpile?: {
+    cell: GridPoint
+    stored: number
+    reserved: number
+    available: number
+  } | null
 }
 
 const pointKey = ({ x, y }: GridPoint) => `${x}:${y}`
@@ -122,9 +132,10 @@ const inspectableOrder: Record<MapInspectableKind, number> = {
   crew: 0,
   work: 1,
   equipment: 2,
-  blueprint: 3,
-  workstation: 4,
-  boundary: 5,
+  stockpile: 3,
+  blueprint: 4,
+  workstation: 5,
+  boundary: 6,
 }
 
 const clampRatio = (value: number) => Number.isFinite(value)
@@ -171,6 +182,54 @@ const constructionOrderPresentation = (order: ConstructionOrder) => {
         ? `Replace the existing ${subject.toLowerCase()}.`
         : spec?.description ?? `Build ${subject}.`,
   }
+}
+
+export const constructionOrderActivity = (
+  order: ConstructionOrder,
+  constructionPaused = false,
+) => {
+  if (order.block?.kind === 'no_path') return 'No route'
+  if (order.block?.kind === 'prerequisite') return 'Waiting on prerequisite'
+  if (order.block?.kind === 'insufficient_materials') return 'Needs material'
+  if (order.status === 'blocked') return 'Blocked'
+  if (constructionPaused) return 'Paused'
+  if (!order.assignedCrewId) return 'Waiting for builder'
+  if (order.travelPhase === 'to_stockpile') return 'Collecting material'
+  if (order.travelPhase === 'to_site') return 'Walking to site'
+  if (order.travelPhase === 'at_site' && order.status === 'hauling') return 'Delivering material'
+  if (order.status === 'hauling') return 'Hauling'
+  return 'Building'
+}
+
+export const constructionPhaseSummary = (
+  orders: readonly ConstructionOrder[],
+) => {
+  const phaseCounts = new Map<string, number>()
+  orders.forEach((order) => {
+    if (!order.assignedCrewId) return
+    const phase = order.travelPhase === 'to_stockpile'
+      ? 'collecting material'
+      : order.travelPhase === 'to_site'
+        ? 'walking to site'
+        : order.travelPhase === 'at_site' && order.status === 'hauling'
+          ? 'delivering material'
+          : order.status === 'hauling'
+            ? 'hauling'
+            : 'building'
+    phaseCounts.set(phase, (phaseCounts.get(phase) ?? 0) + 1)
+  })
+  return [
+    'collecting material',
+    'walking to site',
+    'delivering material',
+    'hauling',
+    'building',
+  ]
+    .flatMap((phase) => {
+      const count = phaseCounts.get(phase) ?? 0
+      return count > 0 ? [`${count} ${phase}`] : []
+    })
+    .join(' · ')
 }
 
 const formatConstructionAmount = (value: number) => {
@@ -276,7 +335,9 @@ export const buildMapInspection = ({
   entityCells,
   constructionLayout = null,
   constructionOrders = [],
+  constructionPaused = false,
   constructionCrewNames = new Map<string, string>(),
+  constructionStockpile = null,
 }: BuildMapInspectionInput): Map<string, MapTileInspection> => {
   const rooms = constructionLayout ? detectRooms(constructionLayout) : []
   const roomByCell = new Map(
@@ -403,13 +464,19 @@ export const buildMapInspection = ({
         constructionAssignmentByCrewId.set(order.assignedCrewId, order)
       }
       const presentation = constructionOrderPresentation(order)
+      const activity = constructionOrderActivity(order, constructionPaused)
       const progress = constructionOrderProgress(order)
       const builder = order.assignedCrewId
         ? crewNamesById.get(order.assignedCrewId) ?? fallbackCrewName(order.assignedCrewId)
         : 'Unassigned'
+      const deliveredMaterialLabel = order.travelPhase === 'to_site'
+        ? 'carried'
+        : order.block?.kind === 'no_path' && order.materials.delivered > 0
+          ? 'staged'
+          : 'delivered'
       const materials = order.materials.required > 0
         ? [
-            `${formatConstructionAmount(order.materials.delivered)} / ${formatConstructionAmount(order.materials.required)} delivered`,
+            `${formatConstructionAmount(order.materials.delivered)} / ${formatConstructionAmount(order.materials.required)} ${deliveredMaterialLabel}`,
             order.materials.reserved > 0
               ? `${formatConstructionAmount(order.materials.reserved)} reserved`
               : '',
@@ -423,11 +490,11 @@ export const buildMapInspection = ({
         kind: 'blueprint',
         id: order.id,
         label: presentation.label,
-        subtitle: `Blueprint · ${titleCase(order.status)} · P${order.priority}`,
+        subtitle: `Blueprint · ${activity} · P${order.priority}`,
         detail: order.block?.message ?? presentation.detail,
         icon: presentation.icon,
         stats: [
-          { label: 'Status', value: titleCase(order.status) },
+          { label: 'Status', value: activity },
           { label: 'Progress', value: `${progress}%` },
           { label: 'Materials', value: materials },
           { label: 'Priority', value: `P${order.priority}` },
@@ -436,6 +503,23 @@ export const buildMapInspection = ({
       }))
     })
 
+  if (constructionStockpile) {
+    addInspectable(tiles, constructionStockpile.cell, {
+      key: 'stockpile:construction-material',
+      kind: 'stockpile',
+      id: 'construction-material',
+      label: 'Construction pallet',
+      subtitle: 'Stockpile · Material pickup',
+      detail: 'Builders collect reserved construction material here before walking to a blueprint.',
+      icon: 'storage',
+      stats: [
+        { label: 'On pallet', value: formatConstructionAmount(constructionStockpile.stored) },
+        { label: 'Reserved', value: formatConstructionAmount(constructionStockpile.reserved) },
+        { label: 'Available', value: formatConstructionAmount(constructionStockpile.available) },
+      ],
+    })
+  }
+
   crew.forEach((member) => {
     const cell = entityCells.crew.get(member.id)
     if (!cell) return
@@ -443,14 +527,17 @@ export const buildMapInspection = ({
     const constructionPresentation = constructionAssignment
       ? constructionOrderPresentation(constructionAssignment)
       : null
+    const constructionActivity = constructionAssignment
+      ? constructionOrderActivity(constructionAssignment, constructionPaused)
+      : null
     addInspectable(tiles, cell, {
       key: `crew:${member.id}`,
       kind: 'crew',
       id: member.id,
       label: member.name,
-      subtitle: `Colonist · ${titleCase(constructionAssignment?.status ?? member.status)}`,
+      subtitle: `Colonist · ${constructionActivity ?? titleCase(member.status)}`,
       detail: constructionPresentation
-        ? `${member.role} · ${constructionPresentation.label}`
+        ? `${member.role} · ${constructionActivity}: ${constructionPresentation.label}`
         : member.role,
       icon: 'crew',
       stats: [

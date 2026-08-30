@@ -267,6 +267,9 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(
       /1 job needs material/i,
     )
+    expect(screen.getByRole('img', {
+      name: /wall blueprint, needs material/i,
+    })).toBeVisible()
 
     advanceAllConstruction()
     const state = useColonyStore.getState()
@@ -340,6 +343,19 @@ describe('freeform settlement builder', () => {
     })
     const order = useColonyStore.getState().settlement.constructionOrders[0]
     expect(order.assignedCrewId).toBeTruthy()
+    const assignedState = useColonyStore.getState()
+    act(() => {
+      useColonyStore.setState({
+        settlement: {
+          ...assignedState.settlement,
+          constructionCrew: assignedState.settlement.constructionCrew.map((position) =>
+            position.crewId === order.assignedCrewId
+              ? { ...position, cell: { x: 9, y: 6 } }
+              : position,
+          ),
+        },
+      })
+    })
     const pausedWorker = constructionMap().querySelector<HTMLElement>(
       `[data-construction-worker-id="${order.assignedCrewId}"]`,
     )!
@@ -347,12 +363,22 @@ describe('freeform settlement builder', () => {
     expect(pausedWorker).toHaveAttribute('data-construction-worker-state', 'paused')
     expect(pausedWorker.querySelector('.construction-worker-task')).not.toBeInTheDocument()
     expect(pausedWorker.querySelector('[data-pawn-status-dot]')).not.toBeInTheDocument()
+    expect(screen.getByRole('img', {
+      name: /wall blueprint, paused/i,
+    })).toBeVisible()
 
-    clickConstructionCell({ x: 9, y: 6 }, 2)
+    const map = constructionMap()
+    map.focus()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /2 inspectable items:.*wall blueprint.*press enter to choose/i,
+    )
+    fireEvent.keyDown(map, { key: 'Enter' })
     const chooser = screen.getByRole('dialog', { name: 'Choose an item' })
     expect(chooser).toHaveTextContent('2 things here')
     expect(within(chooser).getByRole('button', { name: /Colonist/i })).toBeVisible()
-    expect(within(chooser).getByRole('button', { name: /Wall blueprint.*Blueprint/i })).toBeVisible()
+    expect(within(chooser).getByRole('button', {
+      name: /Wall blueprint.*Blueprint · Paused/i,
+    })).toBeVisible()
     expect(within(chooser).getByRole('button', { name: /Lunar regolith/i })).toBeVisible()
 
     fireEvent.click(within(chooser).getByRole('button', { name: /Colonist/i }))
@@ -385,7 +411,7 @@ describe('freeform settlement builder', () => {
     expect(inspector).toHaveTextContent('P4')
 
     act(() => {
-      useColonyStore.getState().advanceConstruction(0.5)
+      useColonyStore.getState().advanceConstruction(3.5)
     })
     expect(useColonyStore.getState().reserves.constructionStock).toBeLessThan(14)
     fireEvent.click(within(inspector).getByRole('button', { name: /Cancel blueprint/i }))
@@ -401,7 +427,7 @@ describe('freeform settlement builder', () => {
 
     fireEvent.keyDown(map, { key: 'Enter' })
 
-    const inspector = screen.getByRole('region', { name: 'Lunar regolith inspector' })
+    const inspector = screen.getByRole('region', { name: 'Construction pallet inspector' })
     expect(inspector).toHaveTextContent('Column 9 · Row 10')
   })
 
@@ -411,14 +437,16 @@ describe('freeform settlement builder', () => {
 
     const map = constructionMap()
     const status = screen.getByRole('status')
-    expect(status).toHaveTextContent(/column 9, row 10.*open lunar ground.*valid wall.*1 tile/i)
+    expect(status).toHaveTextContent(/column 9, row 10.*construction pallet.*valid wall.*1 tile/i)
 
     fireEvent.keyDown(map, { key: 'ArrowRight' })
     expect(status).toHaveTextContent(/column 10, row 10/i)
     fireEvent.keyDown(map, { key: ' ' })
+    fireEvent.keyUp(map, { key: ' ' })
     fireEvent.keyDown(map, { key: 'ArrowRight' })
     expect(status).toHaveTextContent(/column 11, row 10.*valid wall.*2 tiles/i)
     fireEvent.keyDown(map, { key: ' ' })
+    fireEvent.keyUp(map, { key: ' ' })
 
     expect(useColonyStore.getState().settlement.layout.boundaries).not.toEqual(
       expect.arrayContaining([
@@ -442,16 +470,19 @@ describe('freeform settlement builder', () => {
 
     const map = constructionMap()
     fireEvent.keyDown(map, { key: ' ' })
+    fireEvent.keyUp(map, { key: ' ' })
 
     selectTool('Orders', /^Deconstruct/i)
     fireEvent.keyDown(map, { key: 'ArrowLeft' })
     fireEvent.keyDown(map, { key: ' ' })
+    fireEvent.keyUp(map, { key: ' ' })
 
     expect(useColonyStore.getState().settlement.layout.boundaries).toContainEqual(
       { x: 7, y: 9, kind: 'door' },
     )
 
     fireEvent.keyDown(map, { key: ' ' })
+    fireEvent.keyUp(map, { key: ' ' })
     expect(useColonyStore.getState().settlement.layout.boundaries).toContainEqual(
       { x: 7, y: 9, kind: 'door' },
     )
@@ -470,6 +501,7 @@ describe('freeform settlement builder', () => {
 
     const map = constructionMap()
     fireEvent.keyDown(map, { key: ' ' })
+    fireEvent.keyUp(map, { key: ' ' })
 
     selectTool('Structure', /^Door/i)
     for (let step = 0; step < 4; step += 1) fireEvent.keyDown(map, { key: 'ArrowLeft' })
@@ -552,7 +584,7 @@ describe('freeform settlement builder', () => {
     expect(accepted.settlement.layout.boundaries.find(
       (cell) => cell.x === 4 && cell.y === 7,
     )).toEqual({ x: 4, y: 7, kind: 'wall' })
-    expect(screen.getByRole('img', { name: /Door blueprint, hauling/i })).toBeVisible()
+    expect(screen.getByRole('img', { name: /Door blueprint, paused/i })).toBeVisible()
     expect(constructionMap().querySelector(
       '[data-tile-kind="wall"][data-grid-x="4"][data-grid-y="7"]',
     )).toBeInTheDocument()
@@ -606,7 +638,7 @@ describe('freeform settlement builder', () => {
         }),
       }),
     }))
-    const blueprint = screen.getByRole('img', { name: /Life support blueprint, hauling/i })
+    const blueprint = screen.getByRole('img', { name: /Life support blueprint, paused/i })
     expect(blueprint).toHaveAttribute('data-grid-width', '2')
     expect(blueprint).toHaveAttribute('data-grid-height', '2')
 
@@ -641,7 +673,7 @@ describe('freeform settlement builder', () => {
     expect(useColonyStore.getState().settlement.layout.workstations).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'life-support' })]),
     )
-    expect(screen.getByRole('img', { name: /Deconstruct Life support blueprint, building/i })).toBeVisible()
+    expect(screen.getByRole('img', { name: /Deconstruct Life support blueprint, paused/i })).toBeVisible()
 
     const undo = screen.getByRole('button', { name: /^Undo/i })
     expect(undo).toBeEnabled()

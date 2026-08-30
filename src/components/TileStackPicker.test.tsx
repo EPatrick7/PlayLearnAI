@@ -172,6 +172,62 @@ describe('TileStackPicker', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
 
+  it('keeps focus inside when a live tile item disappears', async () => {
+    const trigger = triggerForTile()
+    const onClose = vi.fn()
+    const view = render(
+      <TileStackPicker
+        gridHeight={18}
+        gridWidth={24}
+        onClose={onClose}
+        onSelectItem={vi.fn()}
+        onSelectSurface={vi.fn()}
+        tile={tile}
+        trigger={trigger}
+      />,
+    )
+
+    const picker = screen.getByRole('dialog', { name: 'Choose an item' })
+    const colonistChoice = within(picker).getByRole('button', { name: /Amina Okafor.*Colonist/i })
+    await waitFor(() => expect(document.activeElement).toBe(colonistChoice))
+
+    view.rerender(
+      <TileStackPicker
+        gridHeight={18}
+        gridWidth={24}
+        onClose={onClose}
+        onSelectItem={vi.fn()}
+        onSelectSurface={vi.fn()}
+        tile={{ ...tile, contents: [blueprint] }}
+        trigger={trigger}
+      />,
+    )
+
+    const blueprintChoice = within(picker).getByRole('button', {
+      name: /Wall blueprint.*Blueprint/i,
+    })
+    await waitFor(() => expect(document.activeElement).toBe(blueprintChoice))
+    expect(picker).toContainElement(document.activeElement as HTMLElement)
+
+    view.rerender(
+      <TileStackPicker
+        gridHeight={18}
+        gridWidth={24}
+        onClose={onClose}
+        onSelectItem={vi.fn()}
+        onSelectSurface={vi.fn()}
+        tile={{ ...tile, contents: [] }}
+        trigger={trigger}
+      />,
+    )
+
+    const surfaceChoice = within(picker).getByRole('button', {
+      name: /Pressurized floor.*Inspect tile surface/i,
+    })
+    await waitFor(() => expect(document.activeElement).toBe(surfaceChoice))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('restores focus to the map when its geometric tile trigger cannot receive focus', async () => {
     const map = document.createElement('div')
     map.className = 'construction-map'

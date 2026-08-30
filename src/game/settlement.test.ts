@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { paintBoundaryCell } from './construction'
-import { deriveConstructionOrders, projectConstructionOrders } from './constructionJobs'
+import {
+  paintBoundaryCell,
+  paintBoundaryLine,
+  placeWorkstation,
+  type ConstructionLayout,
+  type ConstructionResult,
+} from './construction'
+import {
+  deriveConstructionOrders,
+  projectConstructionOrders,
+  type ConstructionOrder,
+} from './constructionJobs'
 import { createInitialState } from './seed'
 import {
   advanceSimulation,
@@ -18,6 +28,24 @@ import {
 } from './settlement'
 import { useColonyStore } from './store'
 import type { MoonbaseState, PlanActionInput } from './types'
+
+const layoutFrom = (result: ConstructionResult) => {
+  if (!result.ok) throw new Error(`${result.code}: ${result.error}`)
+  return result.layout
+}
+
+const projectExpansionShell = (source: ConstructionLayout) => {
+  let layout = layoutFrom(
+    paintBoundaryLine(source, { x: 12, y: 3 }, { x: 17, y: 3 }, 'wall'),
+  )
+  layout = layoutFrom(
+    paintBoundaryLine(layout, { x: 12, y: 8 }, { x: 17, y: 8 }, 'wall'),
+  )
+  layout = layoutFrom(
+    paintBoundaryLine(layout, { x: 12, y: 4 }, { x: 12, y: 7 }, 'wall'),
+  )
+  return paintBoundaryLine(layout, { x: 17, y: 4 }, { x: 17, y: 7 }, 'wall')
+}
 
 const establishBase = () => {
   let state = createInitialState()
@@ -193,11 +221,15 @@ describe('tiny-start settlement construction', () => {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(6)
+    expect(saved.version).toBe(7)
     expect(saved.state?.settlement).toMatchObject({
       phase: 'power_online',
       constructionOrders: [],
       constructionSequence: 1,
+      constructionStockpile: { x: 8, y: 9 },
+      constructionCrew: expect.arrayContaining([
+        expect.objectContaining({ crewId: 'crew-amina-okafor' }),
+      ]),
       buildSites: expect.arrayContaining([
         expect.objectContaining({ id: 'site-power-east', occupiedBy: 'solar_battery_skid' }),
       ]),
@@ -296,8 +328,238 @@ describe('tiny-start settlement construction', () => {
     const filteredV5 = await migrate!(malformedLegacyV5, 5) as MoonbaseState
     expect(filteredV5.settlement.constructionOrders).toHaveLength(1)
 
-    const future = await migrate!(saved.state, 7) as MoonbaseState
+    const legacyV6 = structuredClone(saved.state!) as unknown as Record<string, unknown>
+    const legacyV6Settlement = legacyV6.settlement as Record<string, unknown>
+    legacyV6Settlement.constructionOrders = [{
+      ...currentOrders[0],
+      assignedCrewId: 'crew-amina-okafor',
+      travelPhase: undefined,
+    }]
+    delete legacyV6Settlement.constructionCrew
+    delete legacyV6Settlement.constructionStockpile
+    const migratedV6 = await migrate!(legacyV6, 6) as MoonbaseState
+    expect(migratedV6.settlement.constructionOrders[0]).toMatchObject({
+      assignedCrewId: null,
+      travelPhase: 'idle',
+    })
+    expect(migratedV6.settlement.constructionCrew).toHaveLength(migratedV6.crew.length)
+    expect(migratedV6.settlement.constructionStockpile).toEqual({ x: 8, y: 9 })
+
+    const legacyCompletedLayout = saved.state!.settlement.layout
+    const legacyShellOrders = deriveConstructionOrders(
+      legacyCompletedLayout,
+      projectExpansionShell(legacyCompletedLayout),
+      { commandId: 'v6-shell', sequenceStart: 10 },
+    )
+    const legacyShellProjection = projectConstructionOrders(
+      legacyCompletedLayout,
+      legacyShellOrders,
+    ).layout
+    const legacyDoorOrders = deriveConstructionOrders(
+      legacyShellProjection,
+      paintBoundaryCell(legacyShellProjection, { x: 14, y: 3 }, 'door'),
+      {
+        commandId: 'v6-door',
+        sequenceStart: 10 + legacyShellOrders.length,
+      },
+    )
+    const legacyRoomOrders = [...legacyShellOrders, ...legacyDoorOrders]
+    const legacyRoomProjection = projectConstructionOrders(
+      legacyCompletedLayout,
+      legacyRoomOrders,
+    ).layout
+    const legacyFixtureOrders = deriveConstructionOrders(
+      legacyRoomProjection,
+      placeWorkstation(legacyRoomProjection, {
+        id: 'v6-life-support',
+        type: 'life-support',
+        label: 'V6 life support',
+        origin: { x: 13, y: 4 },
+        size: { width: 2, height: 2 },
+      }),
+      {
+        commandId: 'v6-life-support',
+        priority: 5,
+        sequenceStart: 10 + legacyRoomOrders.length,
+      },
+    )
+    const dependencyLegacyV6 = structuredClone(saved.state!) as unknown as Record<string, unknown>
+    ;(dependencyLegacyV6.settlement as Record<string, unknown>).constructionOrders = [
+      ...legacyRoomOrders,
+      ...legacyFixtureOrders,
+    ].map((order) => {
+      const legacyOrder = { ...order } as ConstructionOrder & {
+        prerequisiteOrderIds?: string[]
+      }
+      delete legacyOrder.prerequisiteOrderIds
+      return legacyOrder
+    })
+    const dependencyMigratedV6 = await migrate!(dependencyLegacyV6, 6) as MoonbaseState
+    const migratedFixture = dependencyMigratedV6.settlement.constructionOrders.find(
+      (order) => order.commandId === 'v6-life-support',
+    )!
+    expect(migratedFixture.prerequisiteOrderIds?.length).toBeGreaterThan(0)
+    expect(migratedFixture).toMatchObject({
+      status: 'blocked',
+      block: { kind: 'prerequisite' },
+      assignedCrewId: null,
+      materials: { reserved: 0 },
+    })
+
+    const future = await migrate!(saved.state, 8) as MoonbaseState
     expect(future).toMatchObject({ worldRevision: 1, settlement: { phase: 'landing' } })
+  })
+
+  it('moves a builder through the material pallet before construction can progress', () => {
+    useColonyStore.getState().resetColony()
+    const target = { x: 12, y: 9 }
+    const initial = useColonyStore.getState()
+    const queued = initial.queueConstruction(
+      paintBoundaryCell(initial.settlement.layout, target, 'wall'),
+    )
+    expect(queued.ok).toBe(true)
+
+    useColonyStore.getState().advanceConstruction(0.5)
+    let state = useColonyStore.getState()
+    let order = state.settlement.constructionOrders.find(
+      (candidate) => candidate.id === queued.orderIds[0],
+    )!
+    const mateo = state.settlement.constructionCrew.find(
+      (position) => position.crewId === 'crew-mateo-alvarez',
+    )!
+    expect(order).toMatchObject({
+      assignedCrewId: 'crew-mateo-alvarez',
+      travelPhase: 'to_site',
+      materials: { delivered: 1, reserved: 0 },
+      work: { completed: 0 },
+    })
+    expect(mateo.cell).toEqual(state.settlement.constructionStockpile)
+    expect(state.reserves.constructionStock).toBe(13)
+    expect(state.settlement.layout.boundaries).not.toContainEqual({
+      ...target,
+      kind: 'wall',
+    })
+
+    for (let tick = 0; tick < 30 && order.status !== 'complete'; tick += 1) {
+      useColonyStore.getState().advanceConstruction(0.5)
+      state = useColonyStore.getState()
+      order = state.settlement.constructionOrders.find(
+        (candidate) => candidate.id === queued.orderIds[0],
+      )!
+    }
+    expect(order).toMatchObject({
+      status: 'complete',
+      assignedCrewId: null,
+      travelPhase: 'idle',
+    })
+    expect(state.reserves.constructionStock).toBe(13)
+    expect(state.settlement.layout.boundaries).toContainEqual({
+      ...target,
+      kind: 'wall',
+    })
+    expect(state.settlement.constructionCrew.find(
+      (position) => position.crewId === 'crew-mateo-alvarez',
+    )?.cell).not.toEqual(target)
+    useColonyStore.getState().resetColony()
+  })
+
+  it('queues and advances a high-priority indoor fixture behind its projected room shell', () => {
+    useColonyStore.getState().resetColony()
+    const initial = useColonyStore.getState()
+    useColonyStore.setState({
+      reserves: { ...initial.reserves, constructionStock: 100 },
+    })
+
+    const completed = useColonyStore.getState().settlement.layout
+    const wallQueue = useColonyStore.getState().queueConstruction(
+      projectExpansionShell(completed),
+    )
+    expect(wallQueue.ok).toBe(true)
+
+    let state = useColonyStore.getState()
+    let projection = projectConstructionOrders(
+      state.settlement.layout,
+      state.settlement.constructionOrders,
+    ).layout
+    const doorQueue = state.queueConstruction(
+      paintBoundaryCell(projection, { x: 14, y: 3 }, 'door'),
+    )
+    expect(doorQueue.ok).toBe(true)
+
+    state = useColonyStore.getState()
+    projection = projectConstructionOrders(
+      state.settlement.layout,
+      state.settlement.constructionOrders,
+    ).layout
+    const lifeSupportQueue = state.queueConstruction(
+      placeWorkstation(projection, {
+        id: 'priority-life-support',
+        type: 'life-support',
+        label: 'Priority life support',
+        origin: { x: 13, y: 4 },
+        size: { width: 2, height: 2 },
+      }),
+    )
+    expect(lifeSupportQueue.ok).toBe(true)
+    expect(state.setConstructionOrderPriority).toBeTypeOf('function')
+    expect(useColonyStore.getState().setConstructionOrderPriority(
+      lifeSupportQueue.orderIds[0],
+      5,
+    )).toBe(true)
+
+    state = useColonyStore.getState()
+    let lifeSupport = state.settlement.constructionOrders.find(
+      (order) => order.id === lifeSupportQueue.orderIds[0],
+    )!
+    expect(lifeSupport).toMatchObject({
+      priority: 5,
+      status: 'blocked',
+      block: { kind: 'prerequisite' },
+      assignedCrewId: null,
+      materials: { reserved: 0, delivered: 0 },
+      work: { completed: 0 },
+    })
+    expect(lifeSupport.prerequisiteOrderIds).toContain(doorQueue.orderIds[0])
+    expect(lifeSupport.prerequisiteOrderIds!.every((id) =>
+      state.settlement.constructionOrders.find((order) => order.id === id)?.priority === 3,
+    )).toBe(true)
+
+    for (let tick = 0; tick < 50; tick += 1) {
+      state = useColonyStore.getState()
+      lifeSupport = state.settlement.constructionOrders.find(
+        (order) => order.id === lifeSupportQueue.orderIds[0],
+      )!
+      const ordersById = new Map(
+        state.settlement.constructionOrders.map((order) => [order.id, order]),
+      )
+      const prerequisitesComplete = lifeSupport.prerequisiteOrderIds!.every(
+        (id) => ordersById.get(id)?.status === 'complete',
+      )
+      if (!prerequisitesComplete) {
+        expect(lifeSupport).toMatchObject({
+          status: 'blocked',
+          block: { kind: 'prerequisite' },
+          assignedCrewId: null,
+          materials: { reserved: 0, delivered: 0 },
+          work: { completed: 0 },
+        })
+      }
+      if (lifeSupport.status === 'complete') break
+      useColonyStore.getState().advanceConstruction(10)
+    }
+
+    state = useColonyStore.getState()
+    lifeSupport = state.settlement.constructionOrders.find(
+      (order) => order.id === lifeSupportQueue.orderIds[0],
+    )!
+    const finalOrdersById = new Map(
+      state.settlement.constructionOrders.map((order) => [order.id, order]),
+    )
+    expect(lifeSupport.status).toBe('complete')
+    expect(lifeSupport.prerequisiteOrderIds!.every(
+      (id) => finalOrdersById.get(id)?.status === 'complete',
+    )).toBe(true)
+    useColonyStore.getState().resetColony()
   })
 
   it('refunds staged material from dependent jobs when one blueprint is cancelled', () => {
@@ -314,8 +576,14 @@ describe('tiny-start settlement construction', () => {
     const doorOrders = deriveConstructionOrders(
       projected,
       paintBoundaryCell(projected, { x: 10, y: 6 }, 'door'),
-      { commandId: 'door', sequenceStart: 2 },
+      {
+        commandId: 'door',
+        sequenceStart: 2,
+        completedLayout: initial.settlement.layout,
+        prerequisiteOrders: wallOrders,
+      },
     )
+    expect(doorOrders[0].prerequisiteOrderIds).toEqual(['wall:1'])
     const staged = [...wallOrders, ...doorOrders].map((order) => ({
       ...order,
       status: 'building' as const,

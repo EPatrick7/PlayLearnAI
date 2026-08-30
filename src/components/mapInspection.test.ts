@@ -9,6 +9,7 @@ import { createStarterConstruction } from '../game/constructionCatalog'
 import { createInitialState } from '../game/seed'
 import {
   buildMapInspection,
+  constructionOrderActivity,
   constructionOrderProgress,
 } from './mapInspection'
 
@@ -45,6 +46,7 @@ const workstationOrder = (
 const inspection = (
   orders: readonly ConstructionOrder[] = [],
   workstations: WorkstationPlacement[] = [],
+  constructionPaused = false,
 ) => {
   const layout = createConstructionLayout()
   layout.workstations = workstations
@@ -62,6 +64,7 @@ const inspection = (
     },
     constructionLayout: layout,
     constructionOrders: orders,
+    constructionPaused,
     constructionCrewNames: new Map([['crew-builder', 'Soo-jin Park']]),
   })
 }
@@ -158,10 +161,67 @@ describe('construction map inspection', () => {
     const blueprint = inspection([order]).get('5:4')?.contents[0]
 
     expect(blueprint).toMatchObject({
-      subtitle: 'Blueprint · Blocked · P5',
+      subtitle: 'Blueprint · Needs material · P5',
       detail: 'Needs 2 construction material.',
     })
     expect(blueprint?.stats).toContainEqual({ label: 'Builder', value: 'Unassigned' })
+  })
+
+  it('prioritizes blockers, then pause, then an unassigned builder wait in activity labels', () => {
+    const active = {
+      ...workstationOrder('hauling'),
+      travelPhase: 'to_stockpile' as const,
+    }
+    const noRoute = {
+      ...active,
+      assignedCrewId: null,
+      status: 'blocked' as const,
+      block: {
+        kind: 'no_path' as const,
+        message: 'No walkable route to this construction site.',
+      },
+    }
+    const prerequisite = {
+      ...noRoute,
+      block: {
+        kind: 'prerequisite' as const,
+        message: 'Waiting for an earlier wall.',
+      },
+    }
+    const needsMaterial = {
+      ...noRoute,
+      block: {
+        kind: 'insufficient_materials' as const,
+        message: 'Needs 2 construction material.',
+      },
+    }
+
+    expect(constructionOrderActivity(noRoute, true)).toBe('No route')
+    expect(constructionOrderActivity(prerequisite, true)).toBe('Waiting on prerequisite')
+    expect(constructionOrderActivity(needsMaterial, true)).toBe('Needs material')
+    expect(constructionOrderActivity(active, true)).toBe('Paused')
+    expect(constructionOrderActivity({ ...active, assignedCrewId: null })).toBe('Waiting for builder')
+
+    const pausedBlueprint = inspection([active], [], true).get('5:4')?.contents[0]
+    expect(pausedBlueprint).toMatchObject({
+      subtitle: 'Blueprint · Paused · P5',
+      stats: expect.arrayContaining([{ label: 'Status', value: 'Paused' }]),
+    })
+  })
+
+  it('labels picked-up material as carried until the builder reaches the site', () => {
+    const carrying: ConstructionOrder = {
+      ...workstationOrder('building'),
+      travelPhase: 'to_site',
+      materials: { required: 4, reserved: 0, delivered: 4, recoverable: 0 },
+      work: { required: 4, completed: 0 },
+    }
+    const blueprint = inspection([carrying]).get('5:4')?.contents[0]
+
+    expect(blueprint?.stats).toContainEqual({
+      label: 'Materials',
+      value: '4 / 4 carried',
+    })
   })
 
   it('shows a colonist construction assignment instead of stale idle status', () => {
@@ -198,6 +258,74 @@ describe('construction map inspection', () => {
       label: 'Task',
       value: 'Life support blueprint',
     })
+  })
+
+  it('uses physical travel and route-failure language in inspectors', () => {
+    const walking = {
+      ...workstationOrder('hauling'),
+      travelPhase: 'to_site' as const,
+    }
+    const walkingBlueprint = inspection([walking]).get('5:4')?.contents.find(
+      (item) => item.kind === 'blueprint',
+    )
+    expect(walkingBlueprint).toMatchObject({
+      subtitle: 'Blueprint · Walking to site · P5',
+      stats: expect.arrayContaining([{ label: 'Status', value: 'Walking to site' }]),
+    })
+
+    const stranded = {
+      ...walking,
+      status: 'blocked' as const,
+      assignedCrewId: null,
+      travelPhase: 'idle' as const,
+      block: {
+        kind: 'no_path' as const,
+        message: 'No walkable route from an available builder to this construction site.',
+      },
+    }
+    const strandedBlueprint = inspection([stranded]).get('5:4')?.contents.find(
+      (item) => item.kind === 'blueprint',
+    )
+    expect(strandedBlueprint).toMatchObject({
+      subtitle: 'Blueprint · No route · P5',
+      detail: expect.stringContaining('No walkable route'),
+    })
+  })
+
+  it('adds the physical material pallet to overlap inspection', () => {
+    const layout = createConstructionLayout()
+    const tiles = buildMapInspection({
+      width: layout.width,
+      height: layout.height,
+      modules: [],
+      crew: [],
+      equipment: [],
+      workOrders: [],
+      entityCells: {
+        crew: new Map(),
+        equipment: new Map(),
+        work: new Map(),
+      },
+      constructionLayout: layout,
+      constructionStockpile: {
+        cell: { x: 8, y: 9 },
+        stored: 14,
+        reserved: 4,
+        available: 10,
+      },
+    })
+
+    expect(tiles.get('8:9')?.contents).toContainEqual(expect.objectContaining({
+      key: 'stockpile:construction-material',
+      kind: 'stockpile',
+      label: 'Construction pallet',
+      icon: 'storage',
+      stats: [
+        { label: 'On pallet', value: '14' },
+        { label: 'Reserved', value: '4' },
+        { label: 'Available', value: '10' },
+      ],
+    }))
   })
 
   it('ignores complete construction orders and remains backward compatible when omitted', () => {

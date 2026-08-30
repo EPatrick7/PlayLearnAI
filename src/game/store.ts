@@ -5,10 +5,10 @@ import {
   isConstructionLayout,
   type ConstructionLayout,
   type ConstructionResult,
+  type GridPoint,
 } from './construction'
 import { createStarterConstruction } from './constructionCatalog'
 import {
-  advanceConstructionOrders,
   availableConstructionStock,
   cancelConstructionCommand as cancelConstructionCommandInState,
   cancelConstructionOrder as cancelConstructionOrderInState,
@@ -17,11 +17,17 @@ import {
   migrateV5ConstructionOrders,
   normalizePersistedConstructionOrders,
   projectConstructionOrders,
+  rebuildConstructionOrderPrerequisites,
   reserveConstructionMaterials,
   returnedConstructionMaterials,
   type ConstructionOrder,
   type ConstructionOrderTarget,
 } from './constructionJobs'
+import {
+  normalizeConstructionStockpile,
+  normalizePersistedConstructionCrewPositions,
+} from './constructionWorkerRouting'
+import { advanceConstructionWorkerSimulation } from './constructionWorkerSimulation'
 import {
   beginOperations as beginOperationsInState,
   buildBlueprints,
@@ -156,6 +162,27 @@ const eligibleConstructionWorkers = (state: MoonbaseState) =>
       haulingRate: 0.75,
     }))
 
+const spatialConstructionWorkers = (state: MoonbaseState) => {
+  const eligibleById = new Map(
+    eligibleConstructionWorkers(state).map((worker, index) => [
+      worker.id,
+      { ...worker, dispatchPriority: MAX_ACTIVE_BUILDERS - index },
+    ]),
+  )
+  return state.crew.map((member) => {
+    const eligible = eligibleById.get(member.id)
+    return {
+      id: member.id,
+      canConstruct: Boolean(eligible),
+      dispatchPriority: eligible?.dispatchPriority ?? 0,
+      engineeringRate: eligible?.engineeringRate ??
+        0.32 + member.skills.engineering * 0.035,
+      haulingRate: eligible?.haulingRate ?? 0.75,
+      movementRate: 1.8 + member.skills.operations * 0.04,
+    }
+  })
+}
+
 const advanceConstructionInState = (
   state: MoonbaseState,
   elapsed: number,
@@ -163,19 +190,21 @@ const advanceConstructionInState = (
   if (!state.settlement.constructionOrders.some((order) => order.status !== 'complete')) {
     return { completedOrderIds: [], blockedOrderIds: [] }
   }
-  const advanced = advanceConstructionOrders(
-    state.settlement.layout,
-    state.settlement.constructionOrders,
-    eligibleConstructionWorkers(state),
-    {
-      constructionStock: state.reserves.constructionStock,
-      elapsed,
-    },
-  )
+  const advanced = advanceConstructionWorkerSimulation({
+    layout: state.settlement.layout,
+    orders: state.settlement.constructionOrders,
+    constructionStock: state.reserves.constructionStock,
+    stockpile: state.settlement.constructionStockpile,
+    crewPositions: state.settlement.constructionCrew,
+    workers: spatialConstructionWorkers(state),
+    elapsed,
+  })
   state.settlement = {
     ...state.settlement,
     layout: advanced.layout,
     constructionOrders: advanced.orders,
+    constructionCrew: advanced.crewPositions,
+    constructionStockpile: advanced.stockpile,
   }
   state.reserves = {
     ...state.reserves,
@@ -219,6 +248,26 @@ const normalizedConstructionStock = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isFinite(value)
     ? Math.max(0, value)
     : fallback
+
+const persistedGridPoint = (value: unknown): GridPoint | null => {
+  if (!value || typeof value !== 'object') return null
+  const point = value as Record<string, unknown>
+  return typeof point.x === 'number' &&
+    typeof point.y === 'number' &&
+    Number.isInteger(point.x) &&
+    Number.isInteger(point.y)
+    ? { x: point.x, y: point.y }
+    : null
+}
+
+const resetLegacyTravelAssignments = (
+  orders: readonly ConstructionOrder[],
+  validCrewIds?: ReadonlySet<string>,
+) => orders.map((order) => {
+  const assignmentValid = order.assignedCrewId && validCrewIds?.has(order.assignedCrewId)
+  if (assignmentValid) return order
+  return { ...order, assignedCrewId: null, travelPhase: 'idle' as const }
+})
 
 const repairedConstructionSequence = (
   orders: readonly ConstructionOrder[],
@@ -273,6 +322,8 @@ export const useColonyStore = create<MoonbaseStore>()(
           commandId,
           priority: 3,
           sequenceStart,
+          completedLayout: state.settlement.layout,
+          prerequisiteOrders: state.settlement.constructionOrders,
         })
         if (derived.length === 0) {
           return { ok: false, orderIds: [], error: 'Nothing changed on those tiles.' }
@@ -388,13 +439,18 @@ export const useColonyStore = create<MoonbaseStore>()(
         return true
       },
       advanceConstruction: (elapsed = 1) => {
-        const state = structuredClone(domainSnapshot(get()))
+        const before = get()
+        const state = structuredClone(domainSnapshot(before))
         const summary = advanceConstructionInState(state, elapsed)
         if (
           summary.completedOrderIds.length > 0 ||
           state.settlement.constructionOrders.some((order, index) =>
-            JSON.stringify(order) !== JSON.stringify(get().settlement.constructionOrders[index]),
-          )
+            JSON.stringify(order) !== JSON.stringify(before.settlement.constructionOrders[index]),
+          ) ||
+          JSON.stringify(state.settlement.constructionCrew) !==
+            JSON.stringify(before.settlement.constructionCrew) ||
+          JSON.stringify(state.settlement.constructionStockpile) !==
+            JSON.stringify(before.settlement.constructionStockpile)
         ) {
           state.worldRevision += 1
           set(state)
@@ -493,29 +549,57 @@ export const useColonyStore = create<MoonbaseStore>()(
     }),
     {
       name: 'playlearnai-moonbase-poc-v1',
-      version: 6,
+      version: 7,
       partialize: domainSnapshot,
       migrate: (persistedState, version) => {
-        if (version > 6) return createInitialState()
+        const initialState = createInitialState()
+        if (version > 7) return initialState
         const state = persistedState as Partial<MoonbaseState>
-        if (!state.settlement) return createInitialState()
+        if (!state.settlement) return initialState
         const layout = version < 4
           ? createStarterConstruction()
           : state.settlement.layout
-        if (!isConstructionLayout(layout)) return createInitialState()
+        if (!isConstructionLayout(layout)) return initialState
         const constructionStock = normalizedConstructionStock(
           state.reserves?.constructionStock,
-          createInitialState().reserves.constructionStock,
+          initialState.reserves.constructionStock,
         )
         const sourceOrders = version < 5 || !Array.isArray(state.settlement.constructionOrders)
           ? []
           : state.settlement.constructionOrders
-        const constructionOrders = version === 5
+        const normalizedOrders = version === 5
           ? migrateV5ConstructionOrders(sourceOrders, constructionStock).orders
           : normalizePersistedConstructionOrders(
               sourceOrders,
               constructionStock,
             ).orders
+        const dependencySafeOrders = version < 7
+          ? rebuildConstructionOrderPrerequisites(
+              layout,
+              normalizedOrders,
+              constructionStock,
+            ).orders
+          : normalizedOrders
+        const crewMembers = Array.isArray(state.crew) ? state.crew : initialState.crew
+        const crewIds = new Set(crewMembers.map((member) => member.id))
+        const constructionOrders = resetLegacyTravelAssignments(
+          dependencySafeOrders,
+          version >= 7 ? crewIds : undefined,
+        )
+        const constructionStockpile = normalizeConstructionStockpile(
+          layout,
+          version >= 7
+            ? persistedGridPoint(state.settlement.constructionStockpile)
+            : initialState.settlement.constructionStockpile,
+          initialState.settlement.constructionStockpile,
+        )
+        const constructionCrew = normalizePersistedConstructionCrewPositions(
+          layout,
+          crewMembers,
+          version >= 7 ? state.settlement.constructionCrew : [],
+          constructionStockpile,
+          constructionOrders,
+        )
         return {
           ...state,
           reserves: { ...state.reserves, constructionStock },
@@ -523,6 +607,8 @@ export const useColonyStore = create<MoonbaseStore>()(
             ...state.settlement,
             layout,
             constructionOrders,
+            constructionCrew,
+            constructionStockpile,
             constructionSequence: repairedConstructionSequence(
               constructionOrders,
               state.settlement.constructionSequence,
@@ -543,6 +629,26 @@ export const useColonyStore = create<MoonbaseStore>()(
           persisted.settlement.constructionOrders,
           constructionStock,
         ).orders
+        const crewMembers = Array.isArray(persisted.crew)
+          ? persisted.crew
+          : currentState.crew
+        const crewIds = new Set(crewMembers.map((member) => member.id))
+        const repairedOrders = resetLegacyTravelAssignments(
+          constructionOrders,
+          crewIds,
+        )
+        const constructionStockpile = normalizeConstructionStockpile(
+          persisted.settlement.layout,
+          persistedGridPoint(persisted.settlement.constructionStockpile),
+          currentState.settlement.constructionStockpile,
+        )
+        const constructionCrew = normalizePersistedConstructionCrewPositions(
+          persisted.settlement.layout,
+          crewMembers,
+          persisted.settlement.constructionCrew,
+          constructionStockpile,
+          repairedOrders,
+        )
         return {
           ...currentState,
           ...persisted,
@@ -554,9 +660,11 @@ export const useColonyStore = create<MoonbaseStore>()(
           settlement: {
             ...currentState.settlement,
             ...persisted.settlement,
-            constructionOrders,
+            constructionOrders: repairedOrders,
+            constructionCrew,
+            constructionStockpile,
             constructionSequence: repairedConstructionSequence(
-              constructionOrders,
+              repairedOrders,
               persisted.settlement.constructionSequence,
             ),
           },

@@ -79,6 +79,7 @@ export function TileStackPicker({
   const onCloseRef = useRef(onClose)
   const titleId = useId()
   const placement = pickerPlacement(tile, trigger, gridWidth, gridHeight)
+  const contentKeys = tile.contents.map((item) => item.key).join('\u001f')
 
   useEffect(() => {
     onCloseRef.current = onClose
@@ -158,23 +159,27 @@ export function TileStackPicker({
   }
 
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const firstItem = pickerRef.current?.querySelector<HTMLButtonElement>(
-        '.tile-stack-item, .tile-stack-surface',
-      )
-      firstItem?.focus()
-    })
     const closeOnOutsidePointer = (event: PointerEvent) => {
       if (pickerRef.current?.contains(event.target as Node)) return
       closeAndRestore()
     }
     document.addEventListener('pointerdown', closeOnOutsidePointer)
     return () => {
-      cancelAnimationFrame(frame)
       document.removeEventListener('pointerdown', closeOnOutsidePointer)
       restoreTriggerFocus()
     }
   }, [closeAndRestore, restoreTriggerFocus, tile.key])
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const picker = pickerRef.current
+      if (!picker || picker.contains(document.activeElement)) return
+      picker.querySelector<HTMLButtonElement>(
+        '.tile-stack-item, .tile-stack-surface',
+      )?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [contentKeys, tile.key])
 
   return createPortal((
     <section
