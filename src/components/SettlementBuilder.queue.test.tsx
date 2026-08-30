@@ -83,7 +83,11 @@ describe('SettlementBuilder construction queue', () => {
 
     expect(screen.queryByRole('dialog', { name: 'Construction queue' })).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Wall blueprint inspector' })).toBeVisible()
+    const inspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })
+    expect(inspector).toBeVisible()
+    expect(inspector).toHaveTextContent('Blueprint priority')
+    expect(within(inspector).getByRole('button', { name: 'Cancel blueprint' })).toBeVisible()
+    expect(inspector).not.toHaveTextContent('Placement priority')
     expect(view.container.querySelector('.construction-map')).not.toHaveClass('tool-active')
     expect(view.container.querySelector('.construction-selection-cell')).toHaveAttribute('data-grid-x', '11')
     expect(view.container.querySelector('.construction-selection-cell')).toHaveAttribute('data-grid-y', '4')

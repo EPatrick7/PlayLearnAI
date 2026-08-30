@@ -377,12 +377,6 @@ export function SettlementBuilder({
   const selectedBlueprint = selectedItem?.kind === 'blueprint'
     ? constructionOrders.find((order) => order.id === selectedItem.id) ?? null
     : null
-  const selectedBlueprintCommandOrders = selectedBlueprint
-    ? constructionOrders.filter((order) => (
-        order.status !== 'complete' && order.commandId === selectedBlueprint.commandId
-      ))
-    : []
-  const selectedBlueprintCommandCount = selectedBlueprintCommandOrders.length
   const selectedRemovalQueued = Boolean(selectedTile && selectedItem && constructionOrders.some((order) => {
     if (order.status === 'complete' || !order.target.deconstruct) return false
     if (selectedItem.kind === 'boundary' && order.target.kind === 'boundary') {
@@ -566,28 +560,29 @@ export function SettlementBuilder({
 
   const cancelSelectedBlueprint = () => {
     if (!selectedBlueprint) return
-    const cancelled = colony.cancelConstructionCommand(selectedBlueprint.commandId)
-    if (cancelled.length === 0) {
-      announce('Nothing unfinished remains in that placement.')
+    const cancelled = colony.cancelConstructionOrder(selectedBlueprint.id)
+    if (!cancelled) {
+      announce('That blueprint is no longer waiting for work.')
       return
     }
+    const remainingOrderIds = new Set(
+      useColonyStore.getState().settlement.constructionOrders.map((order) => order.id),
+    )
+    const cancelledCount = constructionOrders.filter((order) => (
+      order.status !== 'complete' && !remainingOrderIds.has(order.id)
+    )).length
     setSelection(selectedTile ? { cellKey: selectedTile.key, itemKey: null } : null)
-    announce(cancelled.length === 1
+    announce(cancelledCount <= 1
       ? 'Blueprint cancelled. Collected material returned to storage.'
-      : `${cancelled.length}-job placement cancelled. Collected material returned to storage.`)
+      : `Blueprint and ${cancelledCount - 1} dependent ${cancelledCount === 2 ? 'job' : 'jobs'} cancelled. Collected material returned to storage.`)
   }
 
   const changeSelectedPriority = (change: -1 | 1) => {
     if (!selectedBlueprint) return
     const priority = Math.min(5, Math.max(1, selectedBlueprint.priority + change)) as Priority
-    const changedCount = colony.setConstructionCommandPriority(
-      selectedBlueprint.commandId,
-      priority,
-    )
-    if (changedCount > 0) {
-      announce(selectedBlueprintCommandCount === 1
-        ? `${selectedItem?.label ?? 'Blueprint'} set to priority ${priority}.`
-        : `${selectedBlueprintCommandCount}-job placement set to priority ${priority}.`)
+    const changed = colony.setConstructionOrderPriority(selectedBlueprint.id, priority)
+    if (changed) {
+      announce(`${selectedItem?.label ?? 'Blueprint'} set to priority ${priority}.`)
     }
   }
 
@@ -988,9 +983,7 @@ export function SettlementBuilder({
             {selectedBlueprint && (
               <div className="construction-inspector-actions">
                 <span className="construction-priority-stepper">
-                  <small>{selectedBlueprintCommandCount > 1
-                    ? `Placement priority · ${selectedBlueprintCommandCount} jobs`
-                    : 'Blueprint priority'}</small>
+                  <small>Blueprint priority</small>
                   <span>
                     <button aria-label="Lower blueprint priority" disabled={selectedBlueprint.priority <= 1} onClick={() => changeSelectedPriority(-1)} type="button"><GameIcon name="minus" /></button>
                     <strong>P{selectedBlueprint.priority}</strong>
@@ -998,9 +991,7 @@ export function SettlementBuilder({
                   </span>
                 </span>
                 <button className="construction-destructive-action" onClick={cancelSelectedBlueprint} type="button">
-                  <GameIcon name="close" /><span>{selectedBlueprintCommandCount > 1
-                    ? `Cancel placement · ${selectedBlueprintCommandCount} jobs`
-                    : 'Cancel blueprint'}</span>
+                  <GameIcon name="close" /><span>Cancel blueprint</span>
                 </button>
               </div>
             )}

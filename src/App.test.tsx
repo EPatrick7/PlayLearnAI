@@ -500,7 +500,7 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('edits priority and cancellation for every unfinished job in a placement command', () => {
+  it('edits priority and cancellation for only the blueprint inspected on the tile', () => {
     renderFreshApp()
     selectTool('Structure', /^Wall/i)
     dragConstructionTool({ x: 9, y: 6 }, { x: 11, y: 6 })
@@ -508,31 +508,35 @@ describe('freeform settlement builder', () => {
     clickConstructionCell({ x: 10, y: 6 }, 2)
 
     const inspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })
+    const selectedOrderId = useColonyStore.getState().settlement.constructionOrders.find(
+      (order) => order.target.cells.some((cell) => cell.x === 10 && cell.y === 6),
+    )!.id
     expect(inspector).toHaveTextContent('P3')
     expect(inspector).toHaveTextContent('0 / 1 supplied · 1 reserved at pallet')
-    expect(inspector).toHaveTextContent('Placement priority · 3 jobs')
-    expect(within(inspector).getByRole('button', {
-      name: 'Cancel placement · 3 jobs',
-    })).toBeVisible()
+    expect(inspector).toHaveTextContent('Blueprint priority')
+    expect(within(inspector).getByRole('button', { name: 'Cancel blueprint' })).toBeVisible()
     expect(screen.getByText('11 free')).toBeVisible()
 
     const revisionBeforePriorityChange = useColonyStore.getState().worldRevision
     fireEvent.click(within(inspector).getByRole('button', { name: 'Raise blueprint priority' }))
-    expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(3)
-    expect(useColonyStore.getState().settlement.constructionOrders.every(
-      (order) => order.priority === 4,
+    const reprioritized = useColonyStore.getState().settlement.constructionOrders
+    expect(reprioritized).toHaveLength(3)
+    expect(reprioritized.find((order) => order.id === selectedOrderId)?.priority).toBe(4)
+    expect(reprioritized.filter((order) => order.id !== selectedOrderId).every(
+      (order) => order.priority === 3,
     )).toBe(true)
     expect(useColonyStore.getState().worldRevision).toBe(revisionBeforePriorityChange + 1)
     expect(inspector).toHaveTextContent('P4')
 
-    fireEvent.click(within(inspector).getByRole('button', {
-      name: 'Cancel placement · 3 jobs',
-    }))
+    fireEvent.click(within(inspector).getByRole('button', { name: 'Cancel blueprint' }))
 
-    expect(useColonyStore.getState().settlement.constructionOrders).toEqual([])
-    expect(useColonyStore.getState().reserves.constructionStock).toBeCloseTo(14)
+    const remaining = useColonyStore.getState().settlement.constructionOrders
+    expect(remaining).toHaveLength(2)
+    expect(remaining.some((order) => order.id === selectedOrderId)).toBe(false)
+    expect(remaining.every((order) => order.priority === 3)).toBe(true)
+    expect(screen.getByText('12 free')).toBeVisible()
     expect(screen.getByRole('region', { name: 'Lunar regolith inspector' })).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Undo last construction order' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Undo last construction order' })).toBeVisible()
   })
 
   it('opens the current tile inspector from the keyboard in select mode', () => {
@@ -765,6 +769,73 @@ describe('freeform settlement builder', () => {
     expect(lifeSupport).toHaveAttribute('data-grid-y', '3')
     expect(lifeSupport).toHaveAttribute('data-grid-width', '2')
     expect(lifeSupport).toHaveAttribute('data-grid-height', '2')
+  })
+
+  it('keeps a workstation designator active and queues distinct projected placements', () => {
+    seedSecondRoom()
+    renderFreshApp()
+
+    selectTool('Production', /^Life support/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Rotate Life support to 90°' }))
+    clickConstructionCell({ x: 10, y: 3 })
+
+    const map = constructionMap()
+    expect(map).toHaveClass('tool-active')
+    expect(screen.getByRole('button', {
+      name: 'Return to Select mode from Life support',
+    })).toBeVisible()
+    expect(map.querySelector('.construction-preview')).not.toBeInTheDocument()
+
+    fireEvent.pointerMove(constructionCell({ x: 10, y: 3 }), {
+      clientX: 220,
+      clientY: 180,
+      pointerId: 95,
+      pointerType: 'mouse',
+    })
+    expect(map.querySelector('.construction-preview.invalid')).toHaveAttribute('data-grid-x', '10')
+    expect(document.querySelector('.construction-draft-label')).toHaveTextContent(
+      'Tile 11, 4 is occupied by Life support.',
+    )
+    expect(document.querySelector('.construction-draft-label')).not.toHaveTextContent(
+      /life-support-1|Cell 10:3/,
+    )
+
+    fireEvent.pointerMove(constructionCell({ x: 12, y: 5 }), {
+      clientX: 260,
+      clientY: 220,
+      pointerId: 96,
+      pointerType: 'mouse',
+    })
+    expect(map.querySelector('.construction-preview.valid')).toHaveAttribute('data-grid-x', '12')
+
+    clickConstructionCell({ x: 12, y: 5 }, 94)
+
+    const state = useColonyStore.getState()
+    expect(state.settlement.layout.workstations.some(
+      (workstation) => workstation.type === 'life-support',
+    )).toBe(false)
+    const lifeSupportOrders = state.settlement.constructionOrders.filter(
+      (order) => order.target.kind === 'workstation' &&
+        order.target.construct?.type === 'life-support',
+    )
+    expect(lifeSupportOrders).toHaveLength(2)
+    expect(new Set(lifeSupportOrders.map((order) => order.commandId)).size).toBe(2)
+    expect(lifeSupportOrders.map((order) => (
+      order.target.kind === 'workstation' ? order.target.construct : null
+    ))).toEqual([
+      expect.objectContaining({
+        id: 'life-support-1',
+        origin: { x: 10, y: 3 },
+        rotation: 90,
+      }),
+      expect.objectContaining({
+        id: 'life-support-2',
+        origin: { x: 12, y: 5 },
+        rotation: 90,
+      }),
+    ])
+    expect(screen.getAllByRole('img', { name: /Life support blueprint, paused/i }))
+      .toHaveLength(2)
   })
 
   it('queues whole-workstation deconstruction and Undo cancels it before removal', () => {

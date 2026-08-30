@@ -26,6 +26,7 @@ import {
   type ConstructionResult,
   type GridPoint,
   type WorkstationPlacementInput,
+  type WorkstationPlacementValidation,
   type WorkstationRotation,
 } from '../game/construction'
 import {
@@ -271,6 +272,11 @@ export function ConstructionMap({
   const [dragEnd, setDragEnd] = useState<GridPoint | null>(null)
   const [draftTool, setDraftTool] = useState<ConstructionTool | null>(null)
   const [cursor, setCursor] = useState<GridPoint>({ x: 8, y: 9 })
+  const [suppressedPreview, setSuppressedPreview] = useState<{
+    tool: ConstructionTool
+    rotation: WorkstationRotation
+    point: GridPoint
+  } | null>(null)
   const [isPanning, setIsPanning] = useState(false)
   const [isEdgePanning, setIsEdgePanning] = useState(false)
   const [zoom, setZoom] = useState(1)
@@ -821,9 +827,35 @@ export function ConstructionMap({
       : 'Placeable · inactive until enclosed'
   }, [roomByCell])
 
+  const workstationPlacementError = useCallback((
+    validation: WorkstationPlacementValidation,
+  ) => {
+    const conflict = validation.conflictingCell
+    if (validation.code === 'occupied' && conflict) {
+      const workstation = workstationAt(planningLayout, conflict)
+      if (workstation) {
+        return `Tile ${conflict.x + 1}, ${conflict.y + 1} is occupied by ${workstation.label}.`
+      }
+      const boundary = boundaryAt(planningLayout, conflict)
+      if (boundary) {
+        return `Tile ${conflict.x + 1}, ${conflict.y + 1} already contains a ${boundary.kind}.`
+      }
+    }
+    if (validation.code === 'out_of_bounds') {
+      return 'That object extends outside the construction area.'
+    }
+    return validation.error ?? 'That workstation does not fit there.'
+  }, [planningLayout])
+
   const preview = useMemo<DraftPreview | null>(() => {
     if (!selectedTool) return null
     const point = (draftTool === selectedTool ? dragEnd : null) ?? hoverCell ?? cursor
+    if (
+      suppressedPreview?.tool === selectedTool &&
+      suppressedPreview.rotation === rotation &&
+      suppressedPreview.point.x === point.x &&
+      suppressedPreview.point.y === point.y
+    ) return null
 
     if (selectedTool === 'wall' || selectedTool === 'erase') {
       const start = draftTool === selectedTool ? dragStart ?? point : point
@@ -869,9 +901,9 @@ export function ConstructionMap({
       valid: validation.valid,
       label: `${WORKSTATION_SPECS[selectedTool].label} · ${footprint.width}×${footprint.height} · ${WORKSTATION_SPECS[selectedTool].materialCost} material`,
       warning: indoorWarning,
-      error: validation.error ?? null,
+      error: validation.valid ? null : workstationPlacementError(validation),
     }
-  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintWarning, planningLayout, rotation, selectedTool])
+  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintWarning, planningLayout, rotation, selectedTool, suppressedPreview, workstationPlacementError])
 
   const previewBoundaryLayout = useMemo<ConstructionLayout | null>(() => {
     if (!preview || (selectedTool !== 'wall' && selectedTool !== 'door')) return null
@@ -885,30 +917,35 @@ export function ConstructionMap({
   }, [planningLayout, preview, selectedTool])
 
   const commitAt = (point: GridPoint) => {
-    if (!selectedTool) return
+    if (!selectedTool) return false
     if (selectedTool === 'wall') {
       const start = dragStartRef.current ?? point
-      onApply(paintBoundaryLine(planningLayout, start, point, 'wall'), 'Wall')
-      return
+      const result = paintBoundaryLine(planningLayout, start, point, 'wall')
+      onApply(result, 'Wall')
+      return result.ok
     }
     if (selectedTool === 'erase') {
       const start = dragStartRef.current ?? point
-      onApply(eraseLine(planningLayout, start, point), 'Deconstruct')
-      return
+      const result = eraseLine(planningLayout, start, point)
+      onApply(result, 'Deconstruct')
+      return result.ok
     }
     if (selectedTool === 'door') {
-      onApply(paintBoundaryCell(planningLayout, point, 'door'), 'Door')
-      return
+      const result = paintBoundaryCell(planningLayout, point, 'door')
+      onApply(result, 'Door')
+      return result.ok
     }
 
     const id = nextWorkstationId(planningLayout, selectedTool)
     const input = workstationInput(selectedTool, point, rotation, id)
     const validation = validateWorkstationPlacement(planningLayout, input)
     if (!validation.valid) {
-      onError(validation.error ?? 'That workstation does not fit there.')
-      return
+      onError(workstationPlacementError(validation))
+      return false
     }
-    onApply(placeWorkstation(planningLayout, input), WORKSTATION_SPECS[selectedTool].label)
+    const result = placeWorkstation(planningLayout, input)
+    onApply(result, WORKSTATION_SPECS[selectedTool].label)
+    return result.ok
   }
 
   const beginPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -964,6 +1001,7 @@ export function ConstructionMap({
       return
     }
     event.preventDefault()
+    setSuppressedPreview(null)
     updatePreviewLabelAnchor(event.clientX, event.clientY)
     pointerIdRef.current = event.pointerId
     draftPointerStartRef.current = { x: event.clientX, y: event.clientY }
@@ -1062,6 +1100,7 @@ export function ConstructionMap({
     }
     const point = pointerPoint(event)
     if (!point) return
+    setSuppressedPreview(null)
     setHoverCell(point)
     if (pointerIdRef.current !== event.pointerId) return
     dragEndRef.current = point
@@ -1110,7 +1149,9 @@ export function ConstructionMap({
     if (endPan(event)) return
     if (pointerIdRef.current !== event.pointerId || !selectedTool) return
     const point = pointerPoint(event) ?? dragEndRef.current ?? dragStartRef.current
-    if (point) commitAt(point)
+    if (point && commitAt(point)) {
+      setSuppressedPreview({ tool: selectedTool, rotation, point: { ...point } })
+    }
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
@@ -1159,6 +1200,7 @@ export function ConstructionMap({
 
   const commitKeyboardDraft = (point: GridPoint) => {
     if (!selectedTool) return
+    setSuppressedPreview(null)
     if (selectedTool === 'wall' || selectedTool === 'erase') {
       if (!keyboardAnchorRef.current || draftTool !== selectedTool) {
         keyboardAnchorRef.current = point
@@ -1168,12 +1210,16 @@ export function ConstructionMap({
         return
       }
       dragStartRef.current = keyboardAnchorRef.current
-      commitAt(point)
+      if (commitAt(point)) {
+        setSuppressedPreview({ tool: selectedTool, rotation, point: { ...point } })
+      }
       keyboardAnchorRef.current = null
       clearDraft()
       return
     }
-    commitAt(point)
+    if (commitAt(point)) {
+      setSuppressedPreview({ tool: selectedTool, rotation, point: { ...point } })
+    }
   }
 
   const activateKeyboardCursor = () => {
@@ -1222,6 +1268,7 @@ export function ConstructionMap({
         x: Math.min(layout.width - 1, Math.max(0, cursor.x + movement.x)),
         y: Math.min(layout.height - 1, Math.max(0, cursor.y + movement.y)),
       }
+      setSuppressedPreview(null)
       setCursor(next)
       setHoverCell(next)
       revealKeyboardCell(next)
