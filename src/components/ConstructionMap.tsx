@@ -995,7 +995,15 @@ export function ConstructionMap({
     ) {
       event.preventDefault()
       clearDraft()
-      cancelledDraftPointerIdRef.current = event.pointerId
+      beginPan(event, false)
+      panStartPointRef.current = touchDraftStart
+      panMovedRef.current = true
+      const container = scrollContainer()
+      if (container) {
+        container.scrollLeft -= event.clientX - touchDraftStart.x
+        container.scrollTop -= event.clientY - touchDraftStart.y
+      }
+      panLastPointRef.current = { x: event.clientX, y: event.clientY }
       return
     }
     if (panPointerIdRef.current === event.pointerId) {
@@ -1282,8 +1290,9 @@ export function ConstructionMap({
       <p className="sr-only" id="construction-grid-help">
         Choose a build tool, then point and drag on the map. W A S D pans the camera; Arrow
         keys move the grid cursor. Hold Space and left-drag, or middle-drag, to pan without
-        leaving the active tool. On touch, tap to place, drag wall and deconstruction lines,
-        and use two fingers to pan or pinch. Every wheel input zooms around the pointer. Drag
+        leaving the active tool. On touch, tap doors and workstations to place them, or drag
+        those tools to pan. Drag wall and deconstruction lines, and use two fingers to pan or
+        pinch while drawing. Every wheel input zooms around the pointer. Drag
         a wall or deconstruction line to a screen edge to keep drawing while the camera
         scrolls. Enter places an object or starts and finishes a wall line. R rotates. Escape
         cancels.

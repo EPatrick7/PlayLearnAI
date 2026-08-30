@@ -679,7 +679,7 @@ describe('ConstructionMap pan and zoom', () => {
     expect(onApply).not.toHaveBeenCalled()
   })
 
-  it('cancels a dragged single-placement touch without panning and preserves tap placement', () => {
+  it('turns a dragged workstation touch into a pan and preserves tap placement', () => {
     const { cell, map, onApply, scroll } = renderMap('solar-array')
     scroll.scrollLeft = 120
     scroll.scrollTop = 100
@@ -704,8 +704,8 @@ describe('ConstructionMap pan and zoom', () => {
       pointerType: 'touch',
     })
 
-    expect(scroll.scrollLeft).toBe(120)
-    expect(scroll.scrollTop).toBe(100)
+    expect(scroll.scrollLeft).toBe(60)
+    expect(scroll.scrollTop).toBe(50)
     expect(onApply).not.toHaveBeenCalled()
     expect(map).toHaveClass('tool-active')
 
@@ -725,6 +725,37 @@ describe('ConstructionMap pan and zoom', () => {
     })
 
     expect(onApply).toHaveBeenCalledOnce()
+  })
+
+  it('turns a dragged door touch into a pan without placing a door', () => {
+    const { cell, map, onApply, scroll } = renderMap('door')
+    scroll.scrollLeft = 90
+    scroll.scrollTop = 70
+
+    fireEvent.pointerDown(cell({ x: 4, y: 3 }), {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+      pointerId: 62,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 135,
+      clientY: 125,
+      pointerId: 62,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerUp(map, {
+      clientX: 135,
+      clientY: 125,
+      pointerId: 62,
+      pointerType: 'touch',
+    })
+
+    expect(scroll.scrollLeft).toBe(55)
+    expect(scroll.scrollTop).toBe(45)
+    expect(onApply).not.toHaveBeenCalled()
+    expect(map).toHaveClass('tool-active')
   })
 
   it('allows indoor workstations outdoors with a clear non-blocking room warning', () => {
@@ -973,7 +1004,7 @@ describe('ConstructionMap pan and zoom', () => {
     })
   })
 
-  it('tolerates touch jitter on object placement but cancels after deliberate movement', () => {
+  it('tolerates touch jitter on object placement but pans after deliberate movement', () => {
     const { cell, map, onApply, scroll } = renderMap('solar-array')
     scroll.scrollLeft = 100
 
@@ -1021,7 +1052,7 @@ describe('ConstructionMap pan and zoom', () => {
       pointerType: 'touch',
     })
     expect(onApply).toHaveBeenCalledOnce()
-    expect(scroll.scrollLeft).toBe(100)
+    expect(scroll.scrollLeft).toBe(87)
   })
 
   it('stops a wall edge-scroll silently when pointer capture is lost', () => {

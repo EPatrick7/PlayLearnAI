@@ -121,11 +121,17 @@ const toolName = (tool: ConstructionTool | null) => {
 
 const instructionFor = (tool: ConstructionTool | null) => {
   if (!tool) return 'Open Build to place blueprints. Colonists haul materials and construct every funded plan.'
-  if (tool === 'wall') return 'Wall designator · drag a one-tile line. Colonists build the blueprints.'
-  if (tool === 'door') return 'Door designator · choose a wall tile. Colonists build the blueprint.'
-  if (tool === 'erase') return 'Deconstruct designator · click or drag built objects for colonists to remove.'
-  return `${WORKSTATION_SPECS[tool].description} · tap to place a blueprint · R rotates. Colonists haul and build.`
+  if (tool === 'wall') return 'Wall designator · drag a one-tile line · two fingers pan on touch. Colonists build the blueprints.'
+  if (tool === 'door') return 'Door designator · tap a wall tile · touch-drag pans. Colonists build the blueprint.'
+  if (tool === 'erase') return 'Deconstruct designator · click or drag built objects · two fingers pan on touch.'
+  return `${WORKSTATION_SPECS[tool].description} · tap to place · touch-drag pans · R rotates. Colonists haul and build.`
 }
+
+const touchGestureFor = (tool: ConstructionTool) => (
+  tool === 'wall' || tool === 'erase'
+    ? 'Touch: drag to draw · 2-finger pan'
+    : 'Touch: tap to place · drag to pan'
+)
 
 const shouldCollapseCatalogAfterToolChoice = () => (
   typeof window !== 'undefined' && window.innerWidth <= 700
@@ -1048,7 +1054,7 @@ export function SettlementBuilder({
             {!buildOpen && selectedTool && (
               <span className="active-tool-summary">
                 <GameIcon name={selectedToolDefinition?.icon ?? 'work'} />
-                <span><strong>{toolName(selectedTool)}</strong><small>{toolInstruction}</small></span>
+                <span><strong>{toolName(selectedTool)}</strong><small>{touchGestureFor(selectedTool)}</small></span>
               </span>
             )}
 

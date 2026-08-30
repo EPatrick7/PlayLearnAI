@@ -2607,6 +2607,14 @@
 
   .construction-controls.active-tool .active-tool-summary strong { font-size: 11px; }
 
+  .construction-controls.active-tool .active-tool-summary small {
+    display: block;
+    font-size: 8px;
+    line-height: 1.05;
+    max-height: 2.1em;
+    white-space: normal;
+  }
+
   .construction-controls.active-tool .construction-category-bar button {
     min-width: 44px;
     min-height: 44px;
