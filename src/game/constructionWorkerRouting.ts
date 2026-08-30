@@ -4,9 +4,11 @@ import {
   type ConstructionLayout,
   type GridPoint,
 } from './construction'
-import type {
-  ConstructionOrder,
-  ConstructionTravelPhase,
+import {
+  carriedConstructionMaterial,
+  constructionMaterialAccountedFor,
+  type ConstructionOrder,
+  type ConstructionTravelPhase,
 } from './constructionJobs'
 import {
   findConstructionOrderApproachPath,
@@ -291,7 +293,7 @@ const orderCanRoute = (
 
 const initialTravelPhase = (order: ConstructionOrder): ConstructionTravelPhase =>
   order.operation === 'deconstruct' ||
-  order.materials.delivered + MOVEMENT_EPSILON >= order.materials.required
+  constructionMaterialAccountedFor(order) + MOVEMENT_EPSILON >= order.materials.required
     ? 'to_site'
     : 'to_stockpile'
 
@@ -385,11 +387,54 @@ export const advanceConstructionWorkerRouting = (
   orders
     .sort((left, right) => left.sequence - right.sequence || compareIds(left.id, right.id))
     .forEach((order) => {
-      const crewId = order.assignedCrewId
+      const carried = carriedConstructionMaterial(order)
+      const carrierId = carried > MOVEMENT_EPSILON
+        ? order.materials.carriedByCrewId ?? null
+        : null
+      const crewId = carrierId ?? order.assignedCrewId
       const position = crewId ? positionByCrewId.get(crewId) : undefined
-      const phase = order.travelPhase === 'idle'
+      const phase = carrierId
+        ? order.travelPhase === 'at_site' ? 'at_site' : 'to_site'
+        : order.travelPhase === 'idle'
         ? initialTravelPhase(order)
         : order.travelPhase
+      if (carrierId) {
+        order.assignedCrewId = carrierId
+        order.travelPhase = phase
+        const canUnloadAtSite = Boolean(
+          position &&
+          phase === 'at_site' &&
+          routeStillAtSite(input.layout, position.cell, order),
+        )
+        if (
+          claimedCrewIds.has(carrierId) ||
+          !position ||
+          (!eligibleWorkerIds.has(carrierId) && !canUnloadAtSite)
+        ) {
+          order.status = 'blocked'
+          order.block = {
+            kind: 'carrier_unavailable',
+            message: 'The colonist carrying this material is unavailable. Cancel to recover the cargo.',
+          }
+          claimedCrewIds.add(carrierId)
+          statusByOrderId.set(order.id, order.status)
+          return
+        }
+        claimedCrewIds.add(carrierId)
+        if (order.block?.kind === 'no_path' && order.status === 'blocked') return
+        if (!orderPrerequisitesComplete(order, statusByOrderId)) {
+          order.status = 'blocked'
+          statusByOrderId.set(order.id, order.status)
+          return
+        }
+        order.status = 'building'
+        order.block = null
+        statusByOrderId.set(order.id, order.status)
+        if (!workerCanReachOrder(input.layout, stockpile, position.cell, order, phase)) {
+          noPathOrderIds.push(order.id)
+        }
+        return
+      }
       if (
         !crewId ||
         !eligibleWorkerIds.has(crewId) ||
@@ -442,7 +487,10 @@ export const advanceConstructionWorkerRouting = (
   const atSiteWorkers: ConstructionAtSiteWorker[] = []
 
   orders
-    .filter((order) => order.assignedCrewId)
+    .filter((order) => (
+      order.assignedCrewId &&
+      (order.status === 'hauling' || order.status === 'building')
+    ))
     .sort(compareOrders)
     .forEach((order) => {
       const crewId = order.assignedCrewId!

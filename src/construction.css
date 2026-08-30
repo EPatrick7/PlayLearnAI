@@ -529,6 +529,13 @@
     rgba(105, 36, 31, 0.24);
 }
 
+.construction-preview.warning:not(.invalid) {
+  border-style: dashed;
+  background:
+    repeating-linear-gradient(135deg, rgba(232, 177, 70, 0.32) 0 5px, transparent 5px 10px),
+    rgba(119, 82, 25, 0.26);
+}
+
 .construction-preview.preview-wall,
 .construction-preview.preview-door {
   --boundary-edge-east: rgba(79, 54, 15, 0.92);
@@ -597,7 +604,8 @@
   z-index: 18;
   align-self: start;
   justify-self: start;
-  min-width: max-content;
+  width: max-content;
+  min-width: 0;
   max-width: 190px;
   padding: 4px 6px;
   border: 1px solid rgba(231, 189, 102, 0.62);
@@ -605,11 +613,23 @@
   background: rgba(31, 28, 20, 0.92);
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.34);
   font: 800 7px/1.2 ui-monospace, monospace;
+  overflow-wrap: anywhere;
   transform: translate(6px, calc(-100% - 4px));
   pointer-events: none;
 }
 
 .construction-draft-label.invalid { border-color: rgba(227, 111, 99, 0.72); color: #f0b1a9; background: rgba(48, 25, 22, 0.94); }
+.construction-draft-label.warning { border-color: rgba(232, 180, 72, 0.82); }
+.construction-draft-label > span { display: block; }
+.construction-draft-label > small {
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: #efbf65;
+  font: 850 7px/1.2 system-ui, sans-serif;
+}
+.construction-draft-label > small .game-icon { width: 9px; height: 9px; }
 
 .construction-north,
 .construction-scale {
@@ -927,7 +947,7 @@
   .rotate-tool,
   .cancel-tool { width: 58px; min-height: 50px; font-size: 6px; }
   .construction-room-label { display: none; }
-  .construction-draft-label { max-width: 145px; font-size: 6px; }
+  .construction-draft-label { max-width: 210px; font-size: 8px; }
   .construction-toast { top: 58px; font-size: 8px; }
 }
 
@@ -1426,6 +1446,45 @@
 
 .construction-worker-task .game-icon { width: 9px; height: 9px; }
 
+.construction-worker-cargo {
+  position: absolute;
+  z-index: 4;
+  left: -9px;
+  bottom: -3px;
+  min-width: 22px;
+  height: 16px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1px solid #9a7b42;
+  border-radius: 2px;
+  color: #f0d58e;
+  background:
+    linear-gradient(135deg, rgba(255, 239, 190, 0.14), transparent 48%),
+    #4a3d28;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.42);
+  font: 850 7px/1 ui-monospace, monospace;
+}
+
+.construction-worker-cargo .game-icon { width: 9px; height: 9px; }
+.construction-worker.worker-carrying .pawn-sprite__art {
+  filter: drop-shadow(0 0 3px rgba(225, 187, 103, 0.58)) drop-shadow(0 3px 2px rgba(7, 11, 10, 0.48));
+}
+
+.construction-worker.worker-carrying.worker-no-route .pawn-sprite__art,
+.construction-worker.worker-carrying.worker-carrier-unavailable .pawn-sprite__art,
+.construction-worker.worker-carrier-unavailable .pawn-sprite__art {
+  animation: none;
+  filter: drop-shadow(0 0 3px rgba(226, 116, 99, 0.86)) drop-shadow(0 3px 2px rgba(7, 11, 10, 0.52));
+}
+
+.construction-worker.worker-carrier-unavailable .construction-worker-task {
+  color: #f0a79b;
+  border-color: rgba(226, 116, 99, 0.72);
+}
+
 @keyframes construction-worker-bob {
   from { transform: translateY(0); }
   to { transform: translateY(-1px); }
@@ -1496,6 +1555,35 @@
 .construction-camera-surface.pan-active { cursor: grab; }
 .construction-camera-surface.tool-active { cursor: crosshair; }
 .construction-camera-surface.is-panning { cursor: grabbing; }
+.construction-camera-surface.is-edge-panning { cursor: crosshair; }
+
+.construction-edge-pan-indicator {
+  position: fixed;
+  z-index: 23;
+  left: 50%;
+  bottom: 82px;
+  min-height: 28px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(148, 212, 220, 0.32);
+  border-radius: 3px;
+  color: #c6e3df;
+  background: rgba(21, 29, 27, 0.9);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  font: 750 8px/1 ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.construction-edge-pan-indicator .game-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--construction-cyan);
+}
 
 .construction-camera-surface .construction-map {
   left: auto;
@@ -1637,6 +1725,7 @@
   .construction-designator-summary { padding-inline: 5px; grid-template-columns: 18px minmax(0, 1fr); gap: 5px; }
   .construction-designator-summary > .game-icon { width: 17px; height: 17px; }
   .construction-designator-summary strong { font-size: 9px; }
+  .construction-edge-pan-indicator { bottom: 72px; min-height: 30px; font-size: 8px; }
 }
 
 /* Architect inspection and material economy. */

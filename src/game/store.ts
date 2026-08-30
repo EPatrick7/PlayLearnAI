@@ -159,7 +159,8 @@ const reallocateUncollectedConstructionReservations = (
   const uncollectedReservation = (
     order.status !== 'complete' &&
     order.materials.reserved > 0 &&
-    order.materials.delivered <= Number.EPSILON
+    order.materials.delivered <= Number.EPSILON &&
+    (order.materials.carried ?? 0) <= Number.EPSILON
   )
   if (!uncollectedReservation) return order
   return {
@@ -298,6 +299,16 @@ const resetLegacyTravelAssignments = (
   orders: readonly ConstructionOrder[],
   validCrewIds?: ReadonlySet<string>,
 ) => orders.map((order) => {
+  const carrierId = (order.materials.carried ?? 0) > Number.EPSILON
+    ? order.materials.carriedByCrewId ?? null
+    : null
+  if (carrierId) {
+    return {
+      ...order,
+      assignedCrewId: carrierId,
+      travelPhase: order.travelPhase === 'at_site' ? 'at_site' as const : 'to_site' as const,
+    }
+  }
   const assignmentValid = order.assignedCrewId && validCrewIds?.has(order.assignedCrewId)
   if (assignmentValid) return order
   return { ...order, assignedCrewId: null, travelPhase: 'idle' as const }
@@ -627,11 +638,11 @@ export const useColonyStore = create<MoonbaseStore>()(
     }),
     {
       name: 'playlearnai-moonbase-poc-v1',
-      version: 8,
+      version: 9,
       partialize: domainSnapshot,
       migrate: (persistedState, version) => {
         const initialState = createInitialState()
-        if (version > 8) return initialState
+        if (version > 9) return initialState
         const state = persistedState as Partial<MoonbaseState>
         if (!state.settlement) return initialState
         const layout = version < 4
@@ -654,6 +665,7 @@ export const useColonyStore = create<MoonbaseStore>()(
           : normalizePersistedConstructionOrders(
               sourceOrders,
               constructionStock,
+              { legacyDeliveredInTransit: version < 9 },
             ).orders
         const dependencySafeOrders = version < 7
           ? rebuildConstructionOrderPrerequisites(

@@ -10,7 +10,11 @@ import {
   WORKSTATION_SPECS,
   type WorkstationKind,
 } from '../game/constructionCatalog'
-import type { ConstructionOrder } from '../game/constructionJobs'
+import {
+  carriedConstructionMaterial,
+  constructionMaterialAccountedFor,
+  type ConstructionOrder,
+} from '../game/constructionJobs'
 import type {
   CrewMember,
   Equipment,
@@ -146,7 +150,7 @@ const clampRatio = (value: number) => Number.isFinite(value)
 export const constructionOrderProgress = (order: ConstructionOrder) => {
   const haulingShare = order.materials.required > 0 ? 0.35 : 0
   const hauling = order.materials.required > 0
-    ? clampRatio(order.materials.delivered / order.materials.required) * haulingShare
+    ? clampRatio(constructionMaterialAccountedFor(order) / order.materials.required) * haulingShare
     : 0
   const building = order.work.required > 0
     ? clampRatio(order.work.completed / order.work.required) * (1 - haulingShare)
@@ -189,6 +193,7 @@ export const constructionOrderActivity = (
   constructionPaused = false,
 ) => {
   if (order.block?.kind === 'no_path') return 'No route'
+  if (order.block?.kind === 'carrier_unavailable') return 'Carrier unavailable'
   if (order.block?.kind === 'prerequisite') return 'Waiting on prerequisite'
   if (order.block?.kind === 'insufficient_materials') return 'Needs material'
   if (order.status === 'blocked') return 'Blocked'
@@ -207,7 +212,11 @@ export const constructionPhaseSummary = (
   const phaseCounts = new Map<string, number>()
   orders.forEach((order) => {
     if (!order.assignedCrewId) return
-    const phase = order.travelPhase === 'to_stockpile'
+    const phase = order.block?.kind === 'no_path'
+      ? 'no route'
+      : order.block?.kind === 'carrier_unavailable'
+        ? 'carrier unavailable'
+        : order.travelPhase === 'to_stockpile'
       ? 'collecting material'
       : order.travelPhase === 'to_site'
         ? 'walking to site'
@@ -219,6 +228,8 @@ export const constructionPhaseSummary = (
     phaseCounts.set(phase, (phaseCounts.get(phase) ?? 0) + 1)
   })
   return [
+    'carrier unavailable',
+    'no route',
     'collecting material',
     'walking to site',
     'delivering material',
@@ -433,7 +444,14 @@ export const buildMapInspection = ({
       const spec = WORKSTATION_SPECS[kind]
       if (!spec) return
       const footprint = getWorkstationFootprintSize(workstation)
-      getWorkstationCells(workstation).forEach((cell) => {
+      const workstationCells = getWorkstationCells(workstation)
+      const roomIds = workstationCells.map((cell) => roomByCell.get(pointKey(cell))?.id ?? null)
+      const roomId = roomIds[0]
+      const fitsOneRoom = Boolean(roomId && roomIds.every((candidate) => candidate === roomId))
+      const operationalState = spec.indoor
+        ? fitsOneRoom ? 'Ready indoors' : 'Needs enclosed room'
+        : 'Exterior rated'
+      workstationCells.forEach((cell) => {
         const tile = tiles.get(pointKey(cell))
         addInspectable(tiles, cell, {
           key: `workstation:${workstation.id}`,
@@ -441,12 +459,15 @@ export const buildMapInspection = ({
           id: workstation.id,
           label: workstation.label,
           subtitle: `Workstation · ${footprint.width}×${footprint.height}`,
-          detail: spec.description,
+          detail: spec.indoor && !fitsOneRoom
+            ? `${spec.description} · Built outdoors; unusable until enclosed.`
+            : spec.description,
           icon: spec.icon,
           stats: [
             { label: 'Footprint', value: `${footprint.width}×${footprint.height}` },
             { label: 'Rotation', value: `${workstation.rotation}°` },
             { label: 'Room', value: tile?.roomLabel ?? 'Exterior' },
+            { label: 'Operation', value: operationalState },
           ],
         })
       })
@@ -469,16 +490,36 @@ export const buildMapInspection = ({
       const builder = order.assignedCrewId
         ? crewNamesById.get(order.assignedCrewId) ?? fallbackCrewName(order.assignedCrewId)
         : 'Unassigned'
-      const deliveredMaterialLabel = order.travelPhase === 'to_site'
-        ? 'carried'
-        : order.block?.kind === 'no_path' && order.materials.delivered > 0
-          ? 'staged'
-          : 'delivered'
+      const carried = carriedConstructionMaterial(order)
+      const carrier = order.materials.carriedByCrewId
+        ? crewNamesById.get(order.materials.carriedByCrewId) ??
+          fallbackCrewName(order.materials.carriedByCrewId)
+        : null
+      const targetSpec = order.target.kind === 'workstation' && order.target.construct
+        ? WORKSTATION_SPECS[order.target.construct.type as WorkstationKind]
+        : null
+      const targetRoomIds = targetSpec?.indoor
+        ? order.target.cells.map((cell) => roomByCell.get(pointKey(cell))?.id ?? null)
+        : []
+      const targetFitsRoom = Boolean(
+        targetRoomIds[0] && targetRoomIds.every((roomId) => roomId === targetRoomIds[0]),
+      )
+      const blueprintOperation = targetSpec
+        ? targetSpec.indoor
+          ? targetFitsRoom ? 'Ready indoors' : 'Inactive until enclosed'
+          : 'Exterior rated'
+        : null
       const materials = order.materials.required > 0
         ? [
-            `${formatConstructionAmount(order.materials.delivered)} / ${formatConstructionAmount(order.materials.required)} ${deliveredMaterialLabel}`,
+            `${formatConstructionAmount(constructionMaterialAccountedFor(order))} / ${formatConstructionAmount(order.materials.required)} supplied`,
+            carried > 0
+              ? `${formatConstructionAmount(carried)} carried by ${carrier ?? 'colonist'}`
+              : '',
+            order.materials.delivered > 0
+              ? `${formatConstructionAmount(order.materials.delivered)} delivered at site`
+              : '',
             order.materials.reserved > 0
-              ? `${formatConstructionAmount(order.materials.reserved)} reserved`
+              ? `${formatConstructionAmount(order.materials.reserved)} reserved at pallet`
               : '',
           ].filter(Boolean).join(' · ')
         : order.materials.recoverable > 0
@@ -491,7 +532,11 @@ export const buildMapInspection = ({
         id: order.id,
         label: presentation.label,
         subtitle: `Blueprint · ${activity} · P${order.priority}`,
-        detail: order.block?.message ?? presentation.detail,
+        detail: order.block?.message ?? (
+          blueprintOperation === 'Inactive until enclosed'
+            ? `${presentation.detail} · Placeable outdoors, but unusable until enclosed.`
+            : presentation.detail
+        ),
         icon: presentation.icon,
         stats: [
           { label: 'Status', value: activity },
@@ -499,6 +544,9 @@ export const buildMapInspection = ({
           { label: 'Materials', value: materials },
           { label: 'Priority', value: `P${order.priority}` },
           { label: 'Builder', value: builder },
+          ...(blueprintOperation
+            ? [{ label: 'Operation', value: blueprintOperation }]
+            : []),
         ],
       }))
     })
@@ -530,6 +578,10 @@ export const buildMapInspection = ({
     const constructionActivity = constructionAssignment
       ? constructionOrderActivity(constructionAssignment, constructionPaused)
       : null
+    const carried = constructionAssignment &&
+      constructionAssignment.materials.carriedByCrewId === member.id
+      ? carriedConstructionMaterial(constructionAssignment)
+      : 0
     addInspectable(tiles, cell, {
       key: `crew:${member.id}`,
       kind: 'crew',
@@ -537,7 +589,7 @@ export const buildMapInspection = ({
       label: member.name,
       subtitle: `Colonist · ${constructionActivity ?? titleCase(member.status)}`,
       detail: constructionPresentation
-        ? `${member.role} · ${constructionActivity}: ${constructionPresentation.label}`
+        ? `${member.role} · ${constructionActivity}: ${constructionPresentation.label}${carried > 0 ? ` · Carrying ${formatConstructionAmount(carried)} material` : ''}`
         : member.role,
       icon: 'crew',
       stats: [
@@ -546,6 +598,9 @@ export const buildMapInspection = ({
         { label: 'Role', value: member.role },
         ...(constructionPresentation
           ? [{ label: 'Task', value: constructionPresentation.label }]
+          : []),
+        ...(carried > 0
+          ? [{ label: 'Cargo', value: `${formatConstructionAmount(carried)} construction material` }]
           : []),
       ],
     })

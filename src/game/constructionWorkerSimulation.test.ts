@@ -95,6 +95,29 @@ describe('spatial construction worker simulation', () => {
     expect(partitioned.crewPositions).toEqual(whole.crewPositions)
   })
 
+  it('produces the same completion for decimal time partitions', () => {
+    const input = inputFor(wallOrder(), 3)
+    const whole = advanceConstructionWorkerSimulationFixedStep(input)
+    let partitioned = advanceConstructionWorkerSimulationFixedStep({ ...input, elapsed: 0.1 })
+    for (let step = 1; step < 30; step += 1) {
+      partitioned = advanceConstructionWorkerSimulationFixedStep({
+        ...input,
+        layout: partitioned.layout,
+        orders: partitioned.orders,
+        constructionStock: partitioned.constructionStock,
+        stockpile: partitioned.stockpile,
+        crewPositions: partitioned.crewPositions,
+        elapsed: 0.1,
+      })
+    }
+
+    expect(whole.orders[0].status).toBe('complete')
+    expect(partitioned.layout).toEqual(whole.layout)
+    expect(partitioned.orders).toEqual(whole.orders)
+    expect(partitioned.constructionStock).toBe(whole.constructionStock)
+    expect(partitioned.crewPositions).toEqual(whole.crewPositions)
+  })
+
   it('does not consume stock or progress work before the builder reaches the site', () => {
     const order = wallOrder()
     const approachingPallet = advanceConstructionWorkerSimulation(inputFor(order, 0.25))
@@ -124,7 +147,12 @@ describe('spatial construction worker simulation', () => {
       assignedCrewId: 'builder',
       travelPhase: 'to_site' as const,
       status: 'building',
-      materials: { delivered: 1, reserved: 0 },
+      materials: {
+        delivered: 0,
+        reserved: 0,
+        carried: 1,
+        carriedByCrewId: 'builder',
+      },
       work: { completed: 0 },
     })
     expect(first.constructionStock).toBe(3)
@@ -140,13 +168,197 @@ describe('spatial construction worker simulation', () => {
     expect(second.constructionStock).toBe(3)
   })
 
+  it('keeps picked-up cargo bound to its carrier when another builder becomes eligible', () => {
+    const workers = [
+      {
+        id: 'alpha',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+      {
+        id: 'beta',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+    ]
+    const pickedUp = advanceConstructionWorkerSimulation({
+      ...inputFor(wallOrder(), 0.5),
+      crewPositions: [
+        { crewId: 'alpha', cell: { x: 0, y: 1 }, moveCredit: 0 },
+        { crewId: 'beta', cell: { x: 0, y: 2 }, moveCredit: 0 },
+      ],
+      workers,
+    })
+
+    expect(pickedUp.orders[0]).toMatchObject({
+      assignedCrewId: 'alpha',
+      travelPhase: 'to_site',
+      materials: {
+        delivered: 0,
+        carried: 1,
+        carriedByCrewId: 'alpha',
+      },
+    })
+    expect(pickedUp.constructionStock).toBe(3)
+
+    const carrierUnavailable = advanceConstructionWorkerSimulation({
+      ...inputFor(pickedUp.orders[0], 0.25),
+      crewPositions: pickedUp.crewPositions,
+      constructionStock: pickedUp.constructionStock,
+      workers: workers.map((worker) => (
+        worker.id === 'alpha' ? { ...worker, canConstruct: false } : worker
+      )),
+    })
+
+    expect(carrierUnavailable.orders[0]).toMatchObject({
+      status: 'blocked',
+      block: { kind: 'carrier_unavailable' },
+      assignedCrewId: 'alpha',
+      travelPhase: 'to_site',
+      materials: {
+        delivered: 0,
+        carried: 1,
+        carriedByCrewId: 'alpha',
+      },
+    })
+    expect(carrierUnavailable.orders[0].assignedCrewId).not.toBe('beta')
+    expect(carrierUnavailable.constructionStock).toBe(3)
+    expect(carrierUnavailable.crewPositions).toEqual(pickedUp.crewPositions)
+
+    const resumed = advanceConstructionWorkerSimulation({
+      ...inputFor(carrierUnavailable.orders[0], 2.5),
+      crewPositions: carrierUnavailable.crewPositions,
+      constructionStock: carrierUnavailable.constructionStock,
+      workers,
+    })
+    expect(resumed.orders[0]).toMatchObject({
+      status: 'complete',
+      assignedCrewId: null,
+      materials: {
+        delivered: 1,
+        carried: 0,
+        carriedByCrewId: null,
+      },
+    })
+    expect(resumed.constructionStock).toBe(3)
+  })
+
+  it('unloads cargo immediately at the work perimeter even if the carrier cannot build', () => {
+    const atSite: ConstructionOrder = {
+      ...wallOrder(),
+      status: 'building',
+      block: null,
+      assignedCrewId: 'alpha',
+      travelPhase: 'at_site',
+      materials: {
+        required: 1,
+        reserved: 0,
+        delivered: 0,
+        recoverable: 0,
+        carried: 1,
+        carriedByCrewId: 'alpha',
+      },
+    }
+    const workers = [
+      {
+        id: 'alpha',
+        canConstruct: false,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+      {
+        id: 'beta',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+    ]
+    const unloaded = advanceConstructionWorkerSimulation({
+      ...inputFor(atSite, 0),
+      crewPositions: [
+        { crewId: 'alpha', cell: { x: 4, y: 1 }, moveCredit: 0 },
+        { crewId: 'beta', cell: { x: 0, y: 2 }, moveCredit: 0 },
+      ],
+      workers,
+    })
+
+    expect(unloaded.orders[0]).toMatchObject({
+      status: 'building',
+      materials: {
+        delivered: 1,
+        carried: 0,
+        carriedByCrewId: null,
+      },
+      work: { completed: 0 },
+    })
+    expect(unloaded.constructionStock).toBe(4)
+
+    const reassigned = advanceConstructionWorkerSimulation({
+      ...inputFor(unloaded.orders[0], 0),
+      crewPositions: unloaded.crewPositions,
+      constructionStock: unloaded.constructionStock,
+      workers,
+    })
+    expect(reassigned.orders[0]).toMatchObject({
+      assignedCrewId: 'beta',
+      travelPhase: 'to_site',
+      materials: { delivered: 1, carried: 0 },
+    })
+  })
+
+  it('never tops up partial cargo unless the carrier actually reaches the pallet', () => {
+    const partialCargo: ConstructionOrder = {
+      ...wallOrder(),
+      status: 'hauling',
+      block: null,
+      assignedCrewId: 'builder',
+      travelPhase: 'to_site',
+      materials: {
+        required: 1,
+        reserved: 0.6,
+        delivered: 0,
+        recoverable: 0,
+        carried: 0.4,
+        carriedByCrewId: 'builder',
+      },
+    }
+    const result = advanceConstructionWorkerSimulation(inputFor(partialCargo, 0, {
+      constructionStock: 0.6,
+      crewPositions: [{ crewId: 'builder', cell: { x: 2, y: 1 }, moveCredit: 0 }],
+    }))
+
+    expect(result.crewPositions[0].cell).toEqual({ x: 2, y: 1 })
+    expect(result.constructionStock).toBe(0.6)
+    expect(result.orders[0]).toMatchObject({
+      assignedCrewId: 'builder',
+      travelPhase: 'to_site',
+      materials: {
+        reserved: 0.6,
+        delivered: 0,
+        carried: 0.4,
+        carriedByCrewId: 'builder',
+      },
+    })
+  })
+
   it('hauls at the perimeter, then builds and leaves the worker on a neighboring tile', () => {
     let state = advanceConstructionWorkerSimulation(inputFor(wallOrder(), 2))
     expect(state.crewPositions[0].cell).toEqual({ x: 4, y: 1 })
     expect(state.orders[0]).toMatchObject({
       status: 'building',
       travelPhase: 'at_site',
-      materials: { delivered: 1, reserved: 0 },
+      materials: {
+        delivered: 1,
+        reserved: 0,
+        carried: 0,
+        carriedByCrewId: null,
+      },
       work: { completed: 0 },
     })
     expect(state.constructionStock).toBe(3)
@@ -164,6 +376,11 @@ describe('spatial construction worker simulation', () => {
       status: 'complete',
       assignedCrewId: null,
       travelPhase: 'idle',
+      materials: {
+        delivered: 1,
+        carried: 0,
+        carriedByCrewId: null,
+      },
     })
     expect(state.layout.boundaries).toContainEqual({ x: 5, y: 1, kind: 'wall' })
     expect(state.crewPositions[0].cell).toEqual({ x: 4, y: 1 })
@@ -274,7 +491,7 @@ describe('spatial construction worker simulation', () => {
     expect(Math.abs(beta.cell.x - 5) + Math.abs(beta.cell.y - 1)).toBe(1)
   })
 
-  it('keeps an unreachable job spatially stalled and reports the route failure', () => {
+  it('keeps unreachable cargo bound to its carrier and resumes that carrier when opened', () => {
     const barrier = Array.from({ length: 24 }, (_, x): BoundaryCell => ({
       x,
       y: 2,
@@ -284,7 +501,14 @@ describe('spatial construction worker simulation', () => {
       ...wallOrder(),
       status: 'building' as const,
       assignedCrewId: 'builder',
-      materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
+      materials: {
+        required: 1,
+        reserved: 0,
+        delivered: 0,
+        recoverable: 0,
+        carried: 1,
+        carriedByCrewId: 'builder',
+      },
       travelPhase: 'to_site' as const,
       target: {
         kind: 'boundary' as const,
@@ -303,9 +527,14 @@ describe('spatial construction worker simulation', () => {
     expect(result.orders[0].work.completed).toBe(0)
     expect(result.orders[0]).toMatchObject({
       status: 'blocked',
-      assignedCrewId: null,
-      travelPhase: 'idle',
-      materials: { reserved: 0, delivered: 1 },
+      assignedCrewId: 'builder',
+      travelPhase: 'to_site',
+      materials: {
+        reserved: 0,
+        delivered: 0,
+        carried: 1,
+        carriedByCrewId: 'builder',
+      },
     })
     expect(result.layout.boundaries).toEqual(barrier)
 

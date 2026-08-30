@@ -109,10 +109,10 @@ const toolName = (tool: ConstructionTool | null) => {
 
 const instructionFor = (tool: ConstructionTool | null) => {
   if (!tool) return 'Move / Select: drag the map to look around or select something to inspect it.'
-  if (tool === 'wall') return 'Drag across cells to draw a one-tile-thick wall run.'
-  if (tool === 'door') return 'Click any existing wall tile to replace it with a door.'
-  if (tool === 'erase') return 'Click or drag across anything to deconstruct it.'
-  return `${WORKSTATION_SPECS[tool].description}. Point at the floor to place; R rotates.`
+  if (tool === 'wall') return 'Drag a one-tile wall line · hold at an edge to continue.'
+  if (tool === 'door') return 'Tap or click an existing wall tile.'
+  if (tool === 'erase') return 'Tap or drag to deconstruct · hold at an edge to continue.'
+  return `${WORKSTATION_SPECS[tool].description} · click or tap to place · touch-drag or Space/middle-drag pans · R rotates.`
 }
 
 interface SettlementBuilderProps {
@@ -167,6 +167,9 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   )
   const routeBlockedOrders = openOrders.filter(
     (order) => order.block?.kind === 'no_path',
+  )
+  const unavailableCarrierOrders = openOrders.filter(
+    (order) => order.block?.kind === 'carrier_unavailable',
   )
   const prerequisiteBlockedOrders = openOrders.filter(
     (order) => order.block?.kind === 'prerequisite',
@@ -377,8 +380,8 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     pruneUndoCommand(selectedBlueprint.commandId)
     setSelection(selectedTile ? { cellKey: selectedTile.key, itemKey: null } : null)
     announce(cancelled.length === 1
-      ? 'Blueprint cancelled. Delivered material returned to storage.'
-      : `${cancelled.length}-job placement cancelled. Delivered material returned to storage.`)
+      ? 'Blueprint cancelled. Collected material returned to storage.'
+      : `${cancelled.length}-job placement cancelled. Collected material returned to storage.`)
   }
 
   const changeSelectedPriority = (change: -1 | 1) => {
@@ -422,13 +425,13 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     if (selectedTool) {
       setParkedTool(selectedTool)
       setSelectedTool(null)
-      announce(`${toolName(selectedTool)} paused. Drag to pan or select a blueprint to edit it, then resume from the toolbar.`)
+      announce(`Move / Select active. ${toolName(selectedTool)} is ready to continue from the toolbar.`)
       return
     }
     if (parkedTool) {
       setSelectedTool(parkedTool)
       setParkedTool(null)
-      announce(`${toolName(parkedTool)} resumed.`)
+      announce(`${toolName(parkedTool)} placement active.`)
       return
     }
     announce('Move / Select mode.')
@@ -460,7 +463,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     setCategory(nextCategory)
     setBuildOpen(true)
     announce(nextCategory !== category && selectedTool
-      ? `${toolName(selectedTool)} paused while you browse ${categoryLabels[nextCategory]}.`
+      ? `${toolName(selectedTool)} placement off while you browse ${categoryLabels[nextCategory]}.`
       : `${categoryLabels[nextCategory]} tools open.`)
   }
 
@@ -548,9 +551,9 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     : null
   const nextRotation = (rotation + 90) % 360
   const toolInstruction = selectedTool
-    ? `${instructionFor(selectedTool)} Choose Move / Select to pan or edit blueprints; Space-drag or wheel also pans.`
+    ? instructionFor(selectedTool)
     : parkedTool
-      ? `${toolName(parkedTool)} is paused. Drag to pan or select a blueprint to change priority or cancel it, then resume.`
+      ? `Move / Select active · drag to pan or inspect · continue ${toolName(parkedTool)} when ready.`
     : buildOpen
       ? 'Pick a tool. Walls and objects are placed cell by cell—there are no room templates.'
       : readyForShift
@@ -597,7 +600,9 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
             <span>
               <strong>{openOrders.length > 0 ? `${openOrders.length} queued` : 'No blueprints'}</strong>
               <small>{openOrders.length > 0
-                ? routeBlockedOrders.length > 0
+                ? unavailableCarrierOrders.length > 0
+                  ? `${unavailableCarrierOrders.length} ${unavailableCarrierOrders.length === 1 ? 'carrier is' : 'carriers are'} unavailable`
+                  : routeBlockedOrders.length > 0
                   ? `${routeBlockedOrders.length} ${routeBlockedOrders.length === 1 ? 'blueprint has' : 'blueprints have'} no route`
                   : prerequisiteBlockedOrders.length > 0
                     ? `${prerequisiteBlockedOrders.length} waiting on earlier construction`
@@ -792,13 +797,12 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
 
             {!buildOpen && currentTool && (
               <button
-                aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Move / Select'}
-                aria-pressed={selectedTool === null}
+                aria-label={parkedTool ? `Continue placing ${toolName(parkedTool)}` : 'Move / Select'}
                 className="pan-button"
                 onClick={togglePan}
                 type="button"
               >
-                <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? 'Resume' : 'Move / Select'}</span>
+                <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? `Continue ${toolName(parkedTool)}` : 'Move / Select'}</span>
               </button>
             )}
 
@@ -817,7 +821,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
                     <span className="construction-designator-summary">
                       <GameIcon name={currentToolDefinition?.icon ?? 'work'} />
                       <span>
-                        <small>{parkedTool ? 'Paused designator' : 'Active designator'}</small>
+                        <small>{parkedTool ? 'Move / Select active' : 'Active designator'}</small>
                         <strong>{toolName(currentTool)}</strong>
                       </span>
                     </span>
@@ -834,13 +838,12 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
                   )}
                   {currentTool && (
                     <button
-                      aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Move / Select'}
-                      aria-pressed={selectedTool === null}
+                      aria-label={parkedTool ? `Continue placing ${toolName(parkedTool)}` : 'Move / Select'}
                       className="pan-button"
                       onClick={togglePan}
                       type="button"
                     >
-                      <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? 'Resume' : 'Move / Select'}</span>
+                      <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? `Continue ${toolName(parkedTool)}` : 'Move / Select'}</span>
                     </button>
                   )}
                   {currentTool && (

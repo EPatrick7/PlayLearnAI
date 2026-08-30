@@ -35,7 +35,11 @@ import {
   type ConstructionTool,
   type WorkstationKind,
 } from '../game/constructionCatalog'
-import type { ConstructionOrder } from '../game/constructionJobs'
+import {
+  carriedConstructionMaterial,
+  constructionMaterialAccountedFor,
+  type ConstructionOrder,
+} from '../game/constructionJobs'
 import type { CrewMember } from '../game/types'
 import {
   BOUNDARY_CONNECTION_BITS,
@@ -75,6 +79,7 @@ interface DraftPreview {
   cells: GridPoint[]
   valid: boolean
   label: string
+  warning: string | null
   error: string | null
 }
 
@@ -94,8 +99,13 @@ const MIN_ZOOM = 0.7
 const MAX_ZOOM = 1.8
 const ZOOM_STEP = 0.1
 const PAN_DRAG_THRESHOLD = 6
+const TOUCH_PAN_DRAG_THRESHOLD = 12
 const KEYBOARD_PAN_STEP = 48
 const MAX_WHEEL_ZOOM_DELTA = 240
+const EDGE_PAN_ZONE = 56
+const EDGE_PAN_MIN_SPEED = 180
+const EDGE_PAN_MAX_SPEED = 900
+const EDGE_PAN_MAX_FRAME_SECONDS = 0.05
 
 const clampZoom = (zoom: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))
 
@@ -110,7 +120,7 @@ const isEditableTarget = (target: EventTarget | null) => (
 const constructionProgress = (order: ConstructionOrder) => {
   const haulingShare = order.materials.required > 0 ? 0.35 : 0
   const hauling = order.materials.required > 0
-    ? Math.min(1, order.materials.delivered / order.materials.required) * haulingShare
+    ? Math.min(1, constructionMaterialAccountedFor(order) / order.materials.required) * haulingShare
     : 0
   const building = order.work.required > 0
     ? Math.min(1, order.work.completed / order.work.required) * (1 - haulingShare)
@@ -132,7 +142,7 @@ const constructionOrderLabel = (order: ConstructionOrder) => {
 }
 
 const constructionActivityIcon = (order: ConstructionOrder) => {
-  if (order.block?.kind === 'no_path') return 'warning' as const
+  if (order.block) return 'warning' as const
   if (order.travelPhase === 'to_stockpile') return 'storage' as const
   if (order.travelPhase === 'to_site') return 'map' as const
   return 'work' as const
@@ -142,6 +152,11 @@ const workerVariants = ['umber', 'gold', 'olive', 'rose', 'copper', 'slate'] as 
 const workerAccents = ['#a75b4c', '#527b7d', '#68805f', '#8a6378', '#9a7046', '#596f7c']
 
 const keyFor = (point: GridPoint) => `${point.x}:${point.y}`
+
+const materialAmount = (value: number) => {
+  const rounded = Math.round(value * 10) / 10
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+}
 
 const pointFromElement = (element: Element | null): GridPoint | null => {
   const cell = element?.closest<HTMLElement>('[data-construction-cell]')
@@ -213,6 +228,8 @@ export function ConstructionMap({
   const zoomRef = useRef(1)
   const dragStartRef = useRef<GridPoint | null>(null)
   const dragEndRef = useRef<GridPoint | null>(null)
+  const draftPointerStartRef = useRef<PointerPosition | null>(null)
+  const draftDraggingRef = useRef(false)
   const keyboardAnchorRef = useRef<GridPoint | null>(null)
   const spacePressedRef = useRef(false)
   const spacePanUsedRef = useRef(false)
@@ -220,13 +237,22 @@ export function ConstructionMap({
   const touchPanCenterRef = useRef<PointerPosition | null>(null)
   const touchPinchDistanceRef = useRef<number | null>(null)
   const touchPinchZoomRef = useRef(1)
+  const edgePanPointerRef = useRef<PointerPosition | null>(null)
+  const edgePanFrameRef = useRef<number | null>(null)
+  const edgePanLastTimestampRef = useRef<number | null>(null)
+  const edgePanStepRef = useRef<(timestamp: number) => void>(() => undefined)
   const [hoverCell, setHoverCell] = useState<GridPoint | null>({ x: 8, y: 9 })
   const [dragStart, setDragStart] = useState<GridPoint | null>(null)
   const [dragEnd, setDragEnd] = useState<GridPoint | null>(null)
   const [draftTool, setDraftTool] = useState<ConstructionTool | null>(null)
   const [cursor, setCursor] = useState<GridPoint>({ x: 8, y: 9 })
   const [isPanning, setIsPanning] = useState(false)
+  const [isEdgePanning, setIsEdgePanning] = useState(false)
   const [zoom, setZoom] = useState(1)
+  const [previewLabelAnchor, setPreviewLabelAnchor] = useState<{
+    horizontal: 'start' | 'end'
+    vertical: 'above' | 'below'
+  }>({ horizontal: 'start', vertical: 'above' })
   const rooms = useMemo(() => detectRooms(layout), [layout])
   const plannedRooms = useMemo(() => detectRooms(planningLayout), [planningLayout])
 
@@ -254,15 +280,142 @@ export function ConstructionMap({
   const pointerPoint = (event: ReactPointerEvent<HTMLDivElement>) => {
     const direct = pointFromElement(event.target as Element)
     if (direct) return direct
+    return pointAtClient({ x: event.clientX, y: event.clientY })
+  }
+
+  const scrollContainer = () => mapRef.current?.closest<HTMLElement>('.construction-map-scroll') ?? null
+
+  const pointAtClient = ({ x, y }: PointerPosition) => {
+    const map = mapRef.current
+    const bounds = map?.getBoundingClientRect()
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
+      if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) {
+        return null
+      }
+      return {
+        x: Math.min(
+          layout.width - 1,
+          Math.max(0, Math.floor(((x - bounds.left) / bounds.width) * layout.width)),
+        ),
+        y: Math.min(
+          layout.height - 1,
+          Math.max(0, Math.floor(((y - bounds.top) / bounds.height) * layout.height)),
+        ),
+      }
+    }
     return typeof document.elementFromPoint === 'function'
-      ? pointFromElement(document.elementFromPoint(event.clientX, event.clientY))
+      ? pointFromElement(document.elementFromPoint(x, y))
       : null
   }
 
+  const stopEdgePan = useCallback(() => {
+    edgePanPointerRef.current = null
+    edgePanLastTimestampRef.current = null
+    if (edgePanFrameRef.current !== null) {
+      cancelAnimationFrame(edgePanFrameRef.current)
+      edgePanFrameRef.current = null
+    }
+    setIsEdgePanning(false)
+  }, [])
+
+  const edgePanVelocity = (position: number, start: number, end: number) => {
+    if (position < start || position > end) return 0
+    const distanceFromStart = position - start
+    const distanceFromEnd = end - position
+    const proximity = distanceFromStart < EDGE_PAN_ZONE
+      ? -(EDGE_PAN_ZONE - distanceFromStart) / EDGE_PAN_ZONE
+      : distanceFromEnd < EDGE_PAN_ZONE
+        ? (EDGE_PAN_ZONE - distanceFromEnd) / EDGE_PAN_ZONE
+        : 0
+    if (proximity === 0) return 0
+    const speed = EDGE_PAN_MIN_SPEED +
+      (EDGE_PAN_MAX_SPEED - EDGE_PAN_MIN_SPEED) * Math.abs(proximity)
+    return Math.sign(proximity) * speed
+  }
+
+  const scheduleEdgePan = () => {
+    if (edgePanFrameRef.current !== null) return
+    edgePanFrameRef.current = requestAnimationFrame((timestamp) => edgePanStepRef.current(timestamp))
+  }
+
+  const runEdgePanFrame = (timestamp: number) => {
+    edgePanFrameRef.current = null
+    const pointer = edgePanPointerRef.current
+    const container = scrollContainer()
+    const isLineDraft = selectedTool === 'wall' || selectedTool === 'erase'
+    if (
+      !pointer ||
+      !container ||
+      !isLineDraft ||
+      !draftDraggingRef.current ||
+      pointerIdRef.current === null
+    ) {
+      setIsEdgePanning(false)
+      return
+    }
+
+    const previousTimestamp = edgePanLastTimestampRef.current
+    edgePanLastTimestampRef.current = timestamp
+    if (previousTimestamp === null) {
+      scheduleEdgePan()
+      return
+    }
+
+    const viewport = container.getBoundingClientRect()
+    if (viewport.width <= 0 || viewport.height <= 0) {
+      setIsEdgePanning(false)
+      return
+    }
+    const frameSeconds = Math.min(
+      EDGE_PAN_MAX_FRAME_SECONDS,
+      Math.max(0, (timestamp - previousTimestamp) / 1000),
+    )
+    const mapBounds = mapRef.current?.getBoundingClientRect()
+    let deltaX = edgePanVelocity(pointer.x, viewport.left, viewport.right) * frameSeconds
+    let deltaY = edgePanVelocity(pointer.y, viewport.top, viewport.bottom) * frameSeconds
+    if (mapBounds && mapBounds.width > 0 && mapBounds.height > 0) {
+      if (deltaX > 0) deltaX = Math.min(deltaX, Math.max(0, mapBounds.right - pointer.x))
+      else if (deltaX < 0) deltaX = Math.max(deltaX, Math.min(0, mapBounds.left - pointer.x))
+      if (deltaY > 0) deltaY = Math.min(deltaY, Math.max(0, mapBounds.bottom - pointer.y))
+      else if (deltaY < 0) deltaY = Math.max(deltaY, Math.min(0, mapBounds.top - pointer.y))
+    }
+    if (deltaX === 0 && deltaY === 0) {
+      edgePanLastTimestampRef.current = null
+      setIsEdgePanning(false)
+      return
+    }
+
+    const previousLeft = container.scrollLeft
+    const previousTop = container.scrollTop
+    container.scrollLeft += deltaX
+    container.scrollTop += deltaY
+    const moved = container.scrollLeft !== previousLeft || container.scrollTop !== previousTop
+    setIsEdgePanning(moved)
+    if (!moved) {
+      edgePanLastTimestampRef.current = null
+      return
+    }
+
+    const point = pointAtClient(pointer)
+    if (point) {
+      dragEndRef.current = point
+      setHoverCell(point)
+      setDragEnd(point)
+    }
+    scheduleEdgePan()
+  }
+
+  useLayoutEffect(() => {
+    edgePanStepRef.current = runEdgePanFrame
+  })
+
   const clearDraft = () => {
+    stopEdgePan()
     pointerIdRef.current = null
     dragStartRef.current = null
     dragEndRef.current = null
+    draftPointerStartRef.current = null
+    draftDraggingRef.current = false
     keyboardAnchorRef.current = null
     setDragStart(null)
     setDragEnd(null)
@@ -283,8 +436,6 @@ export function ConstructionMap({
     if (!first || !second) return null
     return Math.hypot(second.x - first.x, second.y - first.y)
   }
-
-  const scrollContainer = () => mapRef.current?.closest<HTMLElement>('.construction-map-scroll') ?? null
 
   const revealKeyboardCell = (point: GridPoint) => {
     const container = scrollContainer()
@@ -315,6 +466,24 @@ export function ConstructionMap({
     if (!container) return
     container.scrollLeft += deltaX
     container.scrollTop += deltaY
+  }
+
+  const updatePreviewLabelAnchor = (clientX: number, clientY: number) => {
+    const viewport = scrollContainer()?.getBoundingClientRect()
+    const right = viewport?.right ?? window.innerWidth
+    const top = viewport?.top ?? 0
+    const bottom = viewport?.bottom ?? window.innerHeight
+    const next = {
+      horizontal: clientX > right - 210 ? 'end' as const : 'start' as const,
+      vertical: clientY < top + 70 || clientY > bottom
+        ? 'below' as const
+        : 'above' as const,
+    }
+    setPreviewLabelAnchor((current) => (
+      current.horizontal === next.horizontal && current.vertical === next.vertical
+        ? current
+        : next
+    ))
   }
 
   const beginPan = (
@@ -477,13 +646,58 @@ export function ConstructionMap({
     return () => cancelAnimationFrame(frame)
   }, [centerMapInViewport])
 
-  const indoorFootprintError = useCallback((kind: WorkstationKind, cells: GridPoint[]) => {
+  useEffect(() => {
+    if (selectedTool === 'wall' || selectedTool === 'erase') return stopEdgePan
+    edgePanPointerRef.current = null
+    edgePanLastTimestampRef.current = null
+    if (edgePanFrameRef.current !== null) {
+      cancelAnimationFrame(edgePanFrameRef.current)
+      edgePanFrameRef.current = null
+    }
+    return stopEdgePan
+  }, [selectedTool, stopEdgePan])
+
+  useEffect(() => {
+    const abandonGestures = () => {
+      edgePanPointerRef.current = null
+      edgePanLastTimestampRef.current = null
+      if (edgePanFrameRef.current !== null) {
+        cancelAnimationFrame(edgePanFrameRef.current)
+        edgePanFrameRef.current = null
+      }
+      pointerIdRef.current = null
+      dragStartRef.current = null
+      dragEndRef.current = null
+      draftPointerStartRef.current = null
+      draftDraggingRef.current = false
+      keyboardAnchorRef.current = null
+      panPointerIdRef.current = null
+      panLastPointRef.current = null
+      panStartPointRef.current = null
+      panStartCellRef.current = null
+      panMovedRef.current = false
+      touchPointsRef.current.clear()
+      touchPanCenterRef.current = null
+      touchPinchDistanceRef.current = null
+      spacePressedRef.current = false
+      spacePanUsedRef.current = false
+      setDragStart(null)
+      setDragEnd(null)
+      setDraftTool(null)
+      setIsPanning(false)
+      setIsEdgePanning(false)
+    }
+    window.addEventListener('blur', abandonGestures)
+    return () => window.removeEventListener('blur', abandonGestures)
+  }, [])
+
+  const indoorFootprintWarning = useCallback((kind: WorkstationKind, cells: GridPoint[]) => {
     if (!WORKSTATION_SPECS[kind].indoor) return null
     const roomIds = cells.map((cell) => roomByCell.get(keyFor(cell))?.id ?? null)
     const firstRoom = roomIds[0]
     return firstRoom && roomIds.every((roomId) => roomId === firstRoom)
       ? null
-      : `${WORKSTATION_SPECS[kind].label} must fit completely inside one enclosed room.`
+      : 'Placeable · inactive until enclosed'
   }, [roomByCell])
 
   const preview = useMemo<DraftPreview | null>(() => {
@@ -504,6 +718,7 @@ export function ConstructionMap({
         label: selectedTool === 'wall'
           ? `Wall · ${cells.length} ${cells.length === 1 ? 'tile' : 'tiles'} · ${cells.length * BOUNDARY_SPECS.wall.materialCost} material`
           : `Deconstruct · ${cells.length} ${cells.length === 1 ? 'tile' : 'tiles'}`,
+        warning: null,
         error: outOfBounds ? 'Outside the construction grid.' : occupied ? 'A workstation occupies this wall line.' : null,
       }
     }
@@ -514,14 +729,15 @@ export function ConstructionMap({
         cells: [point],
         valid,
         label: `Door · 1 tile · ${BOUNDARY_SPECS.door.materialCost} material`,
+        warning: null,
         error: valid ? null : 'Door needs an existing wall tile.',
       }
     }
 
     const input = workstationInput(selectedTool, point, rotation)
     const validation = validateWorkstationPlacement(planningLayout, input)
-    const indoorError = validation.valid
-      ? indoorFootprintError(selectedTool, validation.cells)
+    const indoorWarning = validation.valid
+      ? indoorFootprintWarning(selectedTool, validation.cells)
       : null
     const footprint = getWorkstationFootprintSize({
       size: input.size,
@@ -529,11 +745,12 @@ export function ConstructionMap({
     })
     return {
       cells: validation.cells,
-      valid: validation.valid && !indoorError,
+      valid: validation.valid,
       label: `${WORKSTATION_SPECS[selectedTool].label} · ${footprint.width}×${footprint.height} · ${WORKSTATION_SPECS[selectedTool].materialCost} material`,
-      error: validation.error ?? indoorError,
+      warning: indoorWarning,
+      error: validation.error ?? null,
     }
-  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintError, planningLayout, rotation, selectedTool])
+  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintWarning, planningLayout, rotation, selectedTool])
 
   const previewBoundaryLayout = useMemo<ConstructionLayout | null>(() => {
     if (!preview || (selectedTool !== 'wall' && selectedTool !== 'door')) return null
@@ -566,13 +783,6 @@ export function ConstructionMap({
     const id = nextWorkstationId(planningLayout, selectedTool)
     const input = workstationInput(selectedTool, point, rotation, id)
     const validation = validateWorkstationPlacement(planningLayout, input)
-    const indoorError = validation.valid
-      ? indoorFootprintError(selectedTool, validation.cells)
-      : null
-    if (indoorError) {
-      onError(indoorError)
-      return
-    }
     if (!validation.valid) {
       onError(validation.error ?? 'That workstation does not fit there.')
       return
@@ -616,7 +826,12 @@ export function ConstructionMap({
     const point = pointerPoint(event)
     if (!point) return
     event.preventDefault()
+    updatePreviewLabelAnchor(event.clientX, event.clientY)
     pointerIdRef.current = event.pointerId
+    draftPointerStartRef.current = { x: event.clientX, y: event.clientY }
+    draftDraggingRef.current = false
+    edgePanPointerRef.current = { x: event.clientX, y: event.clientY }
+    edgePanLastTimestampRef.current = null
     dragStartRef.current = point
     dragEndRef.current = point
     setHoverCell(point)
@@ -628,6 +843,7 @@ export function ConstructionMap({
   }
 
   const movePointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (selectedTool) updatePreviewLabelAnchor(event.clientX, event.clientY)
     if (event.pointerType === 'touch' && touchPointsRef.current.has(event.pointerId)) {
       touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
       if (touchPanCenterRef.current) {
@@ -655,6 +871,37 @@ export function ConstructionMap({
         return
       }
     }
+    const touchDraftStart = draftPointerStartRef.current
+    const isSinglePlacementTouch = (
+      event.pointerType === 'touch' &&
+      pointerIdRef.current === event.pointerId &&
+      selectedTool !== 'wall' &&
+      selectedTool !== 'erase'
+    )
+    if (
+      isSinglePlacementTouch &&
+      touchDraftStart &&
+      Math.hypot(
+        event.clientX - touchDraftStart.x,
+        event.clientY - touchDraftStart.y,
+      ) >= TOUCH_PAN_DRAG_THRESHOLD
+    ) {
+      event.preventDefault()
+      const container = scrollContainer()
+      clearDraft()
+      panPointerIdRef.current = event.pointerId
+      panLastPointRef.current = { x: event.clientX, y: event.clientY }
+      panStartPointRef.current = touchDraftStart
+      panStartCellRef.current = null
+      panMovedRef.current = true
+      panInspectsStationaryPointerRef.current = false
+      setIsPanning(true)
+      if (container) {
+        container.scrollLeft -= event.clientX - touchDraftStart.x
+        container.scrollTop -= event.clientY - touchDraftStart.y
+      }
+      return
+    }
     if (panPointerIdRef.current === event.pointerId) {
       event.preventDefault()
       const previous = panLastPointRef.current
@@ -669,6 +916,24 @@ export function ConstructionMap({
       }
       panLastPointRef.current = { x: event.clientX, y: event.clientY }
       return
+    }
+    if (pointerIdRef.current === event.pointerId) {
+      edgePanPointerRef.current = { x: event.clientX, y: event.clientY }
+      const lineDraft = selectedTool === 'wall' || selectedTool === 'erase'
+      const lineDragThreshold = event.pointerType === 'touch'
+        ? TOUCH_PAN_DRAG_THRESHOLD
+        : PAN_DRAG_THRESHOLD
+      if (
+        lineDraft &&
+        touchDraftStart &&
+        Math.hypot(
+          event.clientX - touchDraftStart.x,
+          event.clientY - touchDraftStart.y,
+        ) >= lineDragThreshold
+      ) {
+        draftDraggingRef.current = true
+        scheduleEdgePan()
+      }
     }
     const point = pointerPoint(event)
     if (!point) return
@@ -711,6 +976,23 @@ export function ConstructionMap({
     }
     endPan(event, false)
     if (pointerIdRef.current !== null) onError('Draft cancelled.')
+    clearDraft()
+  }
+
+  const losePointerCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const ownsDraft = pointerIdRef.current === event.pointerId
+    const ownsPan = panPointerIdRef.current === event.pointerId
+    const ownsTouch = touchPointsRef.current.has(event.pointerId)
+    if (!ownsDraft && !ownsPan && !ownsTouch) return
+    touchPointsRef.current.delete(event.pointerId)
+    touchPanCenterRef.current = null
+    touchPinchDistanceRef.current = null
+    panPointerIdRef.current = null
+    panLastPointRef.current = null
+    panStartPointRef.current = null
+    panStartCellRef.current = null
+    panMovedRef.current = false
+    setIsPanning(false)
     clearDraft()
   }
 
@@ -758,10 +1040,6 @@ export function ConstructionMap({
       ArrowLeft: { x: -1, y: 0 },
     }
     const cameraMovement: Record<string, GridPoint> = {
-      arrowup: { x: 0, y: -1 },
-      arrowright: { x: 1, y: 0 },
-      arrowdown: { x: 0, y: 1 },
-      arrowleft: { x: -1, y: 0 },
       w: { x: 0, y: -1 },
       d: { x: 1, y: 0 },
       s: { x: 0, y: 1 },
@@ -774,8 +1052,11 @@ export function ConstructionMap({
         cameraDirection.x * KEYBOARD_PAN_STEP,
         cameraDirection.y * KEYBOARD_PAN_STEP,
       )
-      const movement = cursorMovement[event.key]
-      if (!movement) return
+      return
+    }
+    const movement = cursorMovement[event.key]
+    if (movement && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault()
       const next = {
         x: Math.min(layout.width - 1, Math.max(0, cursor.x + movement.x)),
         y: Math.min(layout.height - 1, Math.max(0, cursor.y + movement.y)),
@@ -845,6 +1126,14 @@ export function ConstructionMap({
   }
 
   const previewEndpoint = preview?.cells.at(-1) ?? hoverCell ?? cursor
+  const previewLabelStyle: CSSProperties | undefined = previewEndpoint
+    ? {
+        gridColumn: `${previewEndpoint.x + 1}`,
+        gridRow: `${previewEndpoint.y + 1}`,
+        justifySelf: previewLabelAnchor.horizontal,
+        transform: `translate(${previewLabelAnchor.horizontal === 'end' ? '-6px' : '6px'}, ${previewLabelAnchor.vertical === 'below' ? '6px' : 'calc(-100% - 4px)'})`,
+      }
+    : undefined
   const cursorBoundary = boundaryAt(layout, cursor)
   const cursorWorkstation = workstationAt(layout, cursor)
   const cursorOrder = openOrders.find((order) =>
@@ -871,7 +1160,9 @@ export function ConstructionMap({
     cursorContents,
     selectedTool && preview
       ? preview.valid
-        ? `Valid ${preview.label}.`
+        ? preview.warning
+          ? `${preview.label}. ${preview.warning}.`
+          : `Valid ${preview.label}.`
         : `Invalid placement. ${preview.error ?? ''}`
       : '',
   ].filter(Boolean).join(' ')
@@ -879,12 +1170,13 @@ export function ConstructionMap({
   return (
     <>
       <p className="sr-only" id="construction-grid-help">
-        Choose a build tool, then point and drag on the map. W A S D and Arrow keys pan;
-        Arrow keys also move the grid cursor. Hold Space and left-drag, or middle-drag, to pan
-        without leaving the active tool. Unmodified pixel scrolling pans. Pinch or Control or
-        Command plus scrolling zooms; coarse line or page wheel input also zooms around the
-        pointer. Tap Space to start or finish a wall line. Enter places an object. R rotates.
-        Escape cancels.
+        Choose a build tool, then point and drag on the map. W A S D pans the camera; Arrow
+        keys move the grid cursor. Hold Space and left-drag, or middle-drag, to pan without
+        leaving the active tool. On touch, drag single-placement tools to pan and tap to place.
+        Unmodified pixel scrolling pans. Pinch or Control or Command plus scrolling zooms;
+        coarse line or page wheel input also zooms around the pointer. Drag a wall or
+        deconstruction line to a screen edge to keep drawing while the camera scrolls. Tap
+        Space to start or finish a wall line. Enter places an object. R rotates. Escape cancels.
       </p>
       <p aria-atomic="true" aria-live="polite" className="sr-only" id="construction-grid-status" role="status">
         {cursorStatus}
@@ -918,11 +1210,12 @@ export function ConstructionMap({
         >+</button>
       </div>
       <div
-        className={`construction-camera-surface ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''}`}
+        className={`construction-camera-surface ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''} ${isEdgePanning ? 'is-edge-panning' : ''}`}
         onContextMenu={(event) => {
           event.preventDefault()
           if (selectedTool) onCancelTool()
         }}
+        onLostPointerCapture={losePointerCapture}
         onPointerCancel={cancelPointer}
         onPointerDown={beginPointer}
         onPointerLeave={() => {
@@ -938,7 +1231,7 @@ export function ConstructionMap({
         aria-keyshortcuts="ArrowUp ArrowRight ArrowDown ArrowLeft W A S D Enter Space R Escape Control+Z Meta+Z"
         aria-label={`Freeform construction grid, ${layout.width} columns by ${layout.height} rows. ${rooms.length} ${rooms.length === 1 ? 'room' : 'rooms'}.`}
         aria-roledescription="freeform tile construction grid"
-        className={`construction-map ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''}`}
+        className={`construction-map ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''} ${isEdgePanning ? 'is-edge-panning' : ''}`}
         data-grid-height={layout.height}
         data-grid-width={layout.width}
         onBlur={clearSpaceGesture}
@@ -1116,9 +1409,13 @@ export function ConstructionMap({
           const order = assignedOrderByCrew.get(member.id)
           const activity = order ? constructionOrderActivity(order, constructionPaused) : null
           const activityClass = activity?.toLowerCase().replaceAll(' ', '-') ?? 'idle'
+          const carriedMaterial = order && order.materials.carriedByCrewId === member.id
+            ? carriedConstructionMaterial(order)
+            : 0
           const workerActive = Boolean(
             order && !constructionPaused && !order.block,
           )
+          const showWorkerTask = Boolean(order && (workerActive || order.block))
           const cell = crewCells.get(member.id)
           if (!cell) return null
           const name = member.name
@@ -1126,9 +1423,9 @@ export function ConstructionMap({
           return (
             <span
               aria-label={order
-                ? `${name}, ${activity}, ${constructionOrderLabel(order)}`
+                ? `${name}, ${activity}, ${constructionOrderLabel(order)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} material` : ''}`
                 : `${name}, ${member.status}`}
-              className={`construction-pawn ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'}`}
+              className={`construction-pawn ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'} ${carriedMaterial > 0 ? 'worker-carrying' : ''}`}
               data-construction-worker-id={order ? member.id : undefined}
               data-construction-worker-state={order ? activityClass : undefined}
               data-crew-id={member.id}
@@ -1151,9 +1448,14 @@ export function ConstructionMap({
                 status={workerActive ? 'working' : member.status}
                 variant={workerVariants[memberIndex % workerVariants.length]}
               />
-              {order && workerActive && (
+              {order && showWorkerTask && (
                 <span className="construction-worker-task">
                   <GameIcon name={constructionActivityIcon(order)} />
+                </span>
+              )}
+              {carriedMaterial > 0 && (
+                <span aria-hidden="true" className="construction-worker-cargo">
+                  <GameIcon name="storage" /><b>{materialAmount(carriedMaterial)}</b>
                 </span>
               )}
               <small className="construction-pawn-label">{name.split(' ')[0]}</small>
@@ -1185,7 +1487,7 @@ export function ConstructionMap({
             return (
               <span
                 aria-hidden="true"
-                className={`construction-preview ${preview.valid ? 'valid' : 'invalid'} preview-${selectedTool} ${boundaryPreview ? `construction-boundary boundary-${selectedTool} ${connection.className} ${selectedTool === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}` : ''}`}
+                className={`construction-preview ${preview.valid ? 'valid' : 'invalid'} ${preview.warning ? 'warning' : ''} preview-${selectedTool} ${boundaryPreview ? `construction-boundary boundary-${selectedTool} ${connection.className} ${selectedTool === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}` : ''}`}
                 data-boundary-connection={connection?.name}
                 data-boundary-mask={connection?.mask}
                 data-connect-east={connection && connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -1208,10 +1510,11 @@ export function ConstructionMap({
         {selectedTool && preview && previewEndpoint && (
           <span
             aria-hidden="true"
-            className={`construction-draft-label ${preview.valid ? '' : 'invalid'}`}
-            style={{ gridColumn: `${previewEndpoint.x + 1}`, gridRow: `${previewEndpoint.y + 1}` }}
+            className={`construction-draft-label ${preview.valid ? '' : 'invalid'} ${preview.warning ? 'warning' : ''}`}
+            style={previewLabelStyle}
           >
-            {preview.error ?? preview.label}
+            <span>{preview.error ?? preview.label}</span>
+            {preview.warning && <small><GameIcon name="warning" />{preview.warning}</small>}
           </span>
         )}
 
@@ -1242,6 +1545,11 @@ export function ConstructionMap({
         <span aria-hidden="true" className="construction-scale">20 m</span>
         <span aria-hidden="true" className="construction-grid-shade" />
       </div>
+      {isEdgePanning && (
+        <span aria-hidden="true" className="construction-edge-pan-indicator">
+          <GameIcon name="map" /> Camera scrolling
+        </span>
+      )}
       </div>
     </>
   )

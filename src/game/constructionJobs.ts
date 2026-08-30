@@ -51,6 +51,10 @@ export type ConstructionBlock =
       kind: 'no_path'
       message: string
     }
+  | {
+      kind: 'carrier_unavailable'
+      message: string
+    }
 
 export interface BoundaryConstructionTarget {
   kind: 'boundary'
@@ -100,6 +104,10 @@ export interface ConstructionOrder {
     reserved: number
     delivered: number
     recoverable: number
+    /** Material physically held by a colonist while walking to this site. */
+    carried?: number
+    /** The only colonist allowed to move this in-transit material. */
+    carriedByCrewId?: string | null
   }
   work: {
     required: number
@@ -180,6 +188,8 @@ export interface CancelConstructionCommandResult {
 
 export interface NormalizePersistedConstructionOrdersOptions {
   legacyV5?: boolean
+  /** v8 stored in-transit cargo in `delivered`; convert it without teleporting. */
+  legacyDeliveredInTransit?: boolean
 }
 
 interface AppliedTarget {
@@ -563,6 +573,8 @@ export const deriveConstructionOrders = (
         reserved: 0,
         delivered: 0,
         recoverable: requirements.materialRecoverable,
+        carried: 0,
+        carriedByCrewId: null,
       },
       work: {
         required: requirements.workRequired,
@@ -655,6 +667,20 @@ const clampMaterial = (value: number, maximum = Number.POSITIVE_INFINITY) => {
   const upperBound = Number.isFinite(maximum) ? Math.max(0, maximum) : maximum
   return Math.min(nonnegativeFinite(value), upperBound)
 }
+
+export const carriedConstructionMaterial = (
+  order: Pick<ConstructionOrder, 'materials'>,
+) => clampMaterial(
+  typeof order.materials.carried === 'number' ? order.materials.carried : 0,
+  Math.max(0, order.materials.required - order.materials.delivered),
+)
+
+export const constructionMaterialAccountedFor = (
+  order: Pick<ConstructionOrder, 'materials'>,
+) => Math.min(
+  nonnegativeFinite(order.materials.required),
+  nonnegativeFinite(order.materials.delivered) + carriedConstructionMaterial(order),
+)
 
 const materialAmountLabel = (value: number) =>
   Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100)
@@ -800,6 +826,7 @@ const persistedTarget = (value: unknown): ConstructionOrderTarget | null => {
 const normalizePersistedOrder = (
   value: unknown,
   legacyV5: boolean,
+  legacyDeliveredInTransit: boolean,
 ): ConstructionOrder | null => {
   if (
     !isRecord(value) ||
@@ -838,6 +865,12 @@ const normalizePersistedOrder = (
       value.travelPhase === 'at_site')
       ? value.travelPhase
       : 'idle'
+  const persistedAssignedCrewId =
+    !legacyV5 &&
+    typeof value.assignedCrewId === 'string' &&
+    value.assignedCrewId.trim()
+      ? value.assignedCrewId
+      : null
 
   if (isComplete) {
     return {
@@ -858,6 +891,8 @@ const normalizePersistedOrder = (
         reserved: 0,
         delivered: requirements.materialRequired,
         recoverable: requirements.materialRecoverable,
+        carried: 0,
+        carriedByCrewId: null,
       },
       work: {
         required: requirements.workRequired,
@@ -874,6 +909,9 @@ const normalizePersistedOrder = (
     Number.isFinite(work.completed) &&
     work.completed >= 0 &&
     work.completed <= requirements.workRequired + MATERIAL_EPSILON
+  const persistedCarried = typeof materials.carried === 'number'
+    ? materials.carried
+    : 0
   const validPersistedMaterials =
     typeof materials.required === 'number' &&
     Number.isFinite(materials.required) &&
@@ -886,24 +924,58 @@ const normalizePersistedOrder = (
     Number.isFinite(materials.delivered) &&
     materials.delivered >= 0 &&
     materials.delivered <= requirements.materialRequired + MATERIAL_EPSILON &&
+    (materials.carried === undefined || (
+      typeof materials.carried === 'number' &&
+      Number.isFinite(materials.carried) &&
+      persistedCarried >= 0
+    )) &&
     typeof materials.reserved === 'number' &&
     Number.isFinite(materials.reserved) &&
     materials.reserved >= 0 &&
     materials.reserved <=
-      requirements.materialRequired - materials.delivered + MATERIAL_EPSILON
+      requirements.materialRequired - materials.delivered - persistedCarried + MATERIAL_EPSILON
   const completedWork =
     legacyV5 || !validPersistedWork
       ? legacyV5 && requirements.materialRequired <= MATERIAL_EPSILON
         ? clampMaterial(persistedNumber(work.completed), requirements.workRequired)
         : 0
       : clampMaterial(work.completed as number, requirements.workRequired)
-  const delivered = !legacyV5 && validPersistedMaterials
+  const normalizedDelivered = !legacyV5 && validPersistedMaterials
     ? clampMaterial(materials.delivered as number, requirements.materialRequired)
     : 0
+  const persistedCarrierId =
+    typeof materials.carriedByCrewId === 'string' && materials.carriedByCrewId.trim()
+      ? materials.carriedByCrewId
+      : null
+  const migrateInTransit = Boolean(
+    legacyDeliveredInTransit &&
+    persistedAssignedCrewId &&
+    persistedTravelPhase === 'to_site' &&
+    normalizedDelivered > MATERIAL_EPSILON,
+  )
+  const orphanedCarried = !migrateInTransit && !persistedCarrierId
+    ? clampMaterial(persistedCarried, requirements.materialRequired - normalizedDelivered)
+    : 0
+  const delivered = migrateInTransit
+    ? 0
+    : clampMaterial(normalizedDelivered + orphanedCarried, requirements.materialRequired)
+  const carried = migrateInTransit
+    ? normalizedDelivered
+    : !legacyV5 && validPersistedMaterials && persistedCarrierId
+      ? clampMaterial(
+          persistedCarried,
+          requirements.materialRequired - delivered,
+        )
+      : 0
+  const carriedByCrewId = carried > MATERIAL_EPSILON
+    ? migrateInTransit
+      ? persistedAssignedCrewId
+      : persistedCarrierId
+    : null
   const reserved = !legacyV5 && validPersistedMaterials
     ? clampMaterial(
         materials.reserved as number,
-        requirements.materialRequired - delivered,
+        requirements.materialRequired - delivered - carried,
       )
     : 0
   const persistedBlock = isRecord(value.block) ? value.block : null
@@ -921,7 +993,7 @@ const normalizePersistedOrder = (
     operation: operationFor(Boolean(target.construct), Boolean(target.deconstruct)),
     status: targetChanged
       ? 'blocked'
-      : delivered + MATERIAL_EPSILON >= requirements.materialRequired
+      : delivered + carried + MATERIAL_EPSILON >= requirements.materialRequired
         ? 'building'
         : 'blocked',
     block: targetChanged
@@ -929,16 +1001,11 @@ const normalizePersistedOrder = (
           kind: 'target_changed',
           message: 'The construction target changed before this saved job completed.',
         }
-      : requirements.materialRequired - delivered > MATERIAL_EPSILON
-        ? insufficientMaterialsBlock(requirements.materialRequired - delivered)
+      : requirements.materialRequired - delivered - carried > MATERIAL_EPSILON
+        ? insufficientMaterialsBlock(requirements.materialRequired - delivered - carried)
         : null,
-    assignedCrewId:
-      !legacyV5 &&
-      typeof value.assignedCrewId === 'string' &&
-      value.assignedCrewId.trim()
-        ? value.assignedCrewId
-        : null,
-    travelPhase: persistedTravelPhase,
+    assignedCrewId: carriedByCrewId ?? persistedAssignedCrewId,
+    travelPhase: carriedByCrewId ? 'to_site' : persistedTravelPhase,
     routeBlockedContextKey:
       !legacyV5 &&
       typeof value.routeBlockedContextKey === 'string' &&
@@ -952,6 +1019,8 @@ const normalizePersistedOrder = (
       reserved,
       delivered,
       recoverable: requirements.materialRecoverable,
+      carried,
+      carriedByCrewId,
     },
     work: {
       required: requirements.workRequired,
@@ -972,7 +1041,11 @@ export const normalizePersistedConstructionOrders = (
 ): ConstructionMaterialReservationResult => {
   const seenOrderIds = new Set<string>()
   const orders = (Array.isArray(sourceOrders) ? sourceOrders : []).flatMap((source) => {
-    const order = normalizePersistedOrder(source, Boolean(options.legacyV5))
+    const order = normalizePersistedOrder(
+      source,
+      Boolean(options.legacyV5),
+      Boolean(options.legacyDeliveredInTransit),
+    )
     if (!order || seenOrderIds.has(order.id)) return []
     seenOrderIds.add(order.id)
     return [order]
@@ -1029,7 +1102,8 @@ export const reserveConstructionMaterials = (
       .filter((order) => {
         const required = nonnegativeFinite(order.materials.required)
         const delivered = clampMaterial(order.materials.delivered, required)
-        const remaining = Math.max(0, required - delivered)
+        const carried = carriedConstructionMaterial(order)
+        const remaining = Math.max(0, required - delivered - carried)
         return (
           order.status !== 'complete' &&
           constructionPrerequisitesComplete(order, ordersById) &&
@@ -1043,13 +1117,28 @@ export const reserveConstructionMaterials = (
 
   orders.forEach((order) => {
     const required = nonnegativeFinite(order.materials.required)
-    const delivered = clampMaterial(order.materials.delivered, required)
+    const initialDelivered = clampMaterial(order.materials.delivered, required)
+    const candidateCarried = clampMaterial(
+      carriedConstructionMaterial(order),
+      required - initialDelivered,
+    )
+    const carriedByCrewId = candidateCarried > MATERIAL_EPSILON &&
+      typeof order.materials.carriedByCrewId === 'string' &&
+      order.materials.carriedByCrewId.trim()
+        ? order.materials.carriedByCrewId
+        : null
+    const delivered = carriedByCrewId
+      ? initialDelivered
+      : clampMaterial(initialDelivered + candidateCarried, required)
+    const carried = carriedByCrewId ? candidateCarried : 0
     const recoverable = nonnegativeFinite(order.materials.recoverable)
     order.materials = {
       required,
-      reserved: clampMaterial(order.materials.reserved, required - delivered),
+      reserved: clampMaterial(order.materials.reserved, required - delivered - carried),
       delivered,
       recoverable,
+      carried,
+      carriedByCrewId,
     }
 
     if (order.status === 'complete') {
@@ -1058,17 +1147,20 @@ export const reserveConstructionMaterials = (
       order.assignedCrewId = null
       order.travelPhase = 'idle'
       order.routeBlockedContextKey = null
+      order.materials.carried = 0
+      order.materials.carriedByCrewId = null
       return
     }
 
     if (
       order.block?.kind === 'target_changed' ||
-      order.block?.kind === 'no_path'
+      order.block?.kind === 'no_path' ||
+      order.block?.kind === 'carrier_unavailable'
     ) {
       order.materials.reserved = 0
       order.status = 'blocked'
-      order.assignedCrewId = null
-      order.travelPhase = 'idle'
+      order.assignedCrewId = carriedByCrewId
+      order.travelPhase = carriedByCrewId ? 'to_site' : 'idle'
       if (order.block.kind === 'target_changed') order.routeBlockedContextKey = null
       return
     }
@@ -1077,19 +1169,20 @@ export const reserveConstructionMaterials = (
       order.materials.reserved = 0
       order.status = 'blocked'
       order.block = prerequisiteWaitBlock(order.prerequisiteOrderIds ?? [])
-      order.assignedCrewId = null
-      order.travelPhase = 'idle'
+      order.assignedCrewId = carriedByCrewId
+      order.travelPhase = carriedByCrewId ? 'to_site' : 'idle'
       order.routeBlockedContextKey = null
       return
     }
 
-    const remaining = Math.max(0, required - delivered)
+    const remaining = Math.max(0, required - delivered - carried)
     if (remaining <= MATERIAL_EPSILON) {
-      order.materials.delivered = required
       order.materials.reserved = 0
       order.status = 'building'
       order.block = null
       order.routeBlockedContextKey = null
+      order.assignedCrewId = carriedByCrewId ?? order.assignedCrewId
+      if (carriedByCrewId && order.travelPhase !== 'at_site') order.travelPhase = 'to_site'
       return
     }
 
@@ -1107,11 +1200,12 @@ export const reserveConstructionMaterials = (
         order.status === 'complete' ||
         order.block?.kind === 'target_changed' ||
         order.block?.kind === 'no_path' ||
+        order.block?.kind === 'carrier_unavailable' ||
         !constructionPrerequisitesComplete(order, ordersById)
       ) return
       const remaining = Math.max(
         0,
-        order.materials.required - order.materials.delivered,
+        order.materials.required - constructionMaterialAccountedFor(order),
       )
       if (
         remaining <= MATERIAL_EPSILON ||
@@ -1134,14 +1228,15 @@ export const reserveConstructionMaterials = (
         order.status === 'complete' ||
         order.block?.kind === 'target_changed' ||
         order.block?.kind === 'no_path' ||
+        order.block?.kind === 'carrier_unavailable' ||
         !constructionPrerequisitesComplete(order, ordersById) ||
         fundedOrderIds.has(order.id)
       ) return false
-      return order.materials.required - order.materials.delivered > MATERIAL_EPSILON
+      return order.materials.required - constructionMaterialAccountedFor(order) > MATERIAL_EPSILON
     })
     .sort(compareWorkOrder)
     .forEach((order) => {
-      const remaining = order.materials.required - order.materials.delivered
+      const remaining = order.materials.required - constructionMaterialAccountedFor(order)
       if (unpromisedStock + MATERIAL_EPSILON >= remaining) {
         order.materials.reserved = remaining
         order.status = 'hauling'
@@ -1153,8 +1248,9 @@ export const reserveConstructionMaterials = (
         order.materials.reserved = 0
         order.status = 'blocked'
         order.block = insufficientMaterialsBlock(remaining)
-        order.assignedCrewId = null
-        order.travelPhase = 'idle'
+        const carrierId = order.materials.carriedByCrewId ?? null
+        order.assignedCrewId = carrierId
+        order.travelPhase = carrierId ? 'to_site' : 'idle'
         order.routeBlockedContextKey = null
       }
     })
@@ -1203,8 +1299,11 @@ export const rebuildConstructionOrderPrerequisites = (
     if (order.prerequisiteOrderIds.length > 0) {
       order.status = 'blocked'
       order.block = prerequisiteWaitBlock(order.prerequisiteOrderIds)
-      order.assignedCrewId = null
-      order.travelPhase = 'idle'
+      const carrierId = carriedConstructionMaterial(order) > MATERIAL_EPSILON
+        ? order.materials.carriedByCrewId ?? null
+        : null
+      order.assignedCrewId = carrierId
+      order.travelPhase = carrierId ? 'to_site' : 'idle'
       order.routeBlockedContextKey = null
       order.materials.reserved = 0
     } else if (order.block?.kind === 'prerequisite') {
@@ -1270,6 +1369,8 @@ export const advanceConstructionOrders = (
       order.travelPhase = 'idle'
       order.routeBlockedContextKey = null
       order.materials.reserved = 0
+      order.materials.carried = 0
+      order.materials.carriedByCrewId = null
       if (applied.changed && order.materials.recoverable > 0) {
         constructionStock += order.materials.recoverable
         recoveredMaterials += order.materials.recoverable
@@ -1350,7 +1451,8 @@ export const advanceConstructionOrders = (
       order.work.required,
       order.work.completed + worker.engineeringRate * elapsed,
     )
-    if (order.work.completed < order.work.required) return
+    if (order.work.completed + MATERIAL_EPSILON < order.work.required) return
+    order.work.completed = order.work.required
 
     const applied = applyOrderTarget(layout, order)
     order.assignedCrewId = null
@@ -1387,14 +1489,15 @@ export const advanceConstructionOrders = (
   }
 }
 
-/** Material already staged at unfinished blueprints and recoverable on cancel. */
+/** Material staged at blueprints or carried by colonists and recoverable on cancel. */
 export const returnedConstructionMaterials = (
   orders: readonly ConstructionOrder[],
 ) => orders.reduce(
   (total, order) =>
     order.status === 'complete'
       ? total
-      : total + nonnegativeFinite(order.materials.delivered),
+      : total + nonnegativeFinite(order.materials.delivered) +
+        carriedConstructionMaterial(order),
   0,
 )
 

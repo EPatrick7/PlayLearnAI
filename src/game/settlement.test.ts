@@ -222,7 +222,7 @@ describe('tiny-start settlement construction', () => {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(8)
+    expect(saved.version).toBe(9)
     expect(saved.state?.settlement).toMatchObject({
       phase: 'power_online',
       constructionOrders: [],
@@ -276,6 +276,35 @@ describe('tiny-start settlement construction', () => {
       plannedWall,
       { commandId: 'legacy-command', priority: 3, sequenceStart: 4 },
     )
+    const legacyV8 = structuredClone(saved.state!) as unknown as Record<string, unknown>
+    ;(legacyV8.settlement as Record<string, unknown>).constructionOrders = currentOrders.map(
+      (order) => ({
+        ...order,
+        status: 'building',
+        block: null,
+        assignedCrewId: 'crew-amina-okafor',
+        travelPhase: 'to_site',
+        materials: {
+          required: order.materials.required,
+          reserved: 0,
+          delivered: order.materials.required,
+          recoverable: order.materials.recoverable,
+        },
+      }),
+    )
+    const migratedV8 = await migrate!(legacyV8, 8) as MoonbaseState
+    expect(migratedV8.settlement.constructionOrders[0]).toMatchObject({
+      status: 'building',
+      assignedCrewId: 'crew-amina-okafor',
+      travelPhase: 'to_site',
+      materials: {
+        required: 1,
+        reserved: 0,
+        delivered: 0,
+        carried: 1,
+        carriedByCrewId: 'crew-amina-okafor',
+      },
+    })
     const legacyOrders = currentOrders.map((order) => {
       const legacy = {
         ...order,
@@ -417,7 +446,7 @@ describe('tiny-start settlement construction', () => {
     ;(malformedSpeed.settlement as Record<string, unknown>).constructionSpeed = 99
     expect(merge!(malformedSpeed, useColonyStore.getState()).settlement.constructionSpeed).toBe(3)
 
-    const future = await migrate!(saved.state, 9) as MoonbaseState
+    const future = await migrate!(saved.state, 10) as MoonbaseState
     expect(future).toMatchObject({ worldRevision: 1, settlement: { phase: 'landing' } })
   })
 
@@ -441,7 +470,12 @@ describe('tiny-start settlement construction', () => {
     expect(order).toMatchObject({
       assignedCrewId: 'crew-mateo-alvarez',
       travelPhase: 'to_site',
-      materials: { delivered: 1, reserved: 0 },
+      materials: {
+        delivered: 0,
+        reserved: 0,
+        carried: 1,
+        carriedByCrewId: 'crew-mateo-alvarez',
+      },
       work: { completed: 0 },
     })
     expect(mateo.cell).toEqual(state.settlement.constructionStockpile)

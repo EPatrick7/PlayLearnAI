@@ -1,12 +1,23 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createConstructionLayout, type GridPoint } from '../game/construction'
+import type { ConstructionTool } from '../game/constructionCatalog'
 import { ConstructionMap } from './ConstructionMap'
 
-afterEach(cleanup)
+const originalElementFromPoint = Object.getOwnPropertyDescriptor(document, 'elementFromPoint')
 
-const renderMap = (selectedTool: 'wall' | null = null) => {
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+  if (originalElementFromPoint) {
+    Object.defineProperty(document, 'elementFromPoint', originalElementFromPoint)
+  } else {
+    Reflect.deleteProperty(document, 'elementFromPoint')
+  }
+})
+
+const renderMap = (selectedTool: ConstructionTool | null = null) => {
   const onApply = vi.fn()
   const onCancelTool = vi.fn()
   const onInspectCell = vi.fn()
@@ -237,6 +248,401 @@ describe('ConstructionMap pan and zoom', () => {
     expect(onApply).not.toHaveBeenCalled()
   })
 
+  it('uses a touch drag to pan single-placement tools while preserving tap placement', () => {
+    const { cell, map, onApply, scroll } = renderMap('solar-array')
+    scroll.scrollLeft = 120
+    scroll.scrollTop = 100
+
+    fireEvent.pointerDown(cell({ x: 10, y: 6 }), {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+      pointerId: 60,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 160,
+      clientY: 150,
+      pointerId: 60,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerUp(map, {
+      clientX: 160,
+      clientY: 150,
+      pointerId: 60,
+      pointerType: 'touch',
+    })
+
+    expect(scroll.scrollLeft).toBe(60)
+    expect(scroll.scrollTop).toBe(50)
+    expect(onApply).not.toHaveBeenCalled()
+    expect(map).toHaveClass('tool-active')
+
+    fireEvent.pointerDown(cell({ x: 12, y: 6 }), {
+      button: 0,
+      clientX: 180,
+      clientY: 130,
+      pointerId: 61,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerUp(cell({ x: 12, y: 6 }), {
+      button: 0,
+      clientX: 180,
+      clientY: 130,
+      pointerId: 61,
+      pointerType: 'touch',
+    })
+
+    expect(onApply).toHaveBeenCalledOnce()
+  })
+
+  it('allows indoor workstations outdoors with a clear non-blocking room warning', () => {
+    const { cell, onApply } = renderMap('storage-rack')
+
+    expect(screen.getAllByText(/placeable.*inactive until enclosed/i)).toHaveLength(2)
+
+    fireEvent.pointerDown(cell({ x: 10, y: 5 }), {
+      button: 0,
+      clientX: 180,
+      clientY: 140,
+      pointerId: 63,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(cell({ x: 10, y: 5 }), {
+      button: 0,
+      clientX: 180,
+      clientY: 140,
+      pointerId: 63,
+      pointerType: 'mouse',
+    })
+
+    expect(onApply).toHaveBeenCalledOnce()
+    expect(onApply.mock.calls[0][0]).toMatchObject({
+      ok: true,
+      layout: {
+        workstations: [expect.objectContaining({
+          origin: { x: 10, y: 5 },
+          type: 'storage-rack',
+        })],
+      },
+    })
+  })
+
+  it('edge-scrolls an active wall draft and commits through the newly exposed endpoint', () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback)
+        return frames.length
+      })
+    vi.spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation(() => undefined)
+    const { cell, map, onApply, scroll, surface } = renderMap('wall')
+    act(() => {
+      frames.splice(0).forEach((callback) => callback(0))
+    })
+    scroll.scrollLeft = 100
+    scroll.scrollTop = 80
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
+      bottom: 240,
+      height: 240,
+      left: 0,
+      right: 300,
+      top: 0,
+      width: 300,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    vi.spyOn(map, 'getBoundingClientRect').mockImplementation(() => {
+      const horizontalOffset = scroll.scrollLeft - 100
+      return {
+        bottom: 760,
+        height: 720,
+        left: -20 - horizontalOffset,
+        right: 940 - horizontalOffset,
+        top: 40,
+        width: 960,
+        x: -20 - horizontalOffset,
+        y: 40,
+        toJSON: () => ({}),
+      }
+    })
+    Object.defineProperty(document, 'elementFromPoint', {
+      configurable: true,
+      value: vi.fn().mockReturnValue(map),
+    })
+
+    fireEvent.pointerDown(cell({ x: 2, y: 2 }), {
+      button: 0,
+      clientX: 180,
+      clientY: 120,
+      pointerId: 62,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 296,
+      clientY: 120,
+      pointerId: 62,
+      pointerType: 'mouse',
+    })
+    expect(onApply).not.toHaveBeenCalled()
+
+    act(() => {
+      frames.shift()?.(16)
+      frames.shift()?.(32)
+    })
+
+    expect(scroll.scrollLeft).toBeGreaterThan(100)
+    expect(screen.getByText('Camera scrolling')).toBeVisible()
+
+    fireEvent.pointerUp(surface, {
+      button: 0,
+      clientX: 980,
+      clientY: 800,
+      pointerId: 62,
+      pointerType: 'mouse',
+    })
+
+    expect(onApply).toHaveBeenCalledOnce()
+    expect(onApply.mock.calls[0][0]).toMatchObject({
+      ok: true,
+      affectedCells: [
+        { x: 2, y: 2 },
+        { x: 3, y: 2 },
+        { x: 4, y: 2 },
+        { x: 5, y: 2 },
+        { x: 6, y: 2 },
+        { x: 7, y: 2 },
+        { x: 8, y: 2 },
+      ],
+    })
+    expect(screen.queryByText('Camera scrolling')).not.toBeInTheDocument()
+  })
+
+  it('restarts edge-scroll timing without jumping after the pointer leaves and re-enters the edge', () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    const { cell, map, scroll, surface } = renderMap('wall')
+    act(() => {
+      frames.splice(0).forEach((callback) => callback(0))
+    })
+    scroll.scrollLeft = 100
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
+      bottom: 240,
+      height: 240,
+      left: 0,
+      right: 300,
+      top: 0,
+      width: 300,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    vi.spyOn(map, 'getBoundingClientRect').mockImplementation(() => ({
+      bottom: 760,
+      height: 720,
+      left: -20 - (scroll.scrollLeft - 100),
+      right: 940 - (scroll.scrollLeft - 100),
+      top: 40,
+      width: 960,
+      x: -20 - (scroll.scrollLeft - 100),
+      y: 40,
+      toJSON: () => ({}),
+    }))
+
+    fireEvent.pointerDown(cell({ x: 2, y: 2 }), {
+      button: 0,
+      clientX: 180,
+      clientY: 120,
+      pointerId: 68,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 296,
+      clientY: 120,
+      pointerId: 68,
+      pointerType: 'mouse',
+    })
+    act(() => {
+      frames.shift()?.(16)
+      frames.shift()?.(32)
+    })
+    expect(scroll.scrollLeft).toBeGreaterThan(100)
+
+    fireEvent.pointerMove(map, {
+      clientX: 150,
+      clientY: 120,
+      pointerId: 68,
+      pointerType: 'mouse',
+    })
+    act(() => {
+      frames.shift()?.(48)
+    })
+    const scrollAfterLeavingEdge = scroll.scrollLeft
+    expect(screen.queryByText('Camera scrolling')).not.toBeInTheDocument()
+
+    fireEvent.pointerMove(map, {
+      clientX: 296,
+      clientY: 120,
+      pointerId: 68,
+      pointerType: 'mouse',
+    })
+    act(() => {
+      frames.shift()?.(1_000)
+    })
+    expect(scroll.scrollLeft).toBe(scrollAfterLeavingEdge)
+    act(() => {
+      frames.shift()?.(1_016)
+    })
+    expect(scroll.scrollLeft).toBeGreaterThan(scrollAfterLeavingEdge)
+
+    fireEvent.pointerCancel(surface, {
+      pointerId: 68,
+      pointerType: 'mouse',
+    })
+  })
+
+  it('keeps an edge-adjacent wall tap stationary and one tile wide', () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    const { cell, onApply, scroll } = renderMap('wall')
+    act(() => {
+      frames.splice(0).forEach((callback) => callback(0))
+    })
+    scroll.scrollLeft = 100
+
+    fireEvent.pointerDown(cell({ x: 7, y: 2 }), {
+      button: 0,
+      clientX: 296,
+      clientY: 120,
+      pointerId: 64,
+      pointerType: 'touch',
+    })
+    expect(frames).toHaveLength(0)
+    fireEvent.pointerUp(cell({ x: 7, y: 2 }), {
+      button: 0,
+      clientX: 296,
+      clientY: 120,
+      pointerId: 64,
+      pointerType: 'touch',
+    })
+
+    expect(scroll.scrollLeft).toBe(100)
+    expect(onApply).toHaveBeenCalledOnce()
+    expect(onApply.mock.calls[0][0]).toMatchObject({
+      affectedCells: [{ x: 7, y: 2 }],
+    })
+  })
+
+  it('tolerates touch jitter on object placement but pans after deliberate movement', () => {
+    const { cell, map, onApply, scroll } = renderMap('solar-array')
+    scroll.scrollLeft = 100
+
+    fireEvent.pointerDown(cell({ x: 8, y: 5 }), {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+      pointerId: 65,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(cell({ x: 8, y: 5 }), {
+      clientX: 108,
+      clientY: 100,
+      pointerId: 65,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerUp(cell({ x: 8, y: 5 }), {
+      button: 0,
+      clientX: 108,
+      clientY: 100,
+      pointerId: 65,
+      pointerType: 'touch',
+    })
+    expect(onApply).toHaveBeenCalledOnce()
+    expect(scroll.scrollLeft).toBe(100)
+
+    fireEvent.pointerDown(cell({ x: 12, y: 5 }), {
+      button: 0,
+      clientX: 150,
+      clientY: 100,
+      pointerId: 66,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 163,
+      clientY: 100,
+      pointerId: 66,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerUp(map, {
+      button: 0,
+      clientX: 163,
+      clientY: 100,
+      pointerId: 66,
+      pointerType: 'touch',
+    })
+    expect(onApply).toHaveBeenCalledOnce()
+    expect(scroll.scrollLeft).toBe(87)
+  })
+
+  it('stops a wall edge-scroll silently when pointer capture is lost', () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    const { cell, map, onApply, scroll, surface } = renderMap('wall')
+    act(() => {
+      frames.splice(0).forEach((callback) => callback(0))
+    })
+    scroll.scrollLeft = 100
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
+      bottom: 240,
+      height: 240,
+      left: 0,
+      right: 300,
+      top: 0,
+      width: 300,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.pointerDown(cell({ x: 2, y: 2 }), {
+      button: 0,
+      clientX: 180,
+      clientY: 120,
+      pointerId: 67,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 296,
+      clientY: 120,
+      pointerId: 67,
+      pointerType: 'mouse',
+    })
+    expect(frames).toHaveLength(1)
+    fireEvent.lostPointerCapture(surface, {
+      pointerId: 67,
+      pointerType: 'mouse',
+    })
+    act(() => {
+      frames.splice(0).forEach((callback) => callback(32))
+    })
+
+    expect(scroll.scrollLeft).toBe(100)
+    expect(onApply).not.toHaveBeenCalled()
+    expect(screen.queryByText('Camera scrolling')).not.toBeInTheDocument()
+  })
+
   it('pinch-zooms around the two-finger centroid', () => {
     const { cell, map } = renderMap()
     const output = screen.getByText('100%')
@@ -437,7 +843,7 @@ describe('ConstructionMap pan and zoom', () => {
     expect(surface).toContainElement(map)
   })
 
-  it('pans with WASD and arrows while preserving Arrow-key cursor navigation', () => {
+  it('pans with WASD while Arrow keys move and reveal only the tile cursor', () => {
     const { cell, map, scroll } = renderMap()
     scroll.scrollLeft = 40
     scroll.scrollTop = 25
@@ -466,7 +872,7 @@ describe('ConstructionMap pan and zoom', () => {
 
     fireEvent.keyDown(map, { key: 'ArrowRight' })
 
-    expect(scroll.scrollLeft).toBe(162)
+    expect(scroll.scrollLeft).toBe(114)
     expect(scroll.scrollTop).toBe(25)
     expect(screen.getByRole('status')).toHaveTextContent(/column 10, row 10/i)
 
@@ -480,7 +886,7 @@ describe('ConstructionMap pan and zoom', () => {
     expect(fireEvent.keyDown(input, { key: 'd' })).toBe(true)
     expect(fireEvent.keyDown(input, { key: ' ' })).toBe(true)
     expect(fireEvent.keyUp(input, { key: ' ' })).toBe(true)
-    expect(scroll.scrollLeft).toBe(162)
+    expect(scroll.scrollLeft).toBe(114)
     expect(scroll.scrollTop).toBe(-23)
   })
 })

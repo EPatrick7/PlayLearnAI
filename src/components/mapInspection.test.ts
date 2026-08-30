@@ -112,9 +112,13 @@ describe('construction map inspection', () => {
         stats: [
           { label: 'Status', value: 'Building' },
           { label: 'Progress', value: '50%' },
-          { label: 'Materials', value: '2 / 4 delivered · 2 reserved' },
+          {
+            label: 'Materials',
+            value: '2 / 4 supplied · 2 delivered at site · 2 reserved at pallet',
+          },
           { label: 'Priority', value: 'P5' },
           { label: 'Builder', value: 'Soo-jin Park' },
+          { label: 'Operation', value: 'Inactive until enclosed' },
         ],
       })
     })
@@ -213,14 +217,84 @@ describe('construction map inspection', () => {
     const carrying: ConstructionOrder = {
       ...workstationOrder('building'),
       travelPhase: 'to_site',
-      materials: { required: 4, reserved: 0, delivered: 4, recoverable: 0 },
+      materials: {
+        required: 4,
+        reserved: 0,
+        delivered: 0,
+        recoverable: 0,
+        carried: 4,
+        carriedByCrewId: 'crew-builder',
+      },
       work: { required: 4, completed: 0 },
     }
     const blueprint = inspection([carrying]).get('5:4')?.contents[0]
 
     expect(blueprint?.stats).toContainEqual({
       label: 'Materials',
-      value: '4 / 4 carried',
+      value: '4 / 4 supplied · 4 carried by Soo-jin Park',
+    })
+  })
+
+  it('shows physical cargo on the colonist carrying it', () => {
+    const layout = createConstructionLayout()
+    const builder = {
+      ...createInitialState().crew[0],
+      id: 'crew-builder',
+      name: 'Soo-jin Park',
+      status: 'idle' as const,
+    }
+    const carrying: ConstructionOrder = {
+      ...workstationOrder('building'),
+      travelPhase: 'to_site',
+      materials: {
+        required: 4,
+        reserved: 0,
+        delivered: 0,
+        recoverable: 0,
+        carried: 4,
+        carriedByCrewId: builder.id,
+      },
+      work: { required: 4, completed: 0 },
+    }
+    const tiles = buildMapInspection({
+      width: layout.width,
+      height: layout.height,
+      modules: [],
+      crew: [builder],
+      equipment: [],
+      workOrders: [],
+      entityCells: {
+        crew: new Map([[builder.id, { x: 5, y: 4 }]]),
+        equipment: new Map(),
+        work: new Map(),
+      },
+      constructionLayout: layout,
+      constructionOrders: [carrying],
+    })
+
+    const colonist = tiles.get('5:4')?.contents.find((item) => item.kind === 'crew')
+    expect(colonist).toMatchObject({
+      label: 'Soo-jin Park',
+      subtitle: 'Colonist · Walking to site',
+      detail: expect.stringContaining('Carrying 4 material'),
+    })
+    expect(colonist?.stats).toContainEqual({
+      label: 'Cargo',
+      value: '4 construction material',
+    })
+  })
+
+  it('marks an indoor workstation built outdoors as unusable until enclosed', () => {
+    const workstation = inspection([], [lifeSupport]).get('5:4')?.contents.find(
+      (item) => item.kind === 'workstation',
+    )
+
+    expect(workstation).toMatchObject({
+      detail: expect.stringContaining('Built outdoors; unusable until enclosed.'),
+      stats: expect.arrayContaining([
+        { label: 'Room', value: 'Exterior' },
+        { label: 'Operation', value: 'Needs enclosed room' },
+      ]),
     })
   })
 

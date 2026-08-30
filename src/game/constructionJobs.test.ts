@@ -597,8 +597,22 @@ describe('construction material ledger', () => {
     )
     expect(partial.constructionStock).toBe(1)
     expect(partial.orders.map((order) => order.materials)).toEqual([
-      { required: 1, reserved: 0.5, delivered: 0.5, recoverable: 0 },
-      { required: 1, reserved: 0.5, delivered: 0.5, recoverable: 0 },
+      {
+        required: 1,
+        reserved: 0.5,
+        delivered: 0.5,
+        recoverable: 0,
+        carried: 0,
+        carriedByCrewId: null,
+      },
+      {
+        required: 1,
+        reserved: 0.5,
+        delivered: 0.5,
+        recoverable: 0,
+        carried: 0,
+        carriedByCrewId: null,
+      },
     ])
     expect(availableConstructionStock(partial.constructionStock, partial.orders)).toBe(0)
 
@@ -652,7 +666,7 @@ describe('construction material ledger', () => {
     expect(supplied.constructionStock).toBe(0)
   })
 
-  it('returns only staged material when unfinished work is cancelled', () => {
+  it('returns staged or carried material when unfinished work is cancelled', () => {
     const completed = createConstructionLayout()
     const result = paintBoundaryCell(completed, { x: 7, y: 7 }, 'wall')
     const orders = reserveConstructionMaterials(
@@ -679,6 +693,61 @@ describe('construction material ledger', () => {
     expect(cancelled.returnedMaterials).toBeCloseTo(0.4)
     expect(partial.constructionStock + cancelled.returnedMaterials).toBeCloseTo(1)
     expect(cancelled.projection.layout.boundaries).toEqual([])
+
+    const inTransit = partial.orders.map((order): ConstructionOrder => ({
+      ...order,
+      assignedCrewId: 'builder',
+      travelPhase: 'to_site',
+      materials: {
+        ...order.materials,
+        delivered: 0,
+        carried: 0.4,
+        carriedByCrewId: 'builder',
+      },
+    }))
+    expect(returnedConstructionMaterials(inTransit)).toBeCloseTo(0.4)
+    const cancelledInTransit = cancelConstructionCommand(
+      partial.layout,
+      inTransit,
+      'cancel-wall',
+    )
+    expect(cancelledInTransit.returnedMaterials).toBeCloseTo(0.4)
+    expect(partial.constructionStock + cancelledInTransit.returnedMaterials).toBeCloseTo(1)
+  })
+
+  it('stages orphaned cargo instead of silently destroying it', () => {
+    const completed = createConstructionLayout()
+    const [order] = deriveConstructionOrders(
+      completed,
+      paintBoundaryCell(completed, { x: 7, y: 7 }, 'wall'),
+      { commandId: 'orphan-cargo' },
+    )
+    const orphaned: ConstructionOrder = {
+      ...order,
+      status: 'building',
+      block: null,
+      assignedCrewId: null,
+      travelPhase: 'to_site',
+      materials: {
+        ...order.materials,
+        reserved: 0,
+        delivered: 0,
+        carried: 1,
+        carriedByCrewId: null,
+      },
+    }
+
+    const normalized = reserveConstructionMaterials([orphaned], 0).orders[0]
+    expect(normalized).toMatchObject({
+      status: 'building',
+      materials: {
+        reserved: 0,
+        delivered: 1,
+        carried: 0,
+        carriedByCrewId: null,
+      },
+    })
+    expect(returnedConstructionMaterials([normalized])).toBe(1)
   })
 
   it('cascade-cancels projected dependants when a prerequisite command or order is removed', () => {

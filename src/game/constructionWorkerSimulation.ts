@@ -1,6 +1,8 @@
 import type { ConstructionLayout, GridPoint } from './construction'
 import {
   advanceConstructionOrders,
+  carriedConstructionMaterial,
+  constructionMaterialAccountedFor,
   reserveConstructionMaterials,
   type ConstructionAdvanceResult,
   type ConstructionOrder,
@@ -127,10 +129,14 @@ const constructionRouteContextKey = (
       .map((worker) => worker.id),
     busyWorkers: [...new Set(
       input.orders
-        .filter((order) =>
-          order.status !== 'complete' && order.block?.kind !== 'no_path',
-        )
-        .map((order) => order.assignedCrewId)
+        .filter((order) => order.status !== 'complete')
+        .map((order) => (
+          carriedConstructionMaterial(order) > 0
+            ? order.materials.carriedByCrewId
+            : order.block?.kind !== 'no_path'
+              ? order.assignedCrewId
+              : null
+        ))
         .filter((crewId): crewId is string => Boolean(crewId)),
     )].sort((left, right) => left.localeCompare(right)),
   })
@@ -155,19 +161,24 @@ export const advanceConstructionWorkerSimulation = (
   let recoveredMaterials = 0
   const completedOrderIds: string[] = []
 
-  const retryableOrders = input.orders.map((order) =>
-    order.block?.kind === 'no_path' && order.routeBlockedContextKey !== routeContextKey
-    ? {
-        ...order,
-        status: order.materials.delivered >= order.materials.required
-          ? 'building' as const
-          : 'blocked' as const,
-        block: null,
-        assignedCrewId: null,
-        travelPhase: 'idle' as const,
-        routeBlockedContextKey: null,
-      }
-    : order)
+  const retryableOrders = input.orders.map((order) => {
+    if (order.block?.kind !== 'no_path' || order.routeBlockedContextKey === routeContextKey) {
+      return order
+    }
+    const carrierId = carriedConstructionMaterial(order) > 0
+      ? order.materials.carriedByCrewId ?? null
+      : null
+    return {
+      ...order,
+      status: constructionMaterialAccountedFor(order) >= order.materials.required
+        ? 'building' as const
+        : 'blocked' as const,
+      block: null,
+      assignedCrewId: carrierId,
+      travelPhase: carrierId ? 'to_site' as const : 'idle' as const,
+      routeBlockedContextKey: null,
+    }
+  })
   const initialReservation = reserveConstructionMaterials(
     retryableOrders,
     constructionStock,
@@ -187,10 +198,11 @@ export const advanceConstructionWorkerSimulation = (
   orders.forEach((order) => {
     const before = ordersBeforeRouting.get(order.id)
     if (!before || order.operation === 'deconstruct') return
-    const remaining = Math.max(0, order.materials.required - order.materials.delivered)
+    const remaining = Math.max(
+      0,
+      order.materials.required - constructionMaterialAccountedFor(order),
+    )
     if (remaining <= 0) return
-    const wasAlreadyCarrying = before.travelPhase === 'to_site' ||
-      before.travelPhase === 'at_site'
     const reachedStockpile = (
       before.travelPhase === undefined ||
       before.travelPhase === 'idle' ||
@@ -199,14 +211,14 @@ export const advanceConstructionWorkerSimulation = (
       order.travelPhase === 'to_site' ||
       order.travelPhase === 'at_site'
     )
-    if (!wasAlreadyCarrying && !reachedStockpile) return
+    if (!reachedStockpile) return
     if (constructionStock + 0.000_001 < remaining) return
 
-    // Material becomes physically carried at the pallet. The existing
-    // `delivered` ledger also serves as recoverable staged material if the
-    // player cancels before the builder reaches the site.
+    // Material becomes physical cargo at the pallet and remains bound to this
+    // colonist until arrival. It is not staged at the blueprint yet.
     constructionStock = Math.max(0, constructionStock - remaining)
-    order.materials.delivered = order.materials.required
+    order.materials.carried = carriedConstructionMaterial(order) + remaining
+    order.materials.carriedByCrewId = order.assignedCrewId
     order.materials.reserved = 0
     order.status = 'building'
     order.block = null
@@ -220,19 +232,38 @@ export const advanceConstructionWorkerSimulation = (
       kind: 'no_path',
       message: 'No walkable route from an available builder to this construction site.',
     }
-    order.assignedCrewId = null
-    order.travelPhase = 'idle'
+    const carrierId = carriedConstructionMaterial(order) > 0
+      ? order.materials.carriedByCrewId ?? null
+      : null
+    order.assignedCrewId = carrierId
+    order.travelPhase = carrierId ? 'to_site' : 'idle'
     order.routeBlockedContextKey = routeContextKey
     order.materials.reserved = 0
   })
   const workerById = new Map(input.workers.map((worker) => [worker.id, worker]))
 
   routing.atSiteWorkers
-    .filter((arrival) => arrival.availableWorkTime > 0)
     .forEach((arrival) => {
       const order = orders.find((candidate) => candidate.id === arrival.orderId)
       const worker = workerById.get(arrival.crewId)
-      if (!order || !worker || !worker.canConstruct || order.status === 'complete') return
+      if (!order || !worker || order.status === 'complete') return
+
+      const carried = carriedConstructionMaterial(order)
+      if (carried > 0) {
+        if (order.materials.carriedByCrewId !== arrival.crewId) return
+        order.materials.delivered = Math.min(
+          order.materials.required,
+          order.materials.delivered + carried,
+        )
+        order.materials.carried = 0
+        order.materials.carriedByCrewId = null
+      }
+      if (order.materials.delivered + 0.000_001 < order.materials.required) {
+        order.assignedCrewId = null
+        order.travelPhase = 'idle'
+        return
+      }
+      if (!worker.canConstruct || arrival.availableWorkTime <= 0) return
 
       // The isolated executor still receives each explicit completed dependency
       // so its reservation gate cannot mistake a valid at-site job for an orphan.

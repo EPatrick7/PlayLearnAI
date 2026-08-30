@@ -314,10 +314,10 @@ describe('freeform settlement builder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
     fireEvent.click(screen.getByRole('button', { name: /^Furniture$/i }))
     expect(constructionMap()).toHaveClass('pan-active')
-    expect(screen.getByRole('button', { name: 'Resume Wall construction' })).toBeVisible()
-    expect(screen.getByText('Paused designator')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Continue placing Wall' })).toBeVisible()
+    expect(screen.getByText('Move / Select active')).toBeVisible()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Resume Wall construction' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue placing Wall' }))
     expect(constructionMap()).toHaveClass('tool-active')
     expect(screen.getByRole('button', { name: 'Move / Select' })).toBeVisible()
   })
@@ -426,7 +426,7 @@ describe('freeform settlement builder', () => {
 
     const inspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })
     expect(inspector).toHaveTextContent('P3')
-    expect(inspector).toHaveTextContent('0 / 1 delivered · 1 reserved')
+    expect(inspector).toHaveTextContent('0 / 1 supplied · 1 reserved at pallet')
     expect(inspector).toHaveTextContent('Placement priority · 3 jobs')
     expect(within(inspector).getByRole('button', {
       name: 'Cancel placement · 3 jobs',
