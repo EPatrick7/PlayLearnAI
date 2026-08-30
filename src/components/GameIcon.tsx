@@ -9,6 +9,7 @@ export type GameIconName =
   | 'dust'
   | 'clock'
   | 'reset'
+  | 'rotate'
   | 'work'
   | 'crew'
   | 'gear'
@@ -116,6 +117,14 @@ function IconArtwork({ name }: { name: GameIconName }) {
         <>
           <path d="M5.2 8.2A8 8 0 1 1 4 14" />
           <path d="M4.8 3.8v4.8h4.8" />
+        </>
+      )
+    case 'rotate':
+      return (
+        <>
+          <rect height="8" rx="1" width="10" x="7" y="8" />
+          <path d="M5 7h11l-2.5-2.5" />
+          <path d="M19 17H8l2.5 2.5" />
         </>
       )
     case 'work':

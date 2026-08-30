@@ -128,10 +128,10 @@ const instructionFor = (tool: ConstructionTool | null) => {
   return `${WORKSTATION_SPECS[tool].description} · tap to place · touch-drag pans · R rotates. Colonists haul and build.`
 }
 
-const touchGestureFor = (tool: ConstructionTool) => (
+const gestureFor = (tool: ConstructionTool) => (
   tool === 'wall' || tool === 'erase'
-    ? 'Touch: drag to draw · 2-finger pan'
-    : 'Touch: tap to place · drag to pan'
+    ? 'Drag to draw · right-drag / 2-finger pan'
+    : 'Click/tap to place · right-drag or touch-drag pans'
 )
 
 const shouldCollapseCatalogAfterToolChoice = () => (
@@ -612,8 +612,8 @@ export function SettlementBuilder({
     const cancelledTool = selectedTool
     setSelectedTool(null)
     setAnnouncement(cancelledTool
-      ? `${toolName(cancelledTool)} designator cancelled.`
-      : 'No designator active.')
+      ? `Select mode. ${toolName(cancelledTool)} designator stopped.`
+      : 'Select mode active.')
     setToastVisible(true)
   }, [selectedTool])
 
@@ -1037,6 +1037,24 @@ export function SettlementBuilder({
               <GameIcon name="work" /><span>Build</span><small>B</small>
             </button>
 
+            {selectedTool && (
+              <button
+                aria-label={`Return to Select mode from ${toolName(selectedTool)}`}
+                className="pan-button"
+                onClick={cancelTool}
+                title="Select tiles and move the camera"
+                type="button"
+              >
+                <GameIcon name="inspect" /><span>Select</span>
+              </button>
+            )}
+
+            {isWorkstationTool(selectedTool) && (
+              <button aria-label={`Rotate ${toolName(selectedTool)} to ${nextRotation}°`} className="rotate-tool" onClick={rotate} type="button">
+                <GameIcon name="rotate" /><span>Rotate</span><small>→ {nextRotation}°</small>
+              </button>
+            )}
+
             {buildOpen && (Object.keys(categoryLabels) as BuildCategory[]).map((categoryId) => (
               <button
                 aria-pressed={category === categoryId}
@@ -1053,7 +1071,7 @@ export function SettlementBuilder({
             {!buildOpen && selectedTool && (
               <span className="active-tool-summary">
                 <GameIcon name={selectedToolDefinition?.icon ?? 'work'} />
-                <span><strong>{toolName(selectedTool)}</strong><small>{touchGestureFor(selectedTool)}</small></span>
+                <span><strong>{toolName(selectedTool)}</strong><small>{gestureFor(selectedTool)}</small></span>
               </span>
             )}
 
@@ -1063,17 +1081,6 @@ export function SettlementBuilder({
               </button>
             )}
 
-            {!buildOpen && isWorkstationTool(selectedTool) && (
-              <button aria-label={`Rotate ${toolName(selectedTool)} to ${nextRotation}°`} className="rotate-tool" onClick={rotate} type="button">
-                <GameIcon name="reset" /><span>Rotate</span><small>→ {nextRotation}°</small>
-              </button>
-            )}
-
-            {!buildOpen && selectedTool && (
-              <button aria-label={`Cancel ${toolName(selectedTool)} designator`} className="cancel-tool" onClick={cancelTool} type="button">
-                <GameIcon name="close" /><span>Cancel</span>
-              </button>
-            )}
           </nav>
 
           {buildOpen && (

@@ -71,6 +71,24 @@ const dragConstructionTool = (start: GridPoint, end: GridPoint, pointerId = 1) =
 const clickConstructionCell = (point: GridPoint, pointerId = 1) =>
   dragConstructionTool(point, point, pointerId)
 
+const cancelConstructionToolWithSecondaryClick = (pointerId: number) => {
+  fireEvent.pointerDown(constructionMap(), {
+    button: 2,
+    clientX: 120,
+    clientY: 120,
+    pointerId,
+    pointerType: 'mouse',
+  })
+  fireEvent.pointerUp(constructionMap(), {
+    button: 2,
+    clientX: 120,
+    clientY: 120,
+    pointerId,
+    pointerType: 'mouse',
+  })
+  fireEvent.contextMenu(constructionMap())
+}
+
 const boundaryConnectionSignature = (root: HTMLElement) =>
   [...root.querySelectorAll<HTMLElement>('[data-boundary-mask]')]
     .filter((tile) => !tile.classList.contains('construction-preview'))
@@ -323,15 +341,16 @@ describe('freeform settlement builder', () => {
     expect(constructionMap()).toHaveClass('tool-active')
     expect(bunk).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('region', { name: /^Furniture build tools$/i })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Rotate Bunk bed to 90°' })).toBeVisible()
 
     fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
     expect(screen.queryByRole('region', { name: /build tools$/i })).not.toBeInTheDocument()
     expect(document.querySelector('.active-tool-summary')).toHaveTextContent('Bunk bed')
     expect(screen.getByRole('button', { name: 'Rotate Bunk bed to 90°' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Cancel Bunk bed designator' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Return to Select mode from Bunk bed' })).toBeVisible()
     expect(screen.queryByRole('button', { name: /Move \/ Select|Continue placing/i })).not.toBeInTheDocument()
 
-    fireEvent.contextMenu(constructionMap())
+    cancelConstructionToolWithSecondaryClick(91)
     expect(constructionMap()).toHaveClass('pan-active')
     expect(document.querySelector('.active-tool-summary')).not.toBeInTheDocument()
 
@@ -340,7 +359,7 @@ describe('freeform settlement builder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
     fireEvent.keyDown(constructionMap(), { key: 'Escape' })
     expect(constructionMap()).toHaveClass('pan-active')
-    expect(screen.queryByRole('button', { name: 'Cancel Bunk bed designator' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Return to Select mode from Bunk bed' })).not.toBeInTheDocument()
   })
 
   it('auto-collapses the catalog after a phone-size tool choice', () => {
@@ -355,7 +374,7 @@ describe('freeform settlement builder', () => {
       expect(screen.queryByRole('region', { name: /^Structure build tools$/i })).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'false')
       expect(document.querySelector('.active-tool-summary')).toHaveTextContent('Wall')
-      expect(screen.getByRole('button', { name: 'Cancel Wall designator' })).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Return to Select mode from Wall' })).toBeVisible()
       expect(screen.queryByRole('button', { name: /Move \/ Select|Continue placing/i })).not.toBeInTheDocument()
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
@@ -397,7 +416,7 @@ describe('freeform settlement builder', () => {
     renderFreshApp()
     selectTool('Structure', /^Wall/i)
     clickConstructionCell({ x: 9, y: 6 })
-    fireEvent.contextMenu(constructionMap())
+    cancelConstructionToolWithSecondaryClick(92)
     expect(constructionMap()).toHaveClass('pan-active')
 
     act(() => {
@@ -485,7 +504,7 @@ describe('freeform settlement builder', () => {
     renderFreshApp()
     selectTool('Structure', /^Wall/i)
     dragConstructionTool({ x: 9, y: 6 }, { x: 11, y: 6 })
-    fireEvent.contextMenu(constructionMap())
+    cancelConstructionToolWithSecondaryClick(93)
     clickConstructionCell({ x: 10, y: 6 }, 2)
 
     const inspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })

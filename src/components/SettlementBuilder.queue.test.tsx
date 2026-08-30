@@ -31,6 +31,25 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('SettlementBuilder construction queue', () => {
+  it('offers a one-click Select mode escape from an active designator', () => {
+    const view = render(<SettlementBuilder />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
+    fireEvent.click(screen.getByRole('button', { name: /Wall: Drag a 1-tile line/i }))
+
+    expect(view.container.querySelector('.construction-map')).toHaveClass('tool-active')
+    const selectMode = screen.getByRole('button', { name: 'Return to Select mode from Wall' })
+    expect(selectMode).toBeVisible()
+
+    fireEvent.click(selectMode)
+
+    expect(view.container.querySelector('.construction-map')).toHaveClass('pan-active')
+    expect(screen.queryByRole('button', { name: 'Return to Select mode from Wall' }))
+      .not.toBeInTheDocument()
+    expect(view.container.querySelector('.construction-toast'))
+      .toHaveTextContent('Select mode. Wall designator stopped.')
+  })
+
   it('groups a dragged placement and jumps directly to its next blueprint inspector', async () => {
     queueWallLine()
     const view = render(<SettlementBuilder />)

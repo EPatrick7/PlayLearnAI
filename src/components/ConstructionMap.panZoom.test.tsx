@@ -533,6 +533,114 @@ describe('ConstructionMap pan and zoom', () => {
     expect(onInspectCell).not.toHaveBeenCalled()
   })
 
+  it('right-drags the camera without cancelling or applying the active designator', () => {
+    const { map, onApply, onCancelTool, onInspectCell, scroll, surface } = renderMap('wall')
+    scroll.scrollLeft = 60
+    scroll.scrollTop = 70
+
+    fireEvent.pointerDown(surface, {
+      button: 2,
+      clientX: 120,
+      clientY: 120,
+      pointerId: 79,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(surface, {
+      buttons: 2,
+      clientX: 85,
+      clientY: 95,
+      pointerId: 79,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(surface, {
+      button: 2,
+      clientX: 85,
+      clientY: 95,
+      pointerId: 79,
+      pointerType: 'mouse',
+    })
+    const contextMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    fireEvent(surface, contextMenu)
+
+    expect(scroll.scrollLeft).toBe(95)
+    expect(scroll.scrollTop).toBe(95)
+    expect(contextMenu.defaultPrevented).toBe(true)
+    expect(onApply).not.toHaveBeenCalled()
+    expect(onCancelTool).not.toHaveBeenCalled()
+    expect(onInspectCell).not.toHaveBeenCalled()
+    expect(map).toHaveClass('tool-active')
+  })
+
+  it('keeps a stationary right click as the familiar designator cancel gesture', () => {
+    const { onApply, onCancelTool, onInspectCell, surface } = renderMap('wall')
+
+    fireEvent.pointerDown(surface, {
+      button: 2,
+      clientX: 120,
+      clientY: 120,
+      pointerId: 80,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(surface, {
+      button: 2,
+      clientX: 120,
+      clientY: 120,
+      pointerId: 80,
+      pointerType: 'mouse',
+    })
+    fireEvent.contextMenu(surface)
+
+    expect(onCancelTool).toHaveBeenCalledOnce()
+    expect(onApply).not.toHaveBeenCalled()
+    expect(onInspectCell).not.toHaveBeenCalled()
+  })
+
+  it('does not cancel a designator when a stationary right pointer is interrupted', () => {
+    const { onApply, onCancelTool, onInspectCell, surface } = renderMap('wall')
+
+    fireEvent.pointerDown(surface, {
+      button: 2,
+      clientX: 120,
+      clientY: 120,
+      pointerId: 81,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerCancel(surface, {
+      button: 2,
+      clientX: 120,
+      clientY: 120,
+      pointerId: 81,
+      pointerType: 'mouse',
+    })
+
+    expect(onCancelTool).not.toHaveBeenCalled()
+    expect(onApply).not.toHaveBeenCalled()
+    expect(onInspectCell).not.toHaveBeenCalled()
+  })
+
+  it('supports Control-click as the macOS secondary designator gesture', () => {
+    const { onCancelTool, surface } = renderMap('wall')
+
+    fireEvent.pointerDown(surface, {
+      button: 0,
+      clientX: 120,
+      clientY: 120,
+      ctrlKey: true,
+      pointerId: 82,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(surface, {
+      button: 0,
+      clientX: 120,
+      clientY: 120,
+      ctrlKey: true,
+      pointerId: 82,
+      pointerType: 'mouse',
+    })
+
+    expect(onCancelTool).toHaveBeenCalledOnce()
+  })
+
   it.each([null, 'wall'] as const)(
     'never inspects or applies from a stationary middle click with %s selected',
     (selectedTool) => {
@@ -564,7 +672,7 @@ describe('ConstructionMap pan and zoom', () => {
     ['mouse', 'solar-array'],
     ['touch', 'solar-array'],
   ] as const)(
-    'leaves an active-tool primary %s gutter drag inert while %s remains selected',
+    'pans from an active-tool primary %s gutter drag while %s remains selected',
     (pointerType, selectedTool) => {
       const {
         map,
@@ -574,6 +682,9 @@ describe('ConstructionMap pan and zoom', () => {
         scroll,
         surface,
       } = renderMap(selectedTool)
+      vi.spyOn(map, 'getBoundingClientRect').mockReturnValue(
+        mockRect(300, 300, 480, 360),
+      )
       scroll.scrollLeft = 120
       scroll.scrollTop = 100
 
@@ -599,8 +710,8 @@ describe('ConstructionMap pan and zoom', () => {
         pointerType,
       })
 
-      expect(scroll.scrollLeft).toBe(120)
-      expect(scroll.scrollTop).toBe(100)
+      expect(scroll.scrollLeft).toBe(155)
+      expect(scroll.scrollTop).toBe(140)
       expect(onApply).not.toHaveBeenCalled()
       expect(onInspectCell).not.toHaveBeenCalled()
       expect(onCancelTool).not.toHaveBeenCalled()
@@ -648,7 +759,29 @@ describe('ConstructionMap pan and zoom', () => {
     },
   )
 
-  it('turns an active touch draft into a two-finger pan without applying it', () => {
+  it('keeps an idle designator label inside the viewport after resize and camera scroll', () => {
+    const { cell, container, map, scroll } = renderMap('wall')
+    const preview = map.querySelector<HTMLElement>('.construction-preview')!
+    const previewCell = cell({
+      x: Number(preview.dataset.gridX),
+      y: Number(preview.dataset.gridY),
+    })
+    const label = container.querySelector<HTMLElement>('.construction-draft-label')!
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(mockRect(0, 0, 390, 844))
+    const cellBounds = vi.spyOn(previewCell, 'getBoundingClientRect')
+
+    cellBounds.mockReturnValue(mockRect(350, 300, 30, 30))
+    act(() => window.dispatchEvent(new Event('resize')))
+    expect(label).toHaveStyle({ justifySelf: 'end' })
+    expect(label.style.transform).toContain('-6px')
+
+    cellBounds.mockReturnValue(mockRect(20, 300, 30, 30))
+    fireEvent.scroll(scroll)
+    expect(label).toHaveStyle({ justifySelf: 'start' })
+    expect(label.style.transform).toContain('6px')
+  })
+
+  it('turns an active touch draft into a continuous two-to-one-finger pan without applying it', () => {
     const { cell, map, onApply, scroll } = renderMap('wall')
     scroll.scrollLeft = 100
 
@@ -673,9 +806,15 @@ describe('ConstructionMap pan and zoom', () => {
       pointerType: 'touch',
     })
     fireEvent.pointerUp(map, { pointerId: 6, pointerType: 'touch' })
+    fireEvent.pointerMove(map, {
+      clientX: 125,
+      clientY: 100,
+      pointerId: 5,
+      pointerType: 'touch',
+    })
     fireEvent.pointerUp(map, { pointerId: 5, pointerType: 'touch' })
 
-    expect(scroll.scrollLeft).toBe(120)
+    expect(scroll.scrollLeft).toBe(95)
     expect(onApply).not.toHaveBeenCalled()
   })
 
@@ -1106,7 +1245,15 @@ describe('ConstructionMap pan and zoom', () => {
   })
 
   it('pinch-zooms around the two-finger centroid', () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
     const { cell, map } = renderMap()
+    act(() => {
+      frames.splice(0).forEach((callback) => callback(0))
+    })
     const output = screen.getByText('100%')
 
     fireEvent.pointerDown(cell({ x: 1, y: 1 }), {
@@ -1129,10 +1276,63 @@ describe('ConstructionMap pan and zoom', () => {
       pointerId: 41,
       pointerType: 'touch',
     })
+    act(() => {
+      frames.splice(0).forEach((callback) => callback(16))
+    })
 
     expect(Number.parseInt(output.textContent ?? '0')).toBeGreaterThan(100)
     fireEvent.pointerUp(map, { pointerId: 41, pointerType: 'touch' })
     fireEvent.pointerUp(map, { pointerId: 40, pointerType: 'touch' })
+  })
+
+  it('flushes a parallel two-finger pan before release without changing zoom', () => {
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    const { cell, map, onApply, onInspectCell, scroll } = renderMap()
+    act(() => {
+      frames.splice(0).forEach((callback) => callback(0))
+    })
+    scroll.scrollLeft = 200
+    scroll.scrollTop = 150
+
+    fireEvent.pointerDown(cell({ x: 1, y: 1 }), {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+      pointerId: 42,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerDown(cell({ x: 2, y: 1 }), {
+      button: 0,
+      clientX: 200,
+      clientY: 100,
+      pointerId: 43,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 150,
+      clientY: 130,
+      pointerId: 42,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 250,
+      clientY: 130,
+      pointerId: 43,
+      pointerType: 'touch',
+    })
+    expect(frames).toHaveLength(1)
+    fireEvent.pointerUp(map, { pointerId: 43, pointerType: 'touch' })
+
+    expect(screen.getByText('100%')).toBeVisible()
+    expect(scroll.scrollLeft).toBe(150)
+    expect(scroll.scrollTop).toBe(120)
+    expect(onApply).not.toHaveBeenCalled()
+    expect(onInspectCell).not.toHaveBeenCalled()
+    fireEvent.pointerUp(map, { pointerId: 42, pointerType: 'touch' })
   })
 
   it('zooms for unmodified pixel wheel input without using the active tool', () => {
@@ -1456,29 +1656,15 @@ describe('ConstructionMap pan and zoom', () => {
     expect(onInspectCell).not.toHaveBeenCalled()
   })
 
-  it('recenters the occupied workspace after a viewport resize', () => {
-    let frame = 0
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-      frame += 1
-      callback(frame)
-      return frame
-    })
-    const { map, scroll } = renderMap()
-    Object.defineProperties(map, {
-      offsetLeft: { configurable: true, value: 400 },
-      offsetTop: { configurable: true, value: 300 },
-      offsetWidth: { configurable: true, value: 240 },
-      offsetHeight: { configurable: true, value: 180 },
-    })
-    Object.defineProperties(scroll, {
-      clientWidth: { configurable: true, value: 100 },
-      clientHeight: { configurable: true, value: 80 },
-    })
+  it('preserves the player camera after a viewport resize', () => {
+    const { scroll } = renderMap()
+    scroll.scrollLeft = 213
+    scroll.scrollTop = 147
 
     window.dispatchEvent(new Event('resize'))
 
-    expect(scroll.scrollLeft).toBe(470)
-    expect(scroll.scrollTop).toBe(350)
+    expect(scroll.scrollLeft).toBe(213)
+    expect(scroll.scrollTop).toBe(147)
   })
 
   it('keeps the pan surface larger than the grid so margins also accept camera drags', () => {
