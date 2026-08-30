@@ -90,6 +90,8 @@ export interface BuildSiteState {
 
 export interface SettlementState {
   phase: SettlementPhase
+  /** Physical-site seed; unlike incident seed, this survives a new incident run. */
+  terrainSeed?: number
   layout: ConstructionLayout
   constructionOrders: ConstructionOrder[]
   constructionSequence: number

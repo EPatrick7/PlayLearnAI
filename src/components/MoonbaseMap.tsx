@@ -49,6 +49,7 @@ import { ModuleConnectors, ModuleTilemap } from './ModuleTilemap'
 import { getModuleWalkableCells } from './moduleTileGeometry'
 import { PawnSprite, type PawnSpriteVariant } from './PawnSprite'
 import { TileStackPicker } from './TileStackPicker'
+import { LunarTerrain } from './LunarTerrain'
 
 export interface MoonbaseMapProps {
   width: number
@@ -86,6 +87,7 @@ export interface MoonbaseMapProps {
   constructionCrew?: readonly ConstructionCrewPosition[]
   /** Keeps worker and blueprint activity labels honest while time is stopped. */
   constructionPaused?: boolean
+  terrainSeed?: number
 }
 
 interface ModulePresentation {
@@ -324,74 +326,6 @@ function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
   )
 }
 
-function MapTerrain({ width, height, dustActive }: { width: number; height: number; dustActive: boolean }) {
-  const viewWidth = width * 100
-  const viewHeight = height * 100
-  const dustSpecks = Array.from({ length: 34 }, (_, index) => ({
-    x: (index * 193 + 47) % viewWidth,
-    y: (index * 311 + 89) % viewHeight,
-    radius: 2 + (index % 4),
-  }))
-
-  return (
-    <svg
-      aria-hidden="true"
-      className="map-terrain"
-      preserveAspectRatio="none"
-      style={{ inset: 0, pointerEvents: 'none', position: 'absolute', width: '100%', height: '100%', zIndex: 0 }}
-      viewBox={`0 0 ${viewWidth} ${viewHeight}`}
-    >
-      <defs>
-        <radialGradient id="lunar-ground" cx="47%" cy="38%" r="75%">
-          <stop offset="0" stopColor="#777a74" />
-          <stop offset=".5" stopColor="#5f635f" />
-          <stop offset="1" stopColor="#464c49" />
-        </radialGradient>
-        <radialGradient id="crater-well" cx="38%" cy="34%" r="64%">
-          <stop offset="0" stopColor="#3b403d" />
-          <stop offset=".58" stopColor="#4b504c" />
-          <stop offset=".72" stopColor="#878981" />
-          <stop offset="1" stopColor="#555a56" stopOpacity="0" />
-        </radialGradient>
-        <pattern id="survey-grid" height="100" patternUnits="userSpaceOnUse" width="100">
-          <path d="M100 0H0V100" fill="none" stroke="#bdd1d2" strokeOpacity=".11" strokeWidth="2" />
-          <circle cx="4" cy="4" fill="#d6e0de" opacity=".13" r="2" />
-        </pattern>
-        <linearGradient id="dust-band" x1="0" x2="1">
-          <stop offset="0" stopColor="#a4845f" stopOpacity="0" />
-          <stop offset=".45" stopColor="#c29c6f" stopOpacity=".22" />
-          <stop offset=".7" stopColor="#917252" stopOpacity=".1" />
-          <stop offset="1" stopColor="#a4845f" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-
-      <rect fill="url(#lunar-ground)" fillOpacity=".42" height={viewHeight} width={viewWidth} />
-      <path className="terrain-ridge ridge-north" d={`M0 180 C310 80 480 250 760 135 S1300 110 1580 210 S2050 155 ${viewWidth} 70`} />
-      <path className="terrain-ridge ridge-south" d={`M0 ${viewHeight - 180} C360 ${viewHeight - 360} 590 ${viewHeight - 90} 920 ${viewHeight - 230} S1650 ${viewHeight - 130} ${viewWidth} ${viewHeight - 280}`} />
-      <ellipse cx={viewWidth * 0.11} cy={viewHeight * 0.16} fill="url(#crater-well)" rx="145" ry="92" />
-      <ellipse cx={viewWidth * 0.89} cy={viewHeight * 0.74} fill="url(#crater-well)" rx="190" ry="125" />
-      <ellipse cx={viewWidth * 0.71} cy={viewHeight * 0.18} fill="url(#crater-well)" rx="65" ry="46" />
-      <g className="surface-rocks" fill="#a5aca8" opacity=".22">
-        <path d={`M${viewWidth * 0.18} ${viewHeight * 0.7}l22-25 31 18-13 29Z`} />
-        <path d={`M${viewWidth * 0.77} ${viewHeight * 0.52}l18-20 26 12-5 25Z`} />
-        <path d={`M${viewWidth * 0.36} ${viewHeight * 0.12}l13-13 19 9-7 16Z`} />
-      </g>
-      <rect fill="url(#survey-grid)" height={viewHeight} width={viewWidth} />
-
-      {dustActive && (
-        <g className="dust-front-graphic">
-          <path d={`M-300 0H${viewWidth * 0.45}L${viewWidth * 0.75} ${viewHeight}H0Z`} fill="url(#dust-band)" />
-          <g className="dust-specks" fill="#d0ab79" opacity=".36">
-            {dustSpecks.map((speck, index) => (
-              <circle cx={speck.x} cy={speck.y} key={index} r={speck.radius} />
-            ))}
-          </g>
-        </g>
-      )}
-    </svg>
-  )
-}
-
 function MapRoutes({
   routes,
   modules,
@@ -484,6 +418,7 @@ export function MoonbaseMap({
   constructionOrders = [],
   constructionCrew = [],
   constructionPaused = false,
+  terrainSeed = 240826,
 }: MoonbaseMapProps) {
   const [rovingCellKey, setRovingCellKey] = useState('0:0')
   const [selectedCellKey, setSelectedCellKey] = useState<string | null>(null)
@@ -820,7 +755,7 @@ export function MoonbaseMap({
         gridTemplateRows: `repeat(${height}, minmax(0, 1fr))`,
       }}
     >
-      <MapTerrain dustActive={dustActive} height={height} width={width} />
+      <LunarTerrain dustActive={dustActive} height={height} seed={terrainSeed} width={width} />
       <div className="map-grid" aria-hidden="true" />
       {constructionLayout && <FreeformOperationsLayer layout={constructionLayout} />}
       {constructionLayout && constructionPlanningLayout && openConstructionOrders.length > 0 && (

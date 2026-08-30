@@ -36,6 +36,7 @@ interface RenderMapOptions {
   layout?: ConstructionLayout
   overlapCounts?: ReadonlyMap<string, number>
   stackOpenCell?: GridPoint | null
+  terrainSeed?: number
 }
 
 const renderMap = (
@@ -73,6 +74,7 @@ const renderMap = (
         rotation={0}
         selectedTool={activeTool}
         stackOpenCell={options.stackOpenCell}
+        terrainSeed={options.terrainSeed}
         toolActivationId={toolActivationId}
       />
     </div>
@@ -152,6 +154,22 @@ const inspectionTile = (
 })
 
 describe('ConstructionMap pan and zoom', () => {
+  it('keeps seeded terrain separate from construction hit targets across tool changes', () => {
+    const { container, map, rerenderSelectedTool } = renderMap(null, { terrainSeed: 240826 })
+    const terrain = () => container.querySelector<HTMLElement>('.lunar-terrain')
+    const signature = () => terrain()?.dataset.terrainSignature
+
+    const initialSignature = signature()
+    expect(Number(terrain()?.dataset.terrainFeatureCount)).toBeGreaterThanOrEqual(42)
+    expect(map.querySelectorAll('[data-construction-cell]')).toHaveLength(24 * 18)
+    expect(terrain()).toHaveAttribute('aria-hidden', 'true')
+    expect(terrain()).not.toHaveAttribute('data-construction-cell')
+
+    rerenderSelectedTool('wall')
+    expect(signature()).toBe(initialSignature)
+    expect(map.querySelectorAll('[data-construction-cell]')).toHaveLength(24 * 18)
+  })
+
   it('waits for a fresh target after activation even when the stale cursor is valid', () => {
     const { cell, map, rerenderSelectedTool } = renderMap()
 

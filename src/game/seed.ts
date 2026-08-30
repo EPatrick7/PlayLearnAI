@@ -463,6 +463,7 @@ export const createInitialState = (): MoonbaseState => ({
   map: { width: 24, height: 18 },
   settlement: {
     phase: 'landing',
+    terrainSeed: MOONBASE_SEED,
     layout: createStarterConstruction(),
     constructionOrders: [],
     constructionSequence: 1,

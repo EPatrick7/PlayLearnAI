@@ -1490,6 +1490,7 @@ export function SettlementBuilder({
             selectedCell={selectedTile?.cell ?? stackSnapshot?.cell ?? null}
             selectedTool={constructionQueueOpen ? null : selectedTool}
             stackOpenCell={stackSnapshot?.cell ?? null}
+            terrainSeed={colony.settlement.terrainSeed ?? colony.seed}
             toolActivationId={toolActivationId}
           />
         </div>

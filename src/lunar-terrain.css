@@ -1,0 +1,60 @@
+/* Procedural Shackleton terrain: quiet basin, connected bedrock, and field debris. */
+html .world-stage:not(.settlement-stage),
+html .construction-stage,
+html .settlement-map-scroll {
+  background-color: #343830;
+  background-image:
+    radial-gradient(ellipse at 48% 44%, rgba(122, 123, 108, 0.24), transparent 52%),
+    radial-gradient(circle at 16% 24%, rgba(225, 216, 187, 0.08) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 72% 68%, rgba(18, 21, 17, 0.16) 0 1px, transparent 1.6px),
+    linear-gradient(145deg, #4f5248, #30342d 74%);
+  background-position: center, 0 0, 11px 7px, center;
+  background-size: auto, 37px 31px, 53px 47px, auto;
+}
+
+html .moonbase-map,
+html .construction-map {
+  background-color: #55584e;
+  background-image:
+    radial-gradient(ellipse at 24% 48%, rgba(187, 183, 158, 0.13), transparent 31%),
+    radial-gradient(ellipse at 76% 16%, rgba(220, 213, 185, 0.07), transparent 24%),
+    radial-gradient(circle at 31% 72%, rgba(29, 32, 27, 0.16) 0 1px, transparent 1.7px),
+    radial-gradient(circle at 74% 31%, rgba(226, 219, 194, 0.095) 0 1px, transparent 1.6px),
+    linear-gradient(145deg, #686a5f, #474b43 72%, #3c4039);
+  background-position: center, center, 0 0, 12px 17px, center;
+  background-size: auto, auto, 29px 23px, 41px 37px, auto;
+}
+
+.lunar-terrain {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.lunar-terrain.dust-active::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  opacity: 0.82;
+  background:
+    radial-gradient(circle, rgba(221, 177, 117, 0.38) 0 1px, transparent 1.5px) 7px 11px / 31px 37px,
+    radial-gradient(circle, rgba(149, 112, 73, 0.2) 0 1px, transparent 1.8px) 19px 3px / 47px 29px,
+    linear-gradient(104deg, rgba(137, 105, 70, 0.24), rgba(190, 148, 96, 0.12) 38%, transparent 68%);
+  clip-path: polygon(0 0, 48% 0, 77% 100%, 0 100%);
+  content: "";
+  pointer-events: none;
+}
+
+.construction-map.tool-active .lunar-terrain {
+  filter: saturate(0.88) brightness(0.96);
+}
+
+@media (max-width: 700px) {
+  .lunar-terrain { filter: contrast(0.97); }
+}

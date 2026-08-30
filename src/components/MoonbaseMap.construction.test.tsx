@@ -3,6 +3,11 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { getWorkstationCells, type WorkstationPlacement } from '../game/construction'
 import type { ConstructionOrder } from '../game/constructionJobs'
+import {
+  generateLunarTerrain,
+  isLunarTerrainQuietCell,
+  lunarTerrainFeatures,
+} from '../game/lunarTerrain'
 import { createInitialState } from '../game/seed'
 import { MoonbaseMap, type MoonbaseMapProps } from './MoonbaseMap'
 
@@ -108,7 +113,114 @@ const renderMap = (overrides: Partial<MoonbaseMapProps> = {}) => {
   return { ...render(<MoonbaseMap {...props} />), props, state }
 }
 
+const terrainSignature = (seed: number) => lunarTerrainFeatures(generateLunarTerrain({
+  width: 24,
+  height: 18,
+  seed,
+})).map((feature) => [
+  feature.kind,
+  feature.x,
+  feature.y,
+  feature.width,
+  feature.height,
+  feature.variant,
+  feature.rotation,
+  feature.neighborMask ?? null,
+])
+
+describe('lunar terrain generation', () => {
+  it('is repeatable for one run seed and varies between run seeds', () => {
+    expect(terrainSignature(240826)).toEqual(terrainSignature(240826))
+    expect(terrainSignature(240827)).not.toEqual(terrainSignature(240826))
+    expect(terrainSignature(0)).not.toEqual(terrainSignature(1))
+  })
+
+  it('keeps features in bounds at a restrained density', () => {
+    const terrain = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
+    const features = lunarTerrainFeatures(terrain)
+
+    expect(terrain.outcrops.length).toBeGreaterThanOrEqual(24)
+    expect(terrain.outcrops.length).toBeLessThanOrEqual(32)
+    expect(features.length).toBeGreaterThanOrEqual(42)
+    expect(features.length).toBeLessThanOrEqual(64)
+    features.forEach((feature) => {
+      expect(Number.isInteger(feature.x) && Number.isInteger(feature.y)).toBe(true)
+      expect(feature.x).toBeGreaterThanOrEqual(0)
+      expect(feature.y).toBeGreaterThanOrEqual(0)
+      expect(feature.x + feature.width).toBeLessThanOrEqual(24)
+      expect(feature.y + feature.height).toBeLessThanOrEqual(18)
+      expect(feature.variant).toBeGreaterThanOrEqual(0)
+      expect(feature.variant).toBeLessThanOrEqual(3)
+    })
+  })
+
+  it('keeps every footprint in bounds on maps smaller than the usual feature sizes', () => {
+    ;[
+      { width: 1, height: 1 },
+      { width: 2, height: 1 },
+      { width: 2, height: 2 },
+    ].forEach(({ width, height }) => {
+      lunarTerrainFeatures(generateLunarTerrain({ width, height, seed: 0 })).forEach((feature) => {
+        expect(feature.x).toBeGreaterThanOrEqual(0)
+        expect(feature.y).toBeGreaterThanOrEqual(0)
+        expect(feature.x + feature.width).toBeLessThanOrEqual(width)
+        expect(feature.y + feature.height).toBeLessThanOrEqual(height)
+      })
+    })
+  })
+
+  it('does not overlap physical feature footprints', () => {
+    const terrain = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
+    const occupied = new Set<string>()
+    ;[...terrain.outcrops, ...terrain.craters, ...terrain.tracks, ...terrain.debris]
+      .forEach((feature) => {
+        for (let y = feature.y; y < feature.y + feature.height; y += 1) {
+          for (let x = feature.x; x < feature.x + feature.width; x += 1) {
+            const key = `${x}:${y}`
+            expect(occupied.has(key)).toBe(false)
+            occupied.add(key)
+          }
+        }
+      })
+  })
+
+  it('builds valid neighbour masks and leaves the surveyed basin clear of rock walls', () => {
+    const terrain = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
+    const outcropKeys = new Set(terrain.outcrops.map((feature) => `${feature.x}:${feature.y}`))
+
+    terrain.outcrops.forEach((feature) => {
+      const expectedMask =
+        (outcropKeys.has(`${feature.x}:${feature.y - 1}`) ? 1 : 0) |
+        (outcropKeys.has(`${feature.x + 1}:${feature.y}`) ? 2 : 0) |
+        (outcropKeys.has(`${feature.x}:${feature.y + 1}`) ? 4 : 0) |
+        (outcropKeys.has(`${feature.x - 1}:${feature.y}`) ? 8 : 0)
+      expect(feature.neighborMask).toBe(expectedMask)
+      expect(isLunarTerrainQuietCell(feature, 24, 18)).toBe(false)
+    })
+  })
+})
+
 describe('MoonbaseMap live construction layer', () => {
+  it('keeps seeded terrain stable and separate from the 24 by 18 inspection grid', () => {
+    const view = renderMap({ terrainSeed: 240826 })
+    const terrain = () => view.container.querySelector<HTMLElement>('.lunar-terrain')
+    const signature = () => terrain()?.dataset.terrainSignature
+
+    const initialSignature = signature()
+    expect(Number(terrain()?.dataset.terrainFeatureCount)).toBeGreaterThanOrEqual(42)
+    expect(view.container.querySelectorAll('[data-map-cell]')).toHaveLength(24 * 18)
+    expect(terrain()).toHaveAttribute('aria-hidden', 'true')
+    expect(terrain()).not.toHaveAttribute('data-map-cell')
+    expect(terrain()?.style.backgroundImage).toContain('data:image/svg+xml')
+
+    view.rerender(<MoonbaseMap {...view.props} dustActive />)
+    expect(signature()).toBe(initialSignature)
+    expect(view.container.querySelectorAll('[data-map-cell]')).toHaveLength(24 * 18)
+
+    view.rerender(<MoonbaseMap {...view.props} terrainSeed={240827} />)
+    expect(signature()).not.toBe(initialSignature)
+  })
+
   it('renders unfinished walls and workstations as designations above completed objects', () => {
     const { container } = renderMap({ constructionOrders: [wallOrder(), bunkOrder()] })
 

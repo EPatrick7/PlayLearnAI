@@ -53,6 +53,7 @@ import {
   type MapTileInspection,
 } from './mapInspection'
 import { PawnSprite } from './PawnSprite'
+import { LunarTerrain } from './LunarTerrain'
 
 interface ConstructionMapProps {
   layout: ConstructionLayout
@@ -84,6 +85,7 @@ interface ConstructionMapProps {
   stackOpenCell?: GridPoint | null
   overlapCounts?: ReadonlyMap<string, number>
   inspectionByCell?: ReadonlyMap<string, MapTileInspection>
+  terrainSeed?: number
 }
 
 interface DraftPreview {
@@ -238,6 +240,7 @@ export function ConstructionMap({
   stackOpenCell = null,
   overlapCounts = new Map(),
   inspectionByCell = new Map(),
+  terrainSeed = 240826,
 }: ConstructionMapProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const surfaceRef = useRef<HTMLDivElement>(null)
@@ -1528,6 +1531,8 @@ export function ConstructionMap({
         } as CSSProperties}
         tabIndex={0}
       >
+        <LunarTerrain height={layout.height} seed={terrainSeed} width={layout.width} />
+
         {Array.from({ length: layout.width * layout.height }, (_, index) => {
           const x = index % layout.width
           const y = Math.floor(index / layout.width)

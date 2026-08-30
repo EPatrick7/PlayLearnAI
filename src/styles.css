@@ -2263,10 +2263,9 @@ button:disabled {
   background:
     radial-gradient(circle at 69% 16%, rgba(236, 229, 204, 0.14), transparent 17%),
     radial-gradient(circle at 11% 84%, rgba(34, 36, 35, 0.26), transparent 34%),
-    linear-gradient(145deg, rgba(110, 112, 106, 0.48), rgba(67, 70, 66, 0.62)),
-    url("./assets/lunar-regolith.webp");
-  background-position: center, center, center, center;
-  background-size: auto, auto, auto, min(52vw, 680px) min(52vw, 680px);
+    linear-gradient(145deg, rgba(110, 112, 106, 0.48), rgba(67, 70, 66, 0.62));
+  background-position: center, center, center;
+  background-size: auto, auto, auto;
   box-shadow: 0 0 90px rgba(0, 0, 0, 0.36) inset;
 }
 
@@ -3586,9 +3585,7 @@ button:disabled {
   z-index: 1;
   inset: 0;
   overflow: hidden;
-  background:
-    linear-gradient(rgba(35, 38, 36, 0.16), rgba(13, 16, 15, 0.28)),
-    url("./assets/lunar-regolith.webp") center / 640px 640px;
+  background: linear-gradient(rgba(35, 38, 36, 0.16), rgba(13, 16, 15, 0.28));
 }
 
 .settlement-map-scroll > .moonbase-map {
@@ -3612,9 +3609,7 @@ button:disabled {
 }
 
 .world-stage:not(.settlement-stage) {
-  background:
-    linear-gradient(rgba(35, 38, 36, 0.16), rgba(13, 16, 15, 0.28)),
-    url("./assets/lunar-regolith.webp") center / 640px 640px;
+  background: linear-gradient(rgba(35, 38, 36, 0.16), rgba(13, 16, 15, 0.28));
 }
 
 .settlement-map-scroll:focus-visible {

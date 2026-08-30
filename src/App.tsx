@@ -521,6 +521,7 @@ function App() {
           selectedEquipmentId={selectedEquipmentId}
           selectedModuleId={selectedModuleId ?? ''}
           selectedWorkOrderId={selection?.kind === 'work' ? selection.id : null}
+          terrainSeed={colony.settlement.terrainSeed ?? colony.seed}
           width={colony.map.width}
           workOrders={colony.workOrders}
         />
