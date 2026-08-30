@@ -56,6 +56,10 @@ import { PawnSprite } from './PawnSprite'
 interface ConstructionMapProps {
   layout: ConstructionLayout
   planningLayout?: ConstructionLayout
+  focusTarget?: {
+    cell: GridPoint
+    requestId: number
+  } | null
   constructionOrders?: readonly ConstructionOrder[]
   constructionPaused?: boolean
   constructionStock?: number
@@ -211,6 +215,7 @@ const nextWorkstationId = (layout: ConstructionLayout, kind: WorkstationKind) =>
 export function ConstructionMap({
   layout,
   planningLayout = layout,
+  focusTarget = null,
   constructionOrders = [],
   constructionPaused = false,
   constructionStock = 0,
@@ -241,6 +246,7 @@ export function ConstructionMap({
   const panMovedRef = useRef(false)
   const panInspectsStationaryPointerRef = useRef(true)
   const cameraInitializedRef = useRef(false)
+  const handledFocusRequestRef = useRef<number | null>(null)
   const zoomAnchorRef = useRef<ZoomAnchor | null>(null)
   const zoomRef = useRef(1)
   const dragStartRef = useRef<GridPoint | null>(null)
@@ -582,6 +588,24 @@ export function ConstructionMap({
     container.scrollTop = Math.max(0, focusTop - container.clientHeight / 2)
   }, [layout])
 
+  const centerCellInViewport = useCallback((point: GridPoint) => {
+    const map = mapRef.current
+    const container = map?.closest<HTMLElement>('.construction-map-scroll') ?? null
+    const cell = map?.querySelector<HTMLElement>(
+      `[data-construction-cell][data-grid-x="${point.x}"][data-grid-y="${point.y}"]`,
+    )
+    if (!container || !cell) return
+
+    const viewport = container.getBoundingClientRect()
+    const cellBounds = cell.getBoundingClientRect()
+    if (viewport.width <= 0 || viewport.height <= 0 || cellBounds.width <= 0 || cellBounds.height <= 0) return
+
+    container.scrollLeft += cellBounds.left + cellBounds.width / 2
+      - (viewport.left + viewport.width / 2)
+    container.scrollTop += cellBounds.top + cellBounds.height / 2
+      - (viewport.top + viewport.height / 2)
+  }, [])
+
   const resetView = () => {
     zoomAnchorRef.current = null
     zoomRef.current = 1
@@ -664,9 +688,27 @@ export function ConstructionMap({
   }, [zoom])
 
   useLayoutEffect(() => {
+    if (
+      !focusTarget ||
+      handledFocusRequestRef.current === focusTarget.requestId ||
+      !isInConstructionBounds(focusTarget.cell, layout)
+    ) return
+
+    handledFocusRequestRef.current = focusTarget.requestId
+    const point = { ...focusTarget.cell }
+    setCursor(point)
+    setHoverCell(point)
+    mapRef.current?.focus({ preventScroll: true })
+    centerCellInViewport(point)
+  }, [centerCellInViewport, focusTarget, layout])
+
+  useLayoutEffect(() => {
     if (cameraInitializedRef.current) return
     cameraInitializedRef.current = true
-    const frame = requestAnimationFrame(centerMapInViewport)
+    if (handledFocusRequestRef.current !== null) return
+    const frame = requestAnimationFrame(() => {
+      if (handledFocusRequestRef.current === null) centerMapInViewport()
+    })
     return () => cancelAnimationFrame(frame)
   }, [centerMapInViewport])
 
@@ -1185,7 +1227,7 @@ export function ConstructionMap({
   }
 
   useEffect(() => {
-    if (selectedTool) mapRef.current?.focus()
+    if (selectedTool) mapRef.current?.focus({ preventScroll: true })
   }, [selectedTool])
 
   const cursorStyle: CSSProperties = {

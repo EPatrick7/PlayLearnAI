@@ -30,6 +30,7 @@ interface RenderMapOptions {
   constructionStockpile?: GridPoint | null
   crew?: readonly CrewMember[]
   crewCells?: ReadonlyMap<string, GridPoint>
+  focusTarget?: { cell: GridPoint; requestId: number } | null
   inspectionByCell?: ReadonlyMap<string, MapTileInspection>
   layout?: ConstructionLayout
   overlapCounts?: ReadonlyMap<string, number>
@@ -43,7 +44,7 @@ const renderMap = (
   const onCancelTool = vi.fn()
   const onInspectCell = vi.fn()
   const layout = options.layout ?? createConstructionLayout()
-  const view = render(
+  const mapView = (focusTarget: RenderMapOptions['focusTarget']) => (
     <div className="construction-map-scroll">
       <ConstructionMap
         constructionOrders={options.constructionOrders}
@@ -51,6 +52,7 @@ const renderMap = (
         constructionStockpile={options.constructionStockpile}
         crew={options.crew}
         crewCells={options.crewCells}
+        focusTarget={focusTarget}
         inspectionByCell={options.inspectionByCell}
         layout={layout}
         onApply={onApply}
@@ -63,16 +65,42 @@ const renderMap = (
         rotation={0}
         selectedTool={selectedTool}
       />
-    </div>,
+    </div>
   )
+  const view = render(mapView(options.focusTarget))
   const map = screen.getByRole('group', { name: /freeform construction grid/i })
   const scroll = view.container.querySelector<HTMLElement>('.construction-map-scroll')!
   const surface = view.container.querySelector<HTMLElement>('.construction-camera-surface')!
   const cell = ({ x, y }: GridPoint) => map.querySelector<HTMLElement>(
     `[data-construction-cell][data-grid-x="${x}"][data-grid-y="${y}"]`,
   )!
-  return { cell, map, onApply, onCancelTool, onInspectCell, scroll, surface }
+  const rerenderFocusTarget = (focusTarget: RenderMapOptions['focusTarget']) => {
+    view.rerender(mapView(focusTarget))
+  }
+  return {
+    cell,
+    container: view.container,
+    map,
+    onApply,
+    onCancelTool,
+    onInspectCell,
+    rerenderFocusTarget,
+    scroll,
+    surface,
+  }
 }
+
+const mockRect = (left: number, top: number, width: number, height: number): DOMRect => ({
+  bottom: top + height,
+  height,
+  left,
+  right: left + width,
+  top,
+  width,
+  x: left,
+  y: top,
+  toJSON: () => ({}),
+})
 
 const builder: CrewMember = {
   id: 'crew-builder',
@@ -1315,6 +1343,86 @@ describe('ConstructionMap pan and zoom', () => {
     fireEvent.keyDown(map, { key: 'ArrowRight' })
     fireEvent.keyDown(map, { key: 'Enter' })
     expect(onApply).toHaveBeenCalledOnce()
+  })
+
+  it('focuses and centers the first external tile request from live DOM bounds', () => {
+    const target = { x: 3, y: 4 }
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('construction-map-scroll')) {
+        return mockRect(50, 30, 300, 200)
+      }
+      if (this.dataset.gridX === String(target.x) && this.dataset.gridY === String(target.y)) {
+        return mockRect(410, 250, 40, 40)
+      }
+      return mockRect(0, 0, 0, 0)
+    })
+
+    const { container, map, scroll } = renderMap(null, {
+      focusTarget: { cell: target, requestId: 1 },
+    })
+
+    expect(document.activeElement).toBe(map)
+    expect(scroll.scrollLeft).toBe(230)
+    expect(scroll.scrollTop).toBe(140)
+    expect(screen.getByRole('status')).toHaveTextContent(/column 4, row 5/i)
+    expect(container.querySelector('.construction-cursor')).toHaveStyle({
+      gridColumn: '4',
+      gridRow: '5',
+    })
+  })
+
+  it('re-centers the same tile only for a new focus request id using its latest geometry', () => {
+    const target = { x: 6, y: 7 }
+    const { cell, rerenderFocusTarget, scroll } = renderMap()
+    let viewportBounds = mockRect(20, 10, 240, 180)
+    let cellBounds = mockRect(340, 250, 40, 40)
+    vi.spyOn(scroll, 'getBoundingClientRect').mockImplementation(() => viewportBounds)
+    vi.spyOn(cell(target), 'getBoundingClientRect').mockImplementation(() => cellBounds)
+    scroll.scrollLeft = 25
+    scroll.scrollTop = 35
+
+    rerenderFocusTarget({ cell: target, requestId: 101 })
+
+    expect(scroll.scrollLeft).toBe(245)
+    expect(scroll.scrollTop).toBe(205)
+
+    viewportBounds = mockRect(50, 30, 400, 300)
+    cellBounds = mockRect(120, 90, 80, 60)
+    scroll.scrollLeft = 90
+    scroll.scrollTop = 75
+    rerenderFocusTarget({ cell: target, requestId: 101 })
+    expect(scroll.scrollLeft).toBe(90)
+    expect(scroll.scrollTop).toBe(75)
+
+    rerenderFocusTarget({ cell: target, requestId: 102 })
+    expect(scroll.scrollLeft).toBe(0)
+    expect(scroll.scrollTop).toBe(15)
+  })
+
+  it('moves an active designator preview without applying, cancelling, or inspecting', () => {
+    const target = { x: 3, y: 3 }
+    const {
+      cell,
+      map,
+      onApply,
+      onCancelTool,
+      onInspectCell,
+      rerenderFocusTarget,
+      scroll,
+    } = renderMap('solar-array')
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(mockRect(0, 0, 300, 240))
+    vi.spyOn(cell(target), 'getBoundingClientRect').mockReturnValue(mockRect(120, 90, 40, 40))
+    const focus = vi.spyOn(map, 'focus')
+
+    rerenderFocusTarget({ cell: target, requestId: 201 })
+
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+    expect(map.querySelector(
+      '[data-preview-kind="solar-array"][data-grid-x="3"][data-grid-y="3"]',
+    )).toBeInTheDocument()
+    expect(onApply).not.toHaveBeenCalled()
+    expect(onCancelTool).not.toHaveBeenCalled()
+    expect(onInspectCell).not.toHaveBeenCalled()
   })
 
   it('recenters the occupied workspace after a viewport resize', () => {

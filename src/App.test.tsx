@@ -284,7 +284,7 @@ describe('freeform settlement builder', () => {
       materials: { required: 1, reserved: 0, delivered: 0 },
     })
     expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(
-      /1 job needs material/i,
+      /needs material/i,
     )
     expect(screen.getByRole('img', {
       name: /wall blueprint, needs material/i,

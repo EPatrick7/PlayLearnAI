@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react'
 import {
   detectRooms,
   eraseAt,
@@ -23,12 +30,15 @@ import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
 import type { Priority } from '../game/types'
 import { ConstructionMap } from './ConstructionMap'
+import {
+  buildConstructionQueue,
+  type ConstructionQueueCommand,
+} from './constructionQueue'
 import { GameIcon, type GameIconName } from './GameIcon'
 import { PawnSprite } from './PawnSprite'
 import { TileStackPicker } from './TileStackPicker'
 import {
   buildMapInspection,
-  constructionPhaseSummary,
   type MapInspectable,
   type MapInspectionStat,
   type MapTileInspection,
@@ -228,23 +238,6 @@ export function SettlementBuilder({
     .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))
     .map(([commandId]) => commandId)
   const undoCount = undoableCommandIds.length
-  const assignedBuilders = new Set(
-    openOrders.map((order) => order.assignedCrewId).filter(Boolean),
-  ).size
-  const materialBlockedOrders = openOrders.filter(
-    (order) => order.block?.kind === 'insufficient_materials',
-  )
-  const routeBlockedOrders = openOrders.filter(
-    (order) => order.block?.kind === 'no_path',
-  )
-  const unavailableCarrierOrders = openOrders.filter(
-    (order) => order.block?.kind === 'carrier_unavailable',
-  )
-  const prerequisiteBlockedOrders = openOrders.filter(
-    (order) => order.block?.kind === 'prerequisite',
-  )
-  const assignedOrders = openOrders.filter((order) => order.assignedCrewId)
-  const activeConstructionSummary = constructionPhaseSummary(assignedOrders)
   const availableStock = availableConstructionStock(
     colony.reserves.constructionStock,
     constructionOrders,
@@ -257,10 +250,33 @@ export function SettlementBuilder({
   const [announcement, setAnnouncement] = useState('Build freely. Rooms are enclosed shapes with at least one door.')
   const [toastVisible, setToastVisible] = useState(false)
   const simulationSpeed = colony.settlement.constructionSpeed
+  const constructionQueue = useMemo(() => buildConstructionQueue(constructionOrders, {
+    paused: simulationSpeed === 0,
+    crewNames: new Map(colony.crew.map((member) => [member.id, member.name])),
+  }), [colony.crew, constructionOrders, simulationSpeed])
+  const strongestQueueStatus = constructionQueue.reduce<ConstructionQueueCommand | null>(
+    (strongest, command) => (
+      !strongest || command.statusRank < strongest.statusRank ? command : strongest
+    ),
+    null,
+  )
+  const constructionQueueCommandKey = constructionQueue
+    .map((command) => command.commandId)
+    .join('|')
   const [selection, setSelection] = useState<ArchitectSelection | null>(null)
   const [stackSnapshot, setStackSnapshot] = useState<MapTileInspection | null>(null)
   const [stackTrigger, setStackTrigger] = useState<HTMLElement | null>(null)
+  const [constructionQueueOpen, setConstructionQueueOpen] = useState(false)
+  const [mapFocusTarget, setMapFocusTarget] = useState<{
+    cell: GridPoint
+    requestId: number
+  } | null>(null)
+  const constructionQueueTriggerRef = useRef<HTMLButtonElement>(null)
+  const constructionQueueRowRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const buildMenuTriggerRef = useRef<HTMLButtonElement>(null)
+  const mapFocusRequestIdRef = useRef(0)
   const toggleBuildMenu = useCallback(() => {
+    setConstructionQueueOpen(false)
     setBuildOpen((current) => {
       if (!current) {
         setSelection(null)
@@ -381,7 +397,76 @@ export function SettlementBuilder({
     setToastVisible(true)
   }
 
+  const closeConstructionQueue = useCallback((restoreFocus = true) => {
+    setConstructionQueueOpen(false)
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => constructionQueueTriggerRef.current?.focus())
+    }
+  }, [])
+
+  const toggleConstructionQueue = () => {
+    if (constructionQueue.length === 0) return
+    if (constructionQueueOpen) {
+      closeConstructionQueue()
+      return
+    }
+    setBuildOpen(false)
+    setSelection(null)
+    setStackSnapshot(null)
+    setStackTrigger(null)
+    setConstructionQueueOpen(true)
+  }
+
+  const inspectConstructionCommand = (command: ConstructionQueueCommand) => {
+    setConstructionQueueOpen(false)
+    setBuildOpen(false)
+    setSelectedTool(null)
+    setStackSnapshot(null)
+    setStackTrigger(null)
+    setSelection({
+      cellKey: pointKey(command.targetCell),
+      itemKey: `blueprint:${command.targetOrderId}`,
+    })
+    mapFocusRequestIdRef.current += 1
+    setMapFocusTarget({
+      cell: { ...command.targetCell },
+      requestId: mapFocusRequestIdRef.current,
+    })
+    announce(`${command.label} selected · ${command.activity.toLowerCase()}.`)
+  }
+
+  const handleConstructionQueueKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    let nextIndex: number | null = null
+    if (event.key === 'ArrowDown') nextIndex = (index + 1) % constructionQueue.length
+    if (event.key === 'ArrowUp') nextIndex = (index - 1 + constructionQueue.length) % constructionQueue.length
+    if (event.key === 'Home') nextIndex = 0
+    if (event.key === 'End') nextIndex = constructionQueue.length - 1
+    if (nextIndex === null) return
+    event.preventDefault()
+    constructionQueueRowRefs.current[nextIndex]?.focus()
+  }
+
+  useEffect(() => {
+    if (!constructionQueueOpen) return
+    if (constructionQueue.length === 0) {
+      const frame = window.requestAnimationFrame(() => closeConstructionQueue())
+      return () => window.cancelAnimationFrame(frame)
+    }
+    const activeElement = document.activeElement
+    if (constructionQueueRowRefs.current.some((row) => row === activeElement)) return
+    constructionQueueRowRefs.current[0]?.focus()
+  }, [
+    closeConstructionQueue,
+    constructionQueue.length,
+    constructionQueueCommandKey,
+    constructionQueueOpen,
+  ])
+
   const openInspectionStack = (tile: MapTileInspection, trigger: HTMLElement | null) => {
+    setConstructionQueueOpen(false)
     setBuildOpen(false)
     setSelection(null)
     setStackTrigger(trigger)
@@ -396,6 +481,7 @@ export function SettlementBuilder({
     const cellKey = pointKey(cell)
     const tile = inspectionByCell.get(cellKey)
     if (!tile) return
+    setConstructionQueueOpen(false)
     setBuildOpen(false)
     const preferredItem = preferredItemKey
       ? tile.contents.find((item) => item.key === preferredItemKey) ?? null
@@ -525,6 +611,7 @@ export function SettlementBuilder({
   }, [selectedTool])
 
   const chooseTool = (tool: ConstructionTool) => {
+    setConstructionQueueOpen(false)
     setSelection(null)
     setStackSnapshot(null)
     setStackTrigger(null)
@@ -539,6 +626,7 @@ export function SettlementBuilder({
   }
 
   const chooseCategory = (nextCategory: BuildCategory) => {
+    setConstructionQueueOpen(false)
     setSelection(null)
     setStackSnapshot(null)
     setStackTrigger(null)
@@ -557,6 +645,7 @@ export function SettlementBuilder({
     if (!window.confirm('Start over with the tiny landing habitat?')) return
     colony.resetColony()
     onConstructionQueued?.()
+    setConstructionQueueOpen(false)
     setBuildOpen(false)
     setCategory('structure')
     setSelectedTool(null)
@@ -580,9 +669,14 @@ export function SettlementBuilder({
       if (event.key.toLowerCase() === 'b' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault()
         toggleBuildMenu()
+        if (constructionQueueOpen) {
+          window.requestAnimationFrame(() => buildMenuTriggerRef.current?.focus())
+        }
       }
       if (event.key === 'Escape') {
-        if (selection) {
+        if (constructionQueueOpen) {
+          closeConstructionQueue()
+        } else if (selection) {
           setSelection(null)
           setAnnouncement('Selection cleared.')
           setToastVisible(true)
@@ -597,7 +691,16 @@ export function SettlementBuilder({
     }
     window.addEventListener('keydown', keyboardShortcuts)
     return () => window.removeEventListener('keydown', keyboardShortcuts)
-  }, [buildOpen, cancelTool, onExit, selectedTool, selection, toggleBuildMenu])
+  }, [
+    buildOpen,
+    cancelTool,
+    closeConstructionQueue,
+    constructionQueueOpen,
+    onExit,
+    selectedTool,
+    selection,
+    toggleBuildMenu,
+  ])
 
   useEffect(() => {
     if (!toastVisible) return
@@ -651,33 +754,48 @@ export function SettlementBuilder({
         </div>
       </header>
 
-      <main className="construction-stage">
-        <section aria-label="Construction status" className="construction-job-hud">
-          <span className="construction-job-summary">
+      <main className={`construction-stage ${constructionQueueOpen ? 'queue-open' : ''}`}>
+        {constructionQueueOpen && (
+          <button
+            aria-hidden="true"
+            className="construction-queue-backdrop"
+            onClick={() => closeConstructionQueue()}
+            tabIndex={-1}
+            type="button"
+          />
+        )}
+        <section
+          aria-label="Construction status"
+          className={`construction-job-hud ${constructionQueueOpen ? 'queue-open' : ''}`}
+        >
+          <button
+            aria-controls={constructionQueue.length > 0 ? 'construction-queue' : undefined}
+            aria-disabled={constructionQueue.length === 0}
+            aria-expanded={constructionQueueOpen}
+            aria-haspopup={constructionQueue.length > 0 ? 'dialog' : undefined}
+            aria-label={constructionQueue.length > 0
+              ? `${constructionQueueOpen ? 'Close' : 'Open'} construction queue, ${constructionQueue.length} ${constructionQueue.length === 1 ? 'placement' : 'placements'}, ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
+              : 'No construction jobs queued'}
+            className="construction-job-summary construction-queue-trigger"
+            onClick={toggleConstructionQueue}
+            ref={constructionQueueTriggerRef}
+            type="button"
+          >
             <GameIcon name={openOrders.length > 0 ? 'work' : 'check'} />
             <span>
               <strong>{openOrders.length > 0
-                ? `${openOrders.length} queued`
+                ? `${constructionQueue.length} ${constructionQueue.length === 1 ? 'placement' : 'placements'} · ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
                 : constructionCompletionSummary
                   ? 'Construction complete'
                   : 'No blueprints'}</strong>
               <small>{openOrders.length > 0
-                ? unavailableCarrierOrders.length > 0
-                  ? `${unavailableCarrierOrders.length} ${unavailableCarrierOrders.length === 1 ? 'carrier is' : 'carriers are'} unavailable`
-                  : routeBlockedOrders.length > 0
-                  ? `${routeBlockedOrders.length} ${routeBlockedOrders.length === 1 ? 'blueprint has' : 'blueprints have'} no route`
-                  : prerequisiteBlockedOrders.length > 0
-                    ? `${prerequisiteBlockedOrders.length} waiting on earlier construction`
-                    : materialBlockedOrders.length > 0
-                    ? `${materialBlockedOrders.length} ${materialBlockedOrders.length === 1 ? 'job needs' : 'jobs need'} material`
-                    : simulationSpeed === 0
-                      ? 'Construction paused'
-                      : assignedBuilders > 0
-                        ? activeConstructionSummary
-                        : 'Waiting for a builder'
+                ? strongestQueueStatus?.activity ?? 'Waiting for a builder'
                 : constructionCompletionSummary ?? toolInstruction}</small>
             </span>
-          </span>
+            {constructionQueue.length > 0 && (
+              <GameIcon className="construction-queue-chevron" name="chevron" />
+            )}
+          </button>
           <span className="construction-material-summary" title={`${materialAmount(colony.reserves.constructionStock)} material physically in storage`}>
             <GameIcon name="storage" />
             <span><strong>{materialAmount(availableStock)} free</strong><small>{materialAmount(reservedStock)} reserved</small></span>
@@ -688,8 +806,86 @@ export function SettlementBuilder({
               <button aria-label={`${speed} times construction speed`} aria-pressed={simulationSpeed === speed} key={speed} onClick={() => colony.setConstructionSpeed(speed)} type="button">{speed}×</button>
             ))}
           </div>
+
+          {constructionQueueOpen && (
+            <section
+              aria-labelledby="construction-queue-title"
+              aria-modal="false"
+              className="construction-queue-popover"
+              id="construction-queue"
+              role="dialog"
+            >
+              <header className="construction-queue-heading">
+                <span className="construction-queue-heading-icon"><GameIcon name="plan" /></span>
+                <span>
+                  <strong id="construction-queue-title">Construction queue</strong>
+                  <small>Select a placement to inspect its next job</small>
+                </span>
+                <button aria-label="Close construction queue" onClick={() => closeConstructionQueue()} type="button">
+                  <GameIcon name="close" />
+                </button>
+              </header>
+              <ol className="construction-queue-list">
+                {constructionQueue.map((command, index) => (
+                  <li key={command.commandId}>
+                    <button
+                      aria-describedby={`construction-queue-detail-${index}`}
+                      aria-label={`${command.label}, ${command.activity}, ${command.priorityLabel}, ${command.progress}% complete. Inspect on tile ${command.targetCell.x + 1}, ${command.targetCell.y + 1}`}
+                      className="construction-queue-row"
+                      data-queue-tone={command.tone}
+                      onClick={() => inspectConstructionCommand(command)}
+                      onKeyDown={(event) => handleConstructionQueueKeyDown(event, index)}
+                      ref={(element) => {
+                        constructionQueueRowRefs.current[index] = element
+                      }}
+                      title={command.detail}
+                      type="button"
+                    >
+                      <span className="construction-queue-target-icon"><GameIcon name={command.icon} /></span>
+                      <span className="construction-queue-row-copy">
+                        <span className="construction-queue-row-title">
+                          <strong>{command.label}</strong>
+                          <em>{command.priorityLabel}</em>
+                        </span>
+                        <span className="construction-queue-row-status">
+                          <i />
+                          <strong>{command.activity}</strong>
+                        </span>
+                        <span className="construction-queue-row-metrics">
+                          <span><GameIcon name="work" />{command.completedJobs}/{command.totalJobs} complete</span>
+                          {command.materialRequired > 0 && (
+                            <span><GameIcon name="storage" />{materialAmount(command.materialAllocated)}/{materialAmount(command.materialRequired)} material</span>
+                          )}
+                          {command.salvageRemaining > 0 && (
+                            <span><GameIcon name="gear" />+{materialAmount(command.salvageRemaining)} salvage</span>
+                          )}
+                        </span>
+                        <span
+                          aria-label={`${command.progress}% complete`}
+                          aria-valuemax={100}
+                          aria-valuemin={0}
+                          aria-valuenow={command.progress}
+                          className="construction-queue-progress"
+                          role="progressbar"
+                        >
+                          <i style={{ width: `${command.progress}%` }} />
+                        </span>
+                      </span>
+                      <span className="construction-queue-jump">
+                        <small>{command.targetCell.x + 1},{command.targetCell.y + 1}</small>
+                        <GameIcon name="chevron" />
+                      </span>
+                      <span className="sr-only" id={`construction-queue-detail-${index}`}>
+                        {command.detail}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
         </section>
-        <div className="construction-map-scroll">
+        <div className="construction-map-scroll" inert={constructionQueueOpen ? true : undefined}>
           <ConstructionMap
             constructionPaused={simulationSpeed === 0}
             constructionOrders={constructionOrders}
@@ -697,6 +893,7 @@ export function SettlementBuilder({
             constructionStockpile={colony.settlement.constructionStockpile}
             crew={visibleCrew}
             crewCells={crewCells}
+            focusTarget={mapFocusTarget}
             inspectionByCell={inspectionByCell}
             layout={layout}
             onApply={applyConstruction}
@@ -709,7 +906,7 @@ export function SettlementBuilder({
             planningLayout={projection.layout}
             rotation={rotation}
             selectedCell={selectedTile?.cell ?? stackSnapshot?.cell ?? null}
-            selectedTool={selectedTool}
+            selectedTool={constructionQueueOpen ? null : selectedTool}
           />
         </div>
 
@@ -818,7 +1015,10 @@ export function SettlementBuilder({
           </section>
         )}
 
-        <div className={`construction-controls ${buildOpen ? 'catalog-open' : ''} ${selectedTool ? 'active-tool' : ''}`}>
+        <div
+          className={`construction-controls ${buildOpen ? 'catalog-open' : ''} ${selectedTool ? 'active-tool' : ''}`}
+          inert={constructionQueueOpen ? true : undefined}
+        >
           <nav aria-label="Construction modes" className="construction-category-bar">
             <button
               aria-label="Build menu"
@@ -826,6 +1026,7 @@ export function SettlementBuilder({
               aria-pressed={buildOpen}
               className="architect-button"
               onClick={toggleBuildMenu}
+              ref={buildMenuTriggerRef}
               type="button"
             >
               <GameIcon name="work" /><span>Build</span><small>B</small>

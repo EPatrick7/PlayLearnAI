@@ -163,7 +163,7 @@ export const constructionOrderProgress = (order: ConstructionOrder) => {
   return Math.round(clampRatio(hauling + building) * 100)
 }
 
-const constructionOrderPresentation = (order: ConstructionOrder) => {
+export const constructionOrderPresentation = (order: ConstructionOrder) => {
   if (order.target.kind === 'boundary') {
     const boundary = order.target.construct ?? order.target.deconstruct
     const subject = boundary?.kind === 'door' ? 'Door' : 'Wall'
