@@ -129,6 +129,13 @@ const layoutFrom = (result: ConstructionResult) => {
   return result.layout
 }
 
+const installCompletedConstructionLayout = (layout: ConstructionLayout) => {
+  useColonyStore.setState((state) => ({
+    settlement: { ...state.settlement, layout, constructionOrders: [] },
+    worldRevision: state.worldRevision + 1,
+  }))
+}
+
 const addEnclosedRoom = (
   source: ConstructionLayout,
   left: number,
@@ -154,7 +161,7 @@ const addEnclosedRoom = (
 const seedSecondRoom = () => {
   const state = useColonyStore.getState()
   const layout = addEnclosedRoom(state.settlement.layout, 9, 2, 14, 7)
-  state.setConstructionLayout(layout)
+  installCompletedConstructionLayout(layout)
   return layout
 }
 
@@ -168,7 +175,7 @@ const startOperations = () => {
     size: { width: 2, height: 2 },
     rotation: 0,
   }))
-  useColonyStore.getState().setConstructionLayout(layout)
+  installCompletedConstructionLayout(layout)
   renderFreshApp()
   fireEvent.click(screen.getByRole('button', { name: 'Begin first shift' }))
   return screen.getByRole('group', { name: /2 player-built rooms/i })
@@ -492,6 +499,19 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('region', { name: `${builder.name} inspector` })).toBeVisible()
 
     fireEvent.click(screen.getByRole('button', {
+      name: 'Choose 2 overlapping items on this tile',
+    }))
+    const reopenedChooser = screen.getByRole('dialog', { name: 'Choose an item' })
+    expect(reopenedChooser).toBeVisible()
+    fireEvent.click(within(reopenedChooser).getByRole('button', {
+      name: /Wall blueprint.*Blueprint · Paused/i,
+    }))
+    const blueprintInspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })
+    expect(blueprintInspector).toHaveTextContent('Blueprint priority')
+    expect(within(blueprintInspector).getByRole('button', { name: 'Cancel blueprint' }))
+      .toBeVisible()
+
+    fireEvent.click(within(blueprintInspector).getByRole('button', {
       name: 'Choose 2 overlapping items on this tile',
     }))
     expect(screen.getByRole('dialog', { name: 'Choose an item' })).toBeVisible()
@@ -906,7 +926,7 @@ describe('freeform settlement builder', () => {
       size: { width: 2, height: 2 },
       rotation: 0,
     }))
-    useColonyStore.getState().setConstructionLayout(layout)
+    installCompletedConstructionLayout(layout)
     renderFreshApp()
 
     const builderSignature = boundaryConnectionSignature(constructionMap())
@@ -1082,7 +1102,7 @@ describe('freeform settlement builder', () => {
 
       fireEvent.click(buildCommand)
       expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(
-        /Construction complete1 wall completed by .+\./,
+        /Construction complete(?:Queue · Complete)?1 wall completed by .+\./,
       )
       expect(document.querySelector('.construction-toast')).toHaveTextContent(
         /1 wall completed by .+\./,
@@ -1179,7 +1199,7 @@ describe('freeform settlement builder', () => {
       expect(state.settlement.layout.boundaries).toContainEqual({ ...target, kind: 'wall' })
       expect(state.reserves.constructionStock).toBe(13)
       expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(
-        `Construction complete1 wall completed by ${builderName}.`,
+        new RegExp(`Construction complete(?:Queue · Complete)?1 wall completed by ${builderName}\\.`),
       )
       expect(document.querySelector('.construction-toast')).toHaveTextContent(
         `1 wall completed by ${builderName}.`,
@@ -1207,7 +1227,7 @@ describe('freeform settlement builder', () => {
         (orderCandidate) => orderCandidate.id === candidate.id,
       )?.status === 'complete')).toBe(true)
       expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(
-        /Construction complete5 walls completed by .+\./,
+        /Construction complete(?:Queue · Complete)?5 walls completed by .+\./,
       )
       expect(state.reserves.constructionStock).toBe(8)
     } finally {

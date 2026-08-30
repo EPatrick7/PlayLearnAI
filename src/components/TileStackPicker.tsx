@@ -234,13 +234,15 @@ export function TileStackPicker({
         ))}
       </div>
 
-      <button className="tile-stack-surface" onClick={selectSurface} type="button">
-        <span className="tile-stack-item-icon"><GameIcon name={surfaceIcon(tile)} /></span>
-        <span className="tile-stack-item-copy">
-          <strong>Surface · {tile.surfaceLabel}</strong>
-          <small>{tile.roomLabel ?? 'Exterior'} · Tile {tile.cell.x + 1}, {tile.cell.y + 1}</small>
-        </span>
-      </button>
+      <div aria-label="Tile itself" className="tile-stack-surface-section" role="group">
+        <button className="tile-stack-surface" onClick={selectSurface} type="button">
+          <span className="tile-stack-item-icon"><GameIcon name={surfaceIcon(tile)} /></span>
+          <span className="tile-stack-item-copy">
+            <strong>Tile itself · {tile.surfaceLabel}</strong>
+            <small>{tile.roomLabel ?? 'Exterior'} · Tile {tile.cell.x + 1}, {tile.cell.y + 1}</small>
+          </span>
+        </button>
+      </div>
     </section>
     </>
   ), document.body)

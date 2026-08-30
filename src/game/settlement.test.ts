@@ -81,6 +81,13 @@ const stageIncident = (source: MoonbaseState) => {
 }
 
 describe('tiny-start settlement construction', () => {
+  it('keeps instant construction mutations out of the public store contract', () => {
+    const publicStore = useColonyStore.getState() as unknown as Record<string, unknown>
+
+    expect(publicStore).not.toHaveProperty('setConstructionLayout')
+    expect(publicStore).not.toHaveProperty('constructModule')
+  })
+
   it('starts with a typed seven-socket layout and only the solar blueprint', () => {
     const state = createInitialState()
 
@@ -214,8 +221,13 @@ describe('tiny-start settlement construction', () => {
   it('persists site occupancy and safely replaces a legacy v1 save', async () => {
     localStorage.clear()
     useColonyStore.getState().resetColony()
-    const built = useColonyStore.getState().constructModule('solar_battery_skid', 'site-power-east')
+    const [builtState, built] = constructModule(
+      createInitialState(),
+      'solar_battery_skid',
+      'site-power-east',
+    )
     expect(built.ok).toBe(true)
+    useColonyStore.setState((store) => ({ ...store, ...builtState }))
     expect(useColonyStore.getState().setConstructionSpeed(3)).toBe(true)
 
     const saved = JSON.parse(localStorage.getItem('playlearnai-moonbase-poc-v1') ?? '{}') as {

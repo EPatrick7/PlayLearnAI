@@ -253,6 +253,7 @@ export function SettlementBuilder({
   const [buildOpen, setBuildOpen] = useState(false)
   const [category, setCategory] = useState<BuildCategory>('structure')
   const [selectedTool, setSelectedTool] = useState<ConstructionTool | null>(null)
+  const [toolActivationId, setToolActivationId] = useState(0)
   const [rotation, setRotation] = useState<WorkstationRotation>(0)
   const [announcement, setAnnouncement] = useState('Build freely. Rooms are enclosed shapes with at least one door.')
   const [toastVisible, setToastVisible] = useState(false)
@@ -621,6 +622,7 @@ export function SettlementBuilder({
       cancelTool()
       return
     }
+    setToolActivationId((current) => current + 1)
     setSelectedTool(tool)
     setRotation(0)
     if (shouldCollapseCatalogAfterToolChoice()) setBuildOpen(false)
@@ -785,11 +787,18 @@ export function SettlementBuilder({
           >
             <GameIcon name={openOrders.length > 0 ? 'work' : 'check'} />
             <span>
-              <strong>{openOrders.length > 0
-                ? `${constructionQueue.length} ${constructionQueue.length === 1 ? 'placement' : 'placements'} · ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
-                : constructionCompletionSummary
-                  ? 'Construction complete'
-                  : 'No blueprints'}</strong>
+              <strong>
+                <span className="construction-queue-label-full">{openOrders.length > 0
+                  ? `${constructionQueue.length} ${constructionQueue.length === 1 ? 'placement' : 'placements'} · ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
+                  : constructionCompletionSummary
+                    ? 'Construction complete'
+                    : 'No blueprints'}</span>
+                <span aria-hidden="true" className="construction-queue-label-compact">{openOrders.length > 0
+                  ? `Queue · ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
+                  : constructionCompletionSummary
+                    ? 'Queue · Complete'
+                    : 'Queue · Empty'}</span>
+              </strong>
               <small>{openOrders.length > 0
                 ? strongestQueueStatus?.activity ?? 'Waiting for a builder'
                 : constructionCompletionSummary ?? toolInstruction}</small>
@@ -907,6 +916,7 @@ export function SettlementBuilder({
             rotation={rotation}
             selectedCell={selectedTile?.cell ?? stackSnapshot?.cell ?? null}
             selectedTool={constructionQueueOpen ? null : selectedTool}
+            toolActivationId={toolActivationId}
           />
         </div>
 
@@ -983,7 +993,10 @@ export function SettlementBuilder({
             {selectedBlueprint && (
               <div className="construction-inspector-actions">
                 <span className="construction-priority-stepper">
-                  <small>Blueprint priority</small>
+                  <small>
+                    <span className="construction-priority-label-full">Blueprint priority</span>
+                    <span aria-hidden="true" className="construction-priority-label-compact">Priority</span>
+                  </small>
                   <span>
                     <button aria-label="Lower blueprint priority" disabled={selectedBlueprint.priority <= 1} onClick={() => changeSelectedPriority(-1)} type="button"><GameIcon name="minus" /></button>
                     <strong>P{selectedBlueprint.priority}</strong>

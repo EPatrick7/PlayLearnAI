@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createConstructionLayout,
+  placeWorkstation,
   type ConstructionLayout,
   type GridPoint,
 } from '../game/construction'
@@ -44,7 +45,13 @@ const renderMap = (
   const onCancelTool = vi.fn()
   const onInspectCell = vi.fn()
   const layout = options.layout ?? createConstructionLayout()
-  const mapView = (focusTarget: RenderMapOptions['focusTarget']) => (
+  let currentTool = selectedTool
+  let currentToolActivationId = 0
+  const mapView = (
+    focusTarget: RenderMapOptions['focusTarget'],
+    activeTool: ConstructionTool | null = currentTool,
+    toolActivationId = currentToolActivationId,
+  ) => (
     <div className="construction-map-scroll">
       <ConstructionMap
         constructionOrders={options.constructionOrders}
@@ -63,7 +70,8 @@ const renderMap = (
         onUndo={vi.fn()}
         overlapCounts={options.overlapCounts}
         rotation={0}
-        selectedTool={selectedTool}
+        selectedTool={activeTool}
+        toolActivationId={toolActivationId}
       />
     </div>
   )
@@ -77,6 +85,11 @@ const renderMap = (
   const rerenderFocusTarget = (focusTarget: RenderMapOptions['focusTarget']) => {
     view.rerender(mapView(focusTarget))
   }
+  const rerenderSelectedTool = (activeTool: ConstructionTool | null) => {
+    currentTool = activeTool
+    currentToolActivationId += 1
+    view.rerender(mapView(options.focusTarget, currentTool, currentToolActivationId))
+  }
   return {
     cell,
     container: view.container,
@@ -85,6 +98,7 @@ const renderMap = (
     onCancelTool,
     onInspectCell,
     rerenderFocusTarget,
+    rerenderSelectedTool,
     scroll,
     surface,
   }
@@ -136,6 +150,53 @@ const inspectionTile = (
 })
 
 describe('ConstructionMap pan and zoom', () => {
+  it('does not reuse a stale touch inspection as the preview target when the tool changes', () => {
+    const placed = placeWorkstation(createConstructionLayout(), {
+      id: 'battery-1',
+      type: 'battery-bank',
+      label: 'Battery bank',
+      origin: { x: 4, y: 5 },
+      size: { width: 2, height: 1 },
+      rotation: 0,
+    })
+    if (!placed.ok) throw new Error(placed.error)
+    const { cell, map, rerenderSelectedTool, surface } = renderMap(null, {
+      layout: placed.layout,
+    })
+
+    fireEvent.pointerDown(cell({ x: 4, y: 5 }), {
+      button: 0,
+      clientX: 120,
+      clientY: 140,
+      pointerId: 91,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerUp(cell({ x: 4, y: 5 }), {
+      button: 0,
+      clientX: 120,
+      clientY: 140,
+      pointerId: 91,
+      pointerType: 'touch',
+    })
+
+    rerenderSelectedTool('wall')
+
+    expect(map.querySelector('.construction-preview')).not.toBeInTheDocument()
+    expect(screen.queryByText('A workstation occupies this wall line.')).not.toBeInTheDocument()
+
+    fireEvent.pointerDown(cell({ x: 2, y: 2 }), {
+      button: 0,
+      clientX: 80,
+      clientY: 80,
+      pointerId: 92,
+      pointerType: 'touch',
+    })
+    expect(map.querySelector(
+      '[data-preview-kind="wall"][data-grid-x="2"][data-grid-y="2"]',
+    )).toBeInTheDocument()
+    fireEvent.pointerCancel(surface, { pointerId: 92, pointerType: 'touch' })
+  })
+
   it('left-drags and one-finger drags the nearest scroll container in Pan mode', () => {
     const { map, scroll } = renderMap()
     scroll.scrollLeft = 100

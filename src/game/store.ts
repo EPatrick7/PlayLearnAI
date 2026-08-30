@@ -3,13 +3,11 @@ import { persist } from 'zustand/middleware'
 import { createInitialState } from './seed'
 import {
   isConstructionLayout,
-  type ConstructionLayout,
   type ConstructionResult,
   type GridPoint,
 } from './construction'
 import { createStarterConstruction } from './constructionCatalog'
 import {
-  availableConstructionStock,
   cancelConstructionCommand as cancelConstructionCommandInState,
   cancelConstructionOrder as cancelConstructionOrderInState,
   cancelConstructionOrders as cancelConstructionOrdersInState,
@@ -19,7 +17,6 @@ import {
   projectConstructionOrders,
   rebuildConstructionOrderPrerequisites,
   reserveConstructionMaterials,
-  returnedConstructionMaterials,
   type ConstructionOrder,
   type ConstructionOrderTarget,
 } from './constructionJobs'
@@ -28,11 +25,7 @@ import {
   normalizePersistedConstructionCrewPositions,
 } from './constructionWorkerRouting'
 import { advanceConstructionWorkerSimulationFixedStep } from './constructionWorkerSimulation'
-import {
-  beginOperations as beginOperationsInState,
-  buildBlueprints,
-  constructModule as constructModuleInState,
-} from './settlement'
+import { beginOperations as beginOperationsInState } from './settlement'
 import {
   advanceSimulation,
   clearOperationsPlan,
@@ -49,7 +42,6 @@ import type {
   AdvanceInput,
   AdvanceResult,
   BuildResult,
-  BuildableModuleId,
   CommitResult,
   ConstructionSpeed,
   LearningPhase,
@@ -81,7 +73,6 @@ export interface ConstructionAdvanceSummary {
 export interface MoonbaseActions {
   resetColony: () => void
   resetMoonbase: () => void
-  setConstructionLayout: (layout: ConstructionLayout) => void
   setConstructionSpeed: (speed: ConstructionSpeed) => boolean
   queueConstruction: (result: ConstructionResult) => QueueConstructionResult
   cancelConstructionCommand: (commandId: string) => string[]
@@ -89,11 +80,6 @@ export interface MoonbaseActions {
   setConstructionOrderPriority: (orderId: string, priority: Priority) => boolean
   setConstructionCommandPriority: (commandId: string, priority: Priority) => number
   advanceConstruction: (elapsed?: number) => ConstructionAdvanceSummary
-  constructModule: (
-    blueprintId: BuildableModuleId,
-    siteId: string,
-    actor?: InteractiveActor,
-  ) => BuildResult
   beginOperations: (actor?: InteractiveActor) => BuildResult
   setPlanBrief: (input: PlanBriefInput, actor?: InteractiveActor) => PlanEditResult
   stagePlanAction: (input: PlanActionInput, actor?: InteractiveActor) => PlanEditResult
@@ -342,15 +328,6 @@ export const useColonyStore = create<MoonbaseStore>()(
       ...createInitialState(),
       resetColony: () => set(createInitialState()),
       resetMoonbase: () => set(createInitialState()),
-      setConstructionLayout: (layout) => set((state) => ({
-        settlement: { ...state.settlement, layout, constructionOrders: [] },
-        reserves: {
-          ...state.reserves,
-          constructionStock: state.reserves.constructionStock +
-            returnedConstructionMaterials(state.settlement.constructionOrders),
-        },
-        worldRevision: state.worldRevision + 1,
-      })),
       setConstructionSpeed: (speed) => {
         if (speed !== 0 && speed !== 1 && speed !== 2 && speed !== 3) return false
         const state = get()
@@ -548,34 +525,6 @@ export const useColonyStore = create<MoonbaseStore>()(
           set(state)
         }
         return summary
-      },
-      constructModule: (blueprintId, siteId, actor = 'manual') => {
-        const state = get()
-        const blueprint = buildBlueprints.find((candidate) => candidate.id === blueprintId)
-        const availableStock = availableConstructionStock(
-          state.reserves.constructionStock,
-          state.settlement.constructionOrders,
-        )
-        if (
-          blueprint &&
-          state.settlement.phase !== 'operations' &&
-          availableStock < blueprint.cost
-        ) {
-          const availabilityView = {
-            ...state,
-            reserves: { ...state.reserves, constructionStock: availableStock },
-          }
-          const [, result] = constructModuleInState(
-            availabilityView,
-            blueprintId,
-            siteId,
-            actor,
-          )
-          return result
-        }
-        const [nextState, result] = constructModuleInState(state, blueprintId, siteId, actor)
-        if (result.ok) set(nextState)
-        return result
       },
       beginOperations: (actor = 'manual') => {
         const [nextState, result] = beginOperationsInState(get(), actor)

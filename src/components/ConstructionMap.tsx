@@ -68,6 +68,7 @@ interface ConstructionMapProps {
   crew?: readonly CrewMember[]
   crewCells?: ReadonlyMap<string, GridPoint>
   selectedTool: ConstructionTool | null
+  toolActivationId?: number
   rotation: WorkstationRotation
   onApply: (result: ConstructionResult, label: string) => void
   onCancelTool: () => void
@@ -224,6 +225,7 @@ export function ConstructionMap({
   crew = [],
   crewCells = new Map(),
   selectedTool,
+  toolActivationId = 0,
   rotation,
   onApply,
   onCancelTool,
@@ -272,6 +274,7 @@ export function ConstructionMap({
   const [dragEnd, setDragEnd] = useState<GridPoint | null>(null)
   const [draftTool, setDraftTool] = useState<ConstructionTool | null>(null)
   const [cursor, setCursor] = useState<GridPoint>({ x: 8, y: 9 })
+  const [previewActivationId, setPreviewActivationId] = useState(toolActivationId)
   const [suppressedPreview, setSuppressedPreview] = useState<{
     tool: ConstructionTool
     rotation: WorkstationRotation
@@ -849,6 +852,7 @@ export function ConstructionMap({
 
   const preview = useMemo<DraftPreview | null>(() => {
     if (!selectedTool) return null
+    const needsFreshTarget = previewActivationId !== toolActivationId
     const point = (draftTool === selectedTool ? dragEnd : null) ?? hoverCell ?? cursor
     if (
       suppressedPreview?.tool === selectedTool &&
@@ -865,6 +869,7 @@ export function ConstructionMap({
         ? cells.some((cell) => Boolean(workstationAt(planningLayout, cell)))
         : false
       const valid = !outOfBounds && !occupied
+      if (needsFreshTarget && !valid) return null
       return {
         cells,
         valid,
@@ -878,6 +883,7 @@ export function ConstructionMap({
 
     if (selectedTool === 'door') {
       const valid = boundaryAt(planningLayout, point)?.kind === 'wall'
+      if (needsFreshTarget && !valid) return null
       return {
         cells: [point],
         valid,
@@ -889,6 +895,7 @@ export function ConstructionMap({
 
     const input = workstationInput(selectedTool, point, rotation)
     const validation = validateWorkstationPlacement(planningLayout, input)
+    if (needsFreshTarget && !validation.valid) return null
     const indoorWarning = validation.valid
       ? indoorFootprintWarning(selectedTool, validation.cells)
       : null
@@ -903,7 +910,7 @@ export function ConstructionMap({
       warning: indoorWarning,
       error: validation.valid ? null : workstationPlacementError(validation),
     }
-  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintWarning, planningLayout, rotation, selectedTool, suppressedPreview, workstationPlacementError])
+  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintWarning, planningLayout, previewActivationId, rotation, selectedTool, suppressedPreview, toolActivationId, workstationPlacementError])
 
   const previewBoundaryLayout = useMemo<ConstructionLayout | null>(() => {
     if (!preview || (selectedTool !== 'wall' && selectedTool !== 'door')) return null
@@ -1001,6 +1008,7 @@ export function ConstructionMap({
       return
     }
     event.preventDefault()
+    setPreviewActivationId(toolActivationId)
     setSuppressedPreview(null)
     updatePreviewLabelAnchor(event.clientX, event.clientY)
     pointerIdRef.current = event.pointerId
@@ -1100,6 +1108,7 @@ export function ConstructionMap({
     }
     const point = pointerPoint(event)
     if (!point) return
+    setPreviewActivationId(toolActivationId)
     setSuppressedPreview(null)
     setHoverCell(point)
     if (pointerIdRef.current !== event.pointerId) return
@@ -1200,6 +1209,7 @@ export function ConstructionMap({
 
   const commitKeyboardDraft = (point: GridPoint) => {
     if (!selectedTool) return
+    setPreviewActivationId(toolActivationId)
     setSuppressedPreview(null)
     if (selectedTool === 'wall' || selectedTool === 'erase') {
       if (!keyboardAnchorRef.current || draftTool !== selectedTool) {
@@ -1268,6 +1278,7 @@ export function ConstructionMap({
         x: Math.min(layout.width - 1, Math.max(0, cursor.x + movement.x)),
         y: Math.min(layout.height - 1, Math.max(0, cursor.y + movement.y)),
       }
+      setPreviewActivationId(toolActivationId)
       setSuppressedPreview(null)
       setCursor(next)
       setHoverCell(next)
@@ -1289,6 +1300,7 @@ export function ConstructionMap({
     }
     if (event.key.toLowerCase() === 'r' && isWorkstationTool(selectedTool)) {
       event.preventDefault()
+      setPreviewActivationId(toolActivationId)
       onRotate()
       return
     }

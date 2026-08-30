@@ -369,6 +369,27 @@ describe('Moonbase Zustand store', () => {
       .toBe('crew-amina-okafor')
   })
 
+  it('never self-completes a blueprint when every builder is unavailable', () => {
+    const target = { x: 12, y: 9 }
+    const initial = useColonyStore.getState()
+    useColonyStore.setState({
+      crew: initial.crew.map((member) => ({ ...member, status: 'resting' as const })),
+    })
+    const queued = useColonyStore.getState().queueConstruction(
+      paintBoundaryCell(initial.settlement.layout, target, 'wall'),
+    )
+
+    expect(queued.ok).toBe(true)
+    const summary = useColonyStore.getState().advanceConstruction(100)
+    const state = useColonyStore.getState()
+    expect(summary.completedOrderIds).toEqual([])
+    expect(state.settlement.constructionOrders[0]).toMatchObject({
+      assignedCrewId: null,
+      work: { completed: 0 },
+    })
+    expect(state.settlement.layout.boundaries).not.toContainEqual({ ...target, kind: 'wall' })
+  })
+
   it('keeps crew assigned to a non-complete work order out of construction dispatch', () => {
     const initial = useColonyStore.getState()
     useColonyStore.setState({

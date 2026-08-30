@@ -104,9 +104,14 @@ describe('TileStackPicker', () => {
     const choices = [
       within(picker).getByRole('button', { name: /Amina Okafor.*Colonist/i }),
       within(picker).getByRole('button', { name: /Wall blueprint.*Blueprint/i }),
-      within(picker).getByRole('button', { name: /Surface.*Pressurized floor.*Tile 21, 15/i }),
+      within(picker).getByRole('button', { name: /Tile itself.*Pressurized floor.*Tile 21, 15/i }),
     ]
     expect(choices[0].querySelector('.pawn-sprite')).toBeInTheDocument()
+    const surfaceGroup = within(picker).getByRole('group', { name: 'Tile itself' })
+    expect(within(surfaceGroup).getByText(/^Tile itself ·/)).toBeVisible()
+    expect(within(surfaceGroup).getByRole('button', {
+      name: /Tile itself.*Pressurized floor.*Tile 21, 15/i,
+    })).toBe(choices[2])
     await waitFor(() => expect(document.activeElement).toBe(choices[0]))
 
     fireEvent.keyDown(picker, { key: 'ArrowDown' })
@@ -144,7 +149,7 @@ describe('TileStackPicker', () => {
     expect(onClose).toHaveBeenCalledOnce()
     await waitFor(() => expect(document.activeElement).toBe(trigger))
 
-    fireEvent.click(within(picker).getByRole('button', { name: /Surface.*Pressurized floor.*Tile 21, 15/i }))
+    fireEvent.click(within(picker).getByRole('button', { name: /Tile itself.*Pressurized floor.*Tile 21, 15/i }))
     expect(onSelectSurface).toHaveBeenCalledWith(tile)
     expect(onClose).toHaveBeenCalledTimes(2)
     await waitFor(() => expect(document.activeElement).toBe(trigger))
@@ -221,7 +226,7 @@ describe('TileStackPicker', () => {
     )
 
     const surfaceChoice = within(picker).getByRole('button', {
-      name: /Surface.*Pressurized floor.*Tile 21, 15/i,
+      name: /Tile itself.*Pressurized floor.*Tile 21, 15/i,
     })
     await waitFor(() => expect(document.activeElement).toBe(surfaceChoice))
     expect(onClose).not.toHaveBeenCalled()

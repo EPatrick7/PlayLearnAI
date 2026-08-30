@@ -1269,6 +1269,7 @@
 .construction-job-summary > .game-icon { width: 18px; height: 18px; color: var(--construction-cyan); }
 .construction-job-summary > span { min-width: 0; display: grid; gap: 3px; }
 .construction-job-summary strong { font: 750 10px/1 system-ui, sans-serif; }
+.construction-queue-label-compact { display: none; }
 .construction-job-summary small {
   overflow: hidden;
   color: #96978e;
@@ -2277,6 +2278,8 @@
   text-transform: uppercase;
 }
 
+.construction-priority-label-compact { display: none; }
+
 .construction-priority-stepper > span {
   height: 34px;
   display: grid;
@@ -2433,7 +2436,8 @@
 
   .construction-inspector-actions { align-items: stretch; }
   .construction-priority-stepper { min-width: 0; flex: 1 1 auto; }
-  .construction-priority-stepper > small { display: none; }
+  .construction-priority-label-full { display: none; }
+  .construction-priority-label-compact { display: inline; }
   .construction-priority-stepper > span { grid-template-columns: 40px 42px 40px; }
   .construction-priority-stepper button { width: 40px; height: 34px; }
   .construction-destructive-action { min-height: 40px; }
@@ -2482,6 +2486,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  .construction-queue-label-full { display: none; }
+  .construction-queue-label-compact { display: inline; }
 
   .construction-job-summary small {
     max-width: none;

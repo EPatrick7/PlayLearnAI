@@ -61,6 +61,8 @@ describe('SettlementBuilder construction queue', () => {
     const trigger = screen.getByRole('button', {
       name: /Open construction queue, 1 placement, 3 jobs/i,
     })
+    expect(trigger.querySelector('.construction-queue-label-compact'))
+      .toHaveTextContent('Queue · 3 jobs')
     fireEvent.click(trigger)
 
     const queue = screen.getByRole('dialog', { name: 'Construction queue' })
@@ -86,6 +88,8 @@ describe('SettlementBuilder construction queue', () => {
     const inspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })
     expect(inspector).toBeVisible()
     expect(inspector).toHaveTextContent('Blueprint priority')
+    expect(inspector.querySelector('.construction-priority-label-compact'))
+      .toHaveTextContent('Priority')
     expect(within(inspector).getByRole('button', { name: 'Cancel blueprint' })).toBeVisible()
     expect(inspector).not.toHaveTextContent('Placement priority')
     expect(view.container.querySelector('.construction-map')).not.toHaveClass('tool-active')
