@@ -203,6 +203,7 @@ export const constructionOrderActivity = (
   if (order.block?.kind === 'insufficient_materials') return 'Needs material'
   if (order.status === 'blocked') return 'Blocked'
   if (constructionPaused) return 'Paused'
+  if (!order.assignedCrewId && order.forcedCrewId) return 'Waiting for assigned builder'
   if (!order.assignedCrewId) return 'Waiting for builder'
   if (order.travelPhase === 'to_stockpile') return 'Collecting material'
   if (order.travelPhase === 'to_site') return 'Walking to site'
@@ -488,12 +489,22 @@ export const buildMapInspection = ({
       if (order.assignedCrewId && !constructionAssignmentByCrewId.has(order.assignedCrewId)) {
         constructionAssignmentByCrewId.set(order.assignedCrewId, order)
       }
+      if (order.forcedCrewId && !constructionAssignmentByCrewId.has(order.forcedCrewId)) {
+        constructionAssignmentByCrewId.set(order.forcedCrewId, order)
+      }
       const presentation = constructionOrderPresentation(order)
       const activity = constructionOrderActivity(order, constructionPaused)
       const progress = constructionOrderProgress(order)
-      const builder = order.assignedCrewId
-        ? crewNamesById.get(order.assignedCrewId) ?? fallbackCrewName(order.assignedCrewId)
-        : 'Unassigned'
+      const forcedBuilder = order.forcedCrewId
+        ? crewNamesById.get(order.forcedCrewId) ?? fallbackCrewName(order.forcedCrewId)
+        : null
+      const builder = forcedBuilder
+        ? order.assignedCrewId === order.forcedCrewId
+          ? `${forcedBuilder} · manual`
+          : `Waiting for ${forcedBuilder} · manual`
+        : order.assignedCrewId
+          ? `${crewNamesById.get(order.assignedCrewId) ?? fallbackCrewName(order.assignedCrewId)} · automatic`
+          : 'Automatic · unassigned'
       const carried = carriedConstructionMaterial(order)
       const carrier = order.materials.carriedByCrewId
         ? crewNamesById.get(order.materials.carriedByCrewId) ??
@@ -593,7 +604,7 @@ export const buildMapInspection = ({
       label: member.name,
       subtitle: `Colonist · ${constructionActivity ?? titleCase(member.status)}`,
       detail: constructionPresentation
-        ? `${member.role} · ${constructionActivity}: ${constructionPresentation.label}${carried > 0 ? ` · Carrying ${formatConstructionAmount(carried)} material` : ''}`
+        ? `${member.role} · ${constructionAssignment?.forcedCrewId === member.id ? 'Manual priority' : constructionActivity}: ${constructionPresentation.label}${carried > 0 ? ` · Carrying ${formatConstructionAmount(carried)} material` : ''}`
         : member.role,
       icon: 'crew',
       portrait: crewPawnPresentation(member, memberIndex),
@@ -602,7 +613,12 @@ export const buildMapInspection = ({
         { label: 'Fatigue', value: `${Math.round(member.fatigue)}%` },
         { label: 'Role', value: member.role },
         ...(constructionPresentation
-          ? [{ label: 'Task', value: constructionPresentation.label }]
+          ? [{
+              label: 'Task',
+              value: constructionAssignment?.forcedCrewId === member.id
+                ? `Manual · ${constructionPresentation.label}`
+                : constructionPresentation.label,
+            }]
           : []),
         ...(carried > 0
           ? [{ label: 'Cargo', value: `${formatConstructionAmount(carried)} construction material` }]

@@ -255,7 +255,8 @@ const getOrder = (state: MoonbaseState, id: WorkOrderId) =>
 
 const activeConstructionOrderForCrew = (state: MoonbaseState, crewId: string) =>
   state.settlement.constructionOrders.find((order) => (
-    order.status !== 'complete' && order.assignedCrewId === crewId
+    order.status !== 'complete' &&
+    (order.assignedCrewId === crewId || order.forcedCrewId === crewId)
   ))
 
 const constructionOrderDescription = (

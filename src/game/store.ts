@@ -11,6 +11,7 @@ import {
   cancelConstructionCommand as cancelConstructionCommandInState,
   cancelConstructionOrder as cancelConstructionOrderInState,
   cancelConstructionOrders as cancelConstructionOrdersInState,
+  carriedConstructionMaterial,
   deriveConstructionOrders,
   migrateV5ConstructionOrders,
   normalizePersistedConstructionOrders,
@@ -70,6 +71,13 @@ export interface ConstructionAdvanceSummary {
   blockedOrderIds: string[]
 }
 
+export interface ConstructionBuilderAssignmentResult {
+  ok: boolean
+  orderId: string
+  crewId: string | null
+  error?: string
+}
+
 export interface MoonbaseActions {
   resetColony: () => void
   resetMoonbase: () => void
@@ -79,6 +87,10 @@ export interface MoonbaseActions {
   cancelConstructionOrder: (orderId: string) => boolean
   setConstructionOrderPriority: (orderId: string, priority: Priority) => boolean
   setConstructionCommandPriority: (commandId: string, priority: Priority) => number
+  setConstructionOrderBuilder: (
+    orderId: string,
+    crewId: string | null,
+  ) => ConstructionBuilderAssignmentResult
   advanceConstruction: (elapsed?: number) => ConstructionAdvanceSummary
   beginOperations: (actor?: InteractiveActor) => BuildResult
   setPlanBrief: (input: PlanBriefInput, actor?: InteractiveActor) => PlanEditResult
@@ -158,16 +170,29 @@ const reallocateUncollectedConstructionReservations = (
   }
 }), constructionStock).orders
 
+const visibleConstructionCrew = (state: MoonbaseState) => (
+  state.settlement.phase === 'landing' ? state.crew.slice(0, 2) : state.crew
+)
+
+const constructionCrewUnavailableReason = (
+  state: MoonbaseState,
+  crewId: string,
+) => {
+  const member = visibleConstructionCrew(state).find((candidate) => candidate.id === crewId)
+  if (!member) return 'That colonist is not deployed for this shift.'
+  if (member.health <= 0) return `${member.name} is incapacitated.`
+  if (member.status === 'resting') return `${member.name} is resting.`
+  if (member.taskId) return `${member.name} is already assigned to incident work.`
+  const activeWork = state.workOrders.find((order) => (
+    order.status !== 'complete' && order.assignedCrewIds.includes(member.id)
+  ))
+  if (activeWork) return `${member.name} is assigned to ${activeWork.label}.`
+  return null
+}
+
 const eligibleConstructionWorkers = (state: MoonbaseState) =>
-  (state.settlement.phase === 'landing' ? state.crew.slice(0, 2) : state.crew)
-    .filter((member) => (
-      member.health > 0 &&
-      member.status !== 'resting' &&
-      member.taskId === null &&
-      !state.workOrders.some((order) => (
-        order.status !== 'complete' && order.assignedCrewIds.includes(member.id)
-      ))
-    ))
+  visibleConstructionCrew(state)
+    .filter((member) => !constructionCrewUnavailableReason(state, member.id))
     .sort((left, right) =>
       right.skills.engineering - left.skills.engineering || left.id.localeCompare(right.id),
     )
@@ -185,11 +210,18 @@ const spatialConstructionWorkers = (state: MoonbaseState) => {
       { ...worker, dispatchPriority: MAX_ACTIVE_BUILDERS - index },
     ]),
   )
+  const forcedCrewIds = new Set(
+    state.settlement.constructionOrders.flatMap((order) => (
+      order.status !== 'complete' && order.forcedCrewId ? [order.forcedCrewId] : []
+    )),
+  )
   return state.crew.map((member) => {
     const eligible = eligibleById.get(member.id)
+    const manuallyEligible = forcedCrewIds.has(member.id) &&
+      !constructionCrewUnavailableReason(state, member.id)
     return {
       id: member.id,
-      canConstruct: Boolean(eligible),
+      canConstruct: Boolean(eligible || manuallyEligible),
       dispatchPriority: eligible?.dispatchPriority ?? 0,
       engineeringRate: eligible?.engineeringRate ??
         0.32 + member.skills.engineering * 0.035,
@@ -286,21 +318,39 @@ const persistedGridPoint = (value: unknown): GridPoint | null => {
 const resetLegacyTravelAssignments = (
   orders: readonly ConstructionOrder[],
   validCrewIds?: ReadonlySet<string>,
-) => orders.map((order) => {
-  const carrierId = (order.materials.carried ?? 0) > Number.EPSILON
-    ? order.materials.carriedByCrewId ?? null
-    : null
-  if (carrierId) {
+) => {
+  const forcedCrewIds = new Set<string>()
+  return orders.map((order) => {
+    const carrierId = (order.materials.carried ?? 0) > Number.EPSILON
+      ? order.materials.carriedByCrewId ?? null
+      : null
+    const requestedForcedCrewId = order.forcedCrewId &&
+      validCrewIds?.has(order.forcedCrewId) &&
+      !forcedCrewIds.has(order.forcedCrewId) &&
+      (!carrierId || carrierId === order.forcedCrewId)
+        ? order.forcedCrewId
+        : null
+    if (requestedForcedCrewId) forcedCrewIds.add(requestedForcedCrewId)
+    if (carrierId) {
+      return {
+        ...order,
+        assignedCrewId: carrierId,
+        forcedCrewId: requestedForcedCrewId,
+        travelPhase: order.travelPhase === 'at_site' ? 'at_site' as const : 'to_site' as const,
+      }
+    }
+    const assignmentValid = order.assignedCrewId &&
+      validCrewIds?.has(order.assignedCrewId) &&
+      (!requestedForcedCrewId || order.assignedCrewId === requestedForcedCrewId)
+    if (assignmentValid) return { ...order, forcedCrewId: requestedForcedCrewId }
     return {
       ...order,
-      assignedCrewId: carrierId,
-      travelPhase: order.travelPhase === 'at_site' ? 'at_site' as const : 'to_site' as const,
+      assignedCrewId: null,
+      forcedCrewId: requestedForcedCrewId,
+      travelPhase: 'idle' as const,
     }
-  }
-  const assignmentValid = order.assignedCrewId && validCrewIds?.has(order.assignedCrewId)
-  if (assignmentValid) return order
-  return { ...order, assignedCrewId: null, travelPhase: 'idle' as const }
-})
+  })
+}
 
 const repairedConstructionSequence = (
   orders: readonly ConstructionOrder[],
@@ -514,6 +564,122 @@ export const useColonyStore = create<MoonbaseStore>()(
         })
         return changedCount
       },
+      setConstructionOrderBuilder: (orderId, crewId) => {
+        const state = get()
+        const target = state.settlement.constructionOrders.find((order) => order.id === orderId)
+        const failure = (error: string): ConstructionBuilderAssignmentResult => ({
+          ok: false,
+          orderId,
+          crewId,
+          error,
+        })
+        if (!target || target.status === 'complete') {
+          return failure('That blueprint is no longer waiting for construction.')
+        }
+
+        if (crewId === null) {
+          if (!target.forcedCrewId) {
+            return { ok: true, orderId, crewId: null }
+          }
+          if (carriedConstructionMaterial(target) > 0) {
+            return failure('Finish delivering this blueprint\'s construction material before returning it to Automatic.')
+          }
+          const constructionOrders = state.settlement.constructionOrders.map((order) => (
+            order.id === orderId
+              ? {
+                  ...order,
+                  forcedCrewId: null,
+                  assignedCrewId: order.assignedCrewId === order.forcedCrewId
+                    ? null
+                    : order.assignedCrewId,
+                  travelPhase: order.assignedCrewId === order.forcedCrewId
+                    ? 'idle' as const
+                    : order.travelPhase,
+                  routeBlockedContextKey: order.assignedCrewId === order.forcedCrewId
+                    ? null
+                    : order.routeBlockedContextKey,
+                }
+              : order
+          ))
+          set({
+            settlement: { ...state.settlement, constructionOrders },
+            worldRevision: state.worldRevision + 1,
+          })
+          return { ok: true, orderId, crewId: null }
+        }
+
+        const unavailable = constructionCrewUnavailableReason(state, crewId)
+        if (unavailable) return failure(unavailable)
+        const member = state.crew.find((candidate) => candidate.id === crewId)
+        if (!member) return failure('That colonist is not available.')
+        if (target.forcedCrewId === crewId) {
+          return { ok: true, orderId, crewId }
+        }
+
+        if (target.block?.kind === 'target_changed') {
+          return failure('The blueprint target changed. Cancel it and place a fresh blueprint.')
+        }
+        if (target.block?.kind === 'carrier_unavailable') {
+          return failure(target.block.message)
+        }
+        if (target.block?.kind === 'prerequisite') {
+          return failure('Finish the prerequisite construction before assigning a builder.')
+        }
+        if (target.block?.kind === 'insufficient_materials') {
+          return failure('This blueprint needs construction material before a builder can prioritize it.')
+        }
+
+        const targetCarrierId = carriedConstructionMaterial(target) > 0
+          ? target.materials.carriedByCrewId ?? null
+          : null
+        if (targetCarrierId && targetCarrierId !== crewId) {
+          const carrierName = state.crew.find((candidate) => candidate.id === targetCarrierId)?.name
+          return failure(`${carrierName ?? 'Another colonist'} is carrying this blueprint's material and must deliver it first.`)
+        }
+        const carriedOrder = state.settlement.constructionOrders.find((order) => (
+          order.id !== orderId &&
+          order.status !== 'complete' &&
+          carriedConstructionMaterial(order) > 0 &&
+          order.materials.carriedByCrewId === crewId
+        ))
+        if (carriedOrder) {
+          return failure(`${member.name} is carrying construction material and must deliver it first.`)
+        }
+
+        const constructionOrders = state.settlement.constructionOrders.map((order) => {
+          if (order.id === orderId) {
+            return {
+              ...order,
+              forcedCrewId: crewId,
+              assignedCrewId: order.block?.kind === 'no_path'
+                ? targetCarrierId
+                : targetCarrierId ?? crewId,
+              travelPhase: targetCarrierId ? 'to_site' as const : 'idle' as const,
+            }
+          }
+          const workerIsCarrying = carriedConstructionMaterial(order) > 0 &&
+            order.materials.carriedByCrewId === crewId
+          if (workerIsCarrying) return order
+          const releasesForcedIntent = order.forcedCrewId === crewId
+          const releasesLiveClaim = order.assignedCrewId === crewId
+          if (!releasesForcedIntent && !releasesLiveClaim) return order
+          return {
+            ...order,
+            forcedCrewId: releasesForcedIntent ? null : order.forcedCrewId,
+            assignedCrewId: releasesLiveClaim ? null : order.assignedCrewId,
+            travelPhase: releasesLiveClaim ? 'idle' as const : order.travelPhase,
+            routeBlockedContextKey: releasesLiveClaim ? null : order.routeBlockedContextKey,
+          }
+        })
+        set({
+          settlement: {
+            ...state.settlement,
+            constructionOrders,
+          },
+          worldRevision: state.worldRevision + 1,
+        })
+        return { ok: true, orderId, crewId }
+      },
       advanceConstruction: (elapsed = 1) => {
         const before = get()
         if (before.settlement.constructionSpeed === 0) {
@@ -598,11 +764,11 @@ export const useColonyStore = create<MoonbaseStore>()(
     }),
     {
       name: 'playlearnai-moonbase-poc-v1',
-      version: 9,
+      version: 10,
       partialize: domainSnapshot,
       migrate: (persistedState, version) => {
         const initialState = createInitialState()
-        if (version > 9) return initialState
+        if (version > 10) return initialState
         const state = persistedState as Partial<MoonbaseState>
         if (!state.settlement) return initialState
         const layout = version < 4

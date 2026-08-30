@@ -185,12 +185,13 @@ const activityFor = (
           })()
         : null
   const assignedCrewIds = [...new Set(openOrders.flatMap((order) => (
-    order.assignedCrewId ? [order.assignedCrewId] : []
+    order.forcedCrewId ? [order.forcedCrewId] : order.assignedCrewId ? [order.assignedCrewId] : []
   )))]
+  const hasManualBuilder = openOrders.some((order) => Boolean(order.forcedCrewId))
   const builders = assignedCrewIds.map((crewId) => crewNames.get(crewId) ?? crewId).join(', ')
   const detail = representative.block?.message
     ?? (builders
-      ? `${builders} assigned to this placement.`
+      ? `${builders} ${hasManualBuilder ? 'manually assigned' : 'assigned'} to this placement.`
       : paused
         ? 'Resume time to let colonists continue this placement.'
         : 'A colonist will take this placement when available.')
@@ -242,6 +243,8 @@ export const buildConstructionQueue = (
     const workerIds = [...new Set(open.flatMap((order) => (
       order.assignedCrewId
         ? [order.assignedCrewId]
+        : order.forcedCrewId
+          ? [order.forcedCrewId]
         : order.materials.carriedByCrewId
           ? [order.materials.carriedByCrewId]
           : []

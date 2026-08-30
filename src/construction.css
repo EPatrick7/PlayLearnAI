@@ -2771,6 +2771,333 @@
   .construction-material-summary > .game-icon { display: none; }
 }
 
+/* Exact-builder priority: a durable RimWorld-style work designation. */
+.construction-builder-row {
+  min-height: 58px;
+  margin-top: 7px;
+  padding: 5px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 5px;
+  border: 1px solid rgba(222, 209, 174, 0.13);
+  border-radius: 3px;
+  background:
+    linear-gradient(90deg, rgba(89, 165, 170, 0.09), transparent 64%),
+    rgba(5, 8, 7, 0.2);
+}
+
+.construction-builder-link,
+.construction-builder-trigger,
+.construction-jump-action {
+  border: 1px solid rgba(218, 207, 177, 0.12);
+  border-radius: 3px;
+  color: #d8d1bf;
+  background: rgba(8, 11, 10, 0.22);
+}
+
+.construction-builder-link {
+  min-width: 0;
+  padding: 4px 6px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+.construction-builder-link:disabled { cursor: default; opacity: 1; }
+.construction-builder-link > span:first-child {
+  width: 28px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(120, 197, 202, 0.25);
+  border-radius: 2px;
+  color: #91cdd1;
+  background: rgba(59, 122, 127, 0.12);
+}
+.construction-builder-link > span:first-child .game-icon { width: 16px; height: 16px; }
+.construction-builder-link > span:last-child { min-width: 0; display: grid; gap: 2px; }
+.construction-builder-link small {
+  color: #90958d;
+  font: 750 6px/1 ui-monospace, monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.construction-builder-link strong {
+  overflow: hidden;
+  color: #e7ddc5;
+  font: 750 10px/1.1 Inter, system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.construction-builder-link em {
+  overflow: hidden;
+  color: #8fbec1;
+  font: 600 7px/1.1 Inter, system-ui, sans-serif;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.construction-builder-link:not(:disabled):hover,
+.construction-builder-link:not(:disabled):focus-visible,
+.construction-builder-trigger:hover,
+.construction-builder-trigger:focus-visible,
+.construction-jump-action:hover,
+.construction-jump-action:focus-visible {
+  border-color: rgba(132, 205, 209, 0.5);
+  color: #f0e4c9;
+  background: rgba(74, 139, 143, 0.14);
+  outline: 0;
+}
+
+.construction-builder-trigger {
+  min-width: 82px;
+  padding: 0 8px;
+  display: grid;
+  grid-template-columns: 15px auto 10px;
+  place-items: center;
+  gap: 4px;
+  color: #c8d9d3;
+  font: 750 8px/1 Inter, system-ui, sans-serif;
+}
+.construction-builder-trigger .game-icon { width: 13px; height: 13px; }
+.construction-builder-trigger .game-icon:last-child { width: 9px; height: 9px; color: #858c86; }
+
+.construction-jump-action {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 10px;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+  font: 750 9px/1.15 Inter, system-ui, sans-serif;
+}
+.construction-jump-action .game-icon { width: 14px; height: 14px; color: #bfa96e; }
+.construction-jump-action .game-icon:last-child { width: 9px; height: 9px; justify-self: end; }
+
+.construction-worker-backdrop {
+  position: fixed;
+  z-index: 96;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: rgba(3, 5, 4, 0.36);
+  backdrop-filter: blur(1px);
+}
+
+.construction-worker-picker {
+  position: fixed;
+  z-index: 97;
+  width: min(340px, calc(100vw - 16px));
+  max-height: min(430px, calc(100dvh - 16px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(7, 9, 8, .98);
+  border-radius: 5px;
+  color: #ded5c1;
+  background:
+    linear-gradient(180deg, rgba(255, 248, 221, .045), transparent 88px),
+    rgba(24, 28, 26, .99);
+  box-shadow:
+    0 1px 0 rgba(255, 248, 226, .1) inset,
+    0 22px 58px rgba(0, 0, 0, .64);
+}
+
+.construction-worker-picker-header {
+  min-height: 56px;
+  padding: 6px 7px 6px 9px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid rgba(222, 209, 174, .13);
+  background: rgba(8, 11, 10, .18);
+}
+.construction-worker-picker-header > span:first-child {
+  width: 32px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(115, 194, 199, .3);
+  border-radius: 3px;
+  color: #8fd0d4;
+  background: rgba(53, 119, 123, .14);
+}
+.construction-worker-picker-header > span:first-child .game-icon { width: 18px; height: 18px; }
+.construction-worker-picker-header > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+.construction-worker-picker-header strong { color: #efe3ca; font: 760 14px/1 Georgia, serif; }
+.construction-worker-picker-header small {
+  overflow: hidden;
+  color: #94988f;
+  font: 650 8px/1.1 Inter, system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.construction-worker-picker-header > button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(226, 216, 187, .11);
+  border-radius: 3px;
+  color: #aaaca3;
+  background: rgba(0, 0, 0, .12);
+}
+.construction-worker-picker-header > button:hover,
+.construction-worker-picker-header > button:focus-visible {
+  border-color: rgba(229, 210, 164, .4);
+  color: #f0dfb9;
+  outline: 0;
+}
+.construction-worker-picker-header > button .game-icon { width: 14px; height: 14px; }
+
+.construction-worker-list {
+  min-height: 0;
+  padding: 5px;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  overflow-y: auto;
+  scrollbar-color: rgba(220, 198, 143, .28) transparent;
+  scrollbar-width: thin;
+}
+
+.construction-worker-option {
+  --worker-accent: #82c4c8;
+  position: relative;
+  width: 100%;
+  min-height: 65px;
+  padding: 6px 7px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(226, 216, 187, .1);
+  border-radius: 3px;
+  color: #d9d3c2;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--worker-accent) 8%, transparent), transparent 44%),
+    rgba(5, 8, 7, .18);
+  text-align: left;
+}
+.construction-worker-option[aria-checked="true"] {
+  border-color: color-mix(in srgb, var(--worker-accent) 56%, transparent);
+  box-shadow: 2px 0 0 var(--worker-accent) inset;
+}
+.construction-worker-option[aria-disabled="true"] {
+  --worker-accent: #7c7f79;
+  color: #92948d;
+  background: rgba(5, 8, 7, .28);
+}
+.construction-worker-option:hover,
+.construction-worker-option:focus-visible {
+  border-color: color-mix(in srgb, var(--worker-accent) 64%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--worker-accent) 15%, transparent), transparent 52%),
+    rgba(11, 15, 13, .4);
+  outline: 0;
+}
+.construction-worker-option[aria-disabled="true"]:focus-visible {
+  border-color: rgba(224, 191, 122, .42);
+}
+.construction-worker-portrait,
+.construction-worker-option-icon {
+  width: 36px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--worker-accent) 32%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--worker-accent) 10%, rgba(0, 0, 0, .2));
+}
+.construction-worker-option-icon .game-icon { width: 18px; height: 18px; color: #b7b28f; }
+.construction-worker-option-copy { min-width: 0; display: grid; gap: 2px; }
+.construction-worker-option-copy strong {
+  overflow: hidden;
+  color: #e6ddc9;
+  font: 750 10px/1.05 Inter, system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.construction-worker-option-copy small,
+.construction-worker-option-copy em,
+.construction-worker-option-copy i {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.construction-worker-option-copy small { color: #9da198; font: 600 7px/1.05 Inter, system-ui, sans-serif; }
+.construction-worker-option-copy em { color: #aaa27f; font: 650 7px/1.05 ui-monospace, monospace; font-style: normal; }
+.construction-worker-option-copy i { color: #7faeb1; font: 620 7px/1.1 Inter, system-ui, sans-serif; font-style: normal; }
+.construction-worker-option[aria-disabled="true"] .construction-worker-option-copy i { color: #a58e6b; }
+.construction-worker-option-badge {
+  min-width: 58px;
+  padding: 4px 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid color-mix(in srgb, var(--worker-accent) 28%, transparent);
+  border-radius: 2px;
+  color: color-mix(in srgb, var(--worker-accent) 72%, #ddd4bd);
+  background: color-mix(in srgb, var(--worker-accent) 8%, transparent);
+  font: 800 7px/1 ui-monospace, monospace;
+  text-transform: uppercase;
+}
+.construction-worker-option-badge .game-icon { width: 9px; height: 9px; }
+.construction-worker-automatic { min-height: 54px; }
+
+.construction-blueprint.manual-priority::after {
+  content: "!";
+  position: absolute;
+  z-index: 7;
+  top: -5px;
+  right: -5px;
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #252721;
+  border-radius: 50%;
+  color: #1c2524;
+  background: #8dd1d3;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+  font: 950 9px/1 ui-monospace, monospace;
+}
+.construction-pawn.manual-priority-worker .pawn-sprite__shadow {
+  filter: drop-shadow(0 0 3px rgba(114, 211, 216, .9));
+}
+
+@media (max-width: 700px) {
+  .construction-builder-row { min-height: 64px; }
+  .construction-builder-trigger { min-width: 94px; min-height: 52px; font-size: 9px; }
+  .construction-jump-action { min-height: 44px; }
+  .construction-worker-picker {
+    top: auto !important;
+    right: 8px;
+    bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+    left: 8px !important;
+    width: auto;
+    max-height: min(58dvh, 430px);
+  }
+  .construction-worker-picker-header {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    min-height: 58px;
+    background: rgba(24, 28, 26, .995);
+  }
+  .construction-worker-option { min-height: 68px; padding-block: 7px; }
+  .construction-worker-option-badge { min-width: 62px; }
+}
+
 /* Construction queue stays attached to the quiet status strip on touch screens. */
 @media (max-width: 700px) {
   .construction-job-summary {

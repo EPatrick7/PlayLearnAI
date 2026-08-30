@@ -429,6 +429,80 @@ const workerCanReachOrder = (
   return Boolean(findConstructionOrderApproachPath(layout, cell, order, routeOptions))
 }
 
+export interface ConstructionWorkerRoutePreview {
+  reachable: boolean
+  phase: ConstructionTravelPhase
+  steps: number | null
+  path: GridPoint[]
+}
+
+/** Read-only route truth for assignment UI and map feedback. */
+export const previewConstructionWorkerRoute = ({
+  layout,
+  orders,
+  order,
+  stockpile,
+  crewCell,
+}: {
+  layout: ConstructionLayout
+  orders: readonly RoutableConstructionOrder[]
+  order: RoutableConstructionOrder
+  stockpile: GridPoint
+  crewCell: GridPoint
+}): ConstructionWorkerRoutePreview => {
+  const transientBlockedCells = unfinishedConstructCells(orders)
+  const normalizedStockpile = normalizeConstructionStockpile(
+    layout,
+    stockpile,
+    undefined,
+    transientBlockedCells,
+  )
+  const phase = carriedConstructionMaterial(order) > MOVEMENT_EPSILON
+    ? order.travelPhase === 'at_site' ? 'at_site' : 'to_site'
+    : initialTravelPhase(order)
+  const routeOptions = { transientBlockedCells }
+  if (phase === 'at_site' && routeStillAtSite(
+    layout,
+    crewCell,
+    order,
+    transientBlockedCells,
+  )) {
+    return { reachable: true, phase, steps: 0, path: [clonePoint(crewCell)] }
+  }
+  if (phase === 'to_stockpile') {
+    const toStockpile = findConstructionPath(
+      layout,
+      crewCell,
+      [normalizedStockpile],
+      routeOptions,
+    )
+    const toSite = findConstructionOrderApproachPath(
+      layout,
+      normalizedStockpile,
+      order,
+      routeOptions,
+    )
+    if (!toStockpile || !toSite) {
+      return { reachable: false, phase, steps: null, path: [] }
+    }
+    const path = [...toStockpile.path.map(clonePoint), ...toSite.path.slice(1).map(clonePoint)]
+    return { reachable: true, phase, steps: Math.max(0, path.length - 1), path }
+  }
+  const toSite = findConstructionOrderApproachPath(
+    layout,
+    crewCell,
+    order,
+    routeOptions,
+  )
+  if (!toSite) return { reachable: false, phase, steps: null, path: [] }
+  return {
+    reachable: true,
+    phase,
+    steps: Math.max(0, toSite.path.length - 1),
+    path: toSite.path.map(clonePoint),
+  }
+}
+
 interface MovementResult {
   cell: GridPoint
   remainingDistance: number
@@ -487,6 +561,15 @@ export const advanceConstructionWorkerRouting = (
   const positionByCrewId = new Map(crewPositions.map((position) => [position.crewId, position]))
   const workerById = new Map(workers.map((worker) => [worker.id, worker]))
   const noPathOrderIds: string[] = []
+  const forcedOrderByCrewId = new Map<string, RoutableConstructionOrder>()
+  ;[...orders]
+    .filter((order) => order.status !== 'complete' && Boolean(order.forcedCrewId))
+    .sort(compareOrders)
+    .forEach((order) => {
+      const crewId = order.forcedCrewId!
+      if (!forcedOrderByCrewId.has(crewId)) forcedOrderByCrewId.set(crewId, order)
+    })
+  const forcedWorkerIds = new Set(forcedOrderByCrewId.keys())
 
   // Any pawn caught inside reserved footprints exits before normal dispatch.
   // The emergency route may cross other still-passable blueprints, but its
@@ -589,8 +672,12 @@ export const advanceConstructionWorkerRouting = (
         }
         return
       }
+      const forcedOrder = crewId ? forcedOrderByCrewId.get(crewId) : null
       if (
         !crewId ||
+        (order.forcedCrewId !== null && order.forcedCrewId !== undefined &&
+          order.forcedCrewId !== crewId) ||
+        (forcedOrder && forcedOrder.id !== order.id) ||
         !eligibleWorkerIds.has(crewId) ||
         claimedCrewIds.has(crewId) ||
         !orderCanRoute(order, statusByOrderId) ||
@@ -616,6 +703,7 @@ export const advanceConstructionWorkerRouting = (
     .filter((worker) => (
       eligibleWorkerIds.has(worker.id) &&
       !claimedCrewIds.has(worker.id) &&
+      !forcedWorkerIds.has(worker.id) &&
       !evacuatingCrewIds.has(worker.id)
     ))
     .sort((left, right) =>
@@ -623,8 +711,45 @@ export const advanceConstructionWorkerRouting = (
         finiteNonnegative(left.dispatchPriority ?? 0) ||
       compareIds(left.id, right.id),
     )
-  orders
+
+  // A player-prioritized pawn is reserved for exactly that blueprint. The
+  // durable forcedCrewId survives temporary ineligibility and route failures;
+  // no automatic worker silently substitutes for the requested colonist.
+  ;[...forcedOrderByCrewId.values()]
     .filter((order) => !order.assignedCrewId && orderCanRoute(order, statusByOrderId))
+    .sort(compareOrders)
+    .forEach((order) => {
+      const crewId = order.forcedCrewId!
+      if (
+        !eligibleWorkerIds.has(crewId) ||
+        claimedCrewIds.has(crewId) ||
+        evacuatingCrewIds.has(crewId)
+      ) return
+      const position = positionByCrewId.get(crewId)
+      if (!position) return
+      const phase = initialTravelPhase(order)
+      if (!workerCanReachOrder(
+        input.layout,
+        stockpile,
+        position.cell,
+        order,
+        phase,
+        transientBlockedCells,
+      )) {
+        noPathOrderIds.push(order.id)
+        return
+      }
+      order.assignedCrewId = crewId
+      order.travelPhase = phase
+      claimedCrewIds.add(crewId)
+    })
+
+  orders
+    .filter((order) => (
+      !order.assignedCrewId &&
+      !order.forcedCrewId &&
+      orderCanRoute(order, statusByOrderId)
+    ))
     .sort(compareOrders)
     .forEach((order) => {
       if (availableWorkers.length === 0) return

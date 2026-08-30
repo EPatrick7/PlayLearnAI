@@ -234,7 +234,7 @@ describe('tiny-start settlement construction', () => {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(9)
+    expect(saved.version).toBe(10)
     expect(saved.state?.settlement).toMatchObject({
       phase: 'power_online',
       constructionOrders: [],
@@ -458,7 +458,7 @@ describe('tiny-start settlement construction', () => {
     ;(malformedSpeed.settlement as Record<string, unknown>).constructionSpeed = 99
     expect(merge!(malformedSpeed, useColonyStore.getState()).settlement.constructionSpeed).toBe(3)
 
-    const future = await migrate!(saved.state, 10) as MoonbaseState
+    const future = await migrate!(saved.state, 11) as MoonbaseState
     expect(future).toMatchObject({ worldRevision: 1, settlement: { phase: 'landing' } })
   })
 
@@ -569,6 +569,164 @@ describe('tiny-start settlement construction', () => {
     expect(useColonyStore.getState().settlement.constructionOrders).not.toEqual(
       constructionBefore.orders,
     )
+    useColonyStore.getState().resetColony()
+  })
+
+  it('assigns and releases an exact builder while paused without moving work or material', () => {
+    useColonyStore.getState().resetColony()
+    const initial = useColonyStore.getState()
+    const queued = initial.queueConstruction(
+      paintBoundaryCell(initial.settlement.layout, { x: 12, y: 9 }, 'wall'),
+    )
+    expect(queued.ok).toBe(true)
+    expect(useColonyStore.getState().setConstructionSpeed(0)).toBe(true)
+
+    const before = useColonyStore.getState()
+    const orderId = queued.orderIds[0]
+    const physicalBefore = structuredClone({
+      stock: before.reserves.constructionStock,
+      crew: before.settlement.constructionCrew,
+      materials: before.settlement.constructionOrders[0].materials,
+      work: before.settlement.constructionOrders[0].work,
+    })
+    const assigned = before.setConstructionOrderBuilder(orderId, 'crew-amina-okafor')
+    expect(assigned).toEqual({ ok: true, orderId, crewId: 'crew-amina-okafor' })
+
+    let state = useColonyStore.getState()
+    expect(state.worldRevision).toBe(before.worldRevision + 1)
+    expect(state.settlement.constructionOrders[0]).toMatchObject({
+      forcedCrewId: 'crew-amina-okafor',
+      assignedCrewId: 'crew-amina-okafor',
+      travelPhase: 'idle',
+    })
+    expect({
+      stock: state.reserves.constructionStock,
+      crew: state.settlement.constructionCrew,
+      materials: state.settlement.constructionOrders[0].materials,
+      work: state.settlement.constructionOrders[0].work,
+    }).toEqual(physicalBefore)
+
+    const assignedRevision = state.worldRevision
+    expect(state.setConstructionOrderBuilder(orderId, 'crew-amina-okafor').ok).toBe(true)
+    expect(useColonyStore.getState().worldRevision).toBe(assignedRevision)
+
+    expect(useColonyStore.getState().setConstructionOrderBuilder(orderId, null).ok).toBe(true)
+    state = useColonyStore.getState()
+    expect(state.worldRevision).toBe(assignedRevision + 1)
+    expect(state.settlement.constructionOrders[0]).toMatchObject({
+      forcedCrewId: null,
+      assignedCrewId: null,
+      travelPhase: 'idle',
+    })
+    const automaticRevision = state.worldRevision
+    expect(state.setConstructionOrderBuilder(orderId, null).ok).toBe(true)
+    expect(useColonyStore.getState().worldRevision).toBe(automaticRevision)
+    useColonyStore.getState().resetColony()
+  })
+
+  it('never reassigns or releases a blueprint while its material is in transit', () => {
+    useColonyStore.getState().resetColony()
+    const initial = useColonyStore.getState()
+    const queued = initial.queueConstruction(
+      paintBoundaryCell(initial.settlement.layout, { x: 12, y: 9 }, 'wall'),
+    )
+    expect(queued.ok).toBe(true)
+    const queuedState = useColonyStore.getState()
+    useColonyStore.setState({
+      settlement: {
+        ...queuedState.settlement,
+        constructionOrders: queuedState.settlement.constructionOrders.map((order) => ({
+          ...order,
+          status: 'building' as const,
+          block: null,
+          assignedCrewId: 'crew-mateo-alvarez',
+          forcedCrewId: 'crew-mateo-alvarez',
+          travelPhase: 'to_site' as const,
+          materials: {
+            ...order.materials,
+            reserved: 0,
+            carried: 1,
+            carriedByCrewId: 'crew-mateo-alvarez',
+          },
+        })),
+      },
+    })
+    const before = structuredClone(useColonyStore.getState().settlement.constructionOrders)
+    const revision = useColonyStore.getState().worldRevision
+
+    expect(useColonyStore.getState().setConstructionOrderBuilder(
+      queued.orderIds[0],
+      'crew-amina-okafor',
+    )).toMatchObject({ ok: false, error: expect.stringContaining('must deliver') })
+    expect(useColonyStore.getState().setConstructionOrderBuilder(
+      queued.orderIds[0],
+      null,
+    )).toMatchObject({ ok: false, error: expect.stringContaining('Finish delivering') })
+    expect(useColonyStore.getState().settlement.constructionOrders).toEqual(before)
+    expect(useColonyStore.getState().worldRevision).toBe(revision)
+    useColonyStore.getState().resetColony()
+  })
+
+  it('lets a manually chosen lower-ranked colonist bypass the automatic two-builder limit', () => {
+    useColonyStore.getState().resetColony()
+    const initial = useColonyStore.getState()
+    useColonyStore.setState({
+      settlement: { ...initial.settlement, phase: 'operations' },
+    })
+    const state = useColonyStore.getState()
+    const queued = state.queueConstruction(
+      paintBoundaryCell(state.settlement.layout, { x: 12, y: 9 }, 'wall'),
+    )
+    expect(queued.ok).toBe(true)
+    expect(useColonyStore.getState().setConstructionOrderBuilder(
+      queued.orderIds[0],
+      'crew-leila-haddad',
+    ).ok).toBe(true)
+
+    let order = useColonyStore.getState().settlement.constructionOrders[0]
+    for (let tick = 0; tick < 40 && order.status !== 'complete'; tick += 1) {
+      useColonyStore.getState().advanceConstruction(1)
+      order = useColonyStore.getState().settlement.constructionOrders[0]
+    }
+    expect(order).toMatchObject({
+      status: 'complete',
+      assignedCrewId: null,
+      forcedCrewId: null,
+      work: { completed: 1 },
+    })
+    useColonyStore.getState().resetColony()
+  })
+
+  it('repairs unknown and duplicate manual builder intent at the persistence boundary', () => {
+    useColonyStore.getState().resetColony()
+    const initial = createInitialState()
+    const orders = deriveConstructionOrders(
+      initial.settlement.layout,
+      paintBoundaryLine(initial.settlement.layout, { x: 12, y: 9 }, { x: 14, y: 9 }, 'wall'),
+      { commandId: 'forced-persist', sequenceStart: 20 },
+    ).map((order, index) => ({
+      ...order,
+      forcedCrewId: index < 2 ? 'crew-amina-okafor' : 'missing-crew',
+      assignedCrewId: index === 0 ? 'crew-amina-okafor' : 'crew-mateo-alvarez',
+    }))
+    const persisted = {
+      ...initial,
+      settlement: {
+        ...initial.settlement,
+        constructionOrders: orders,
+        constructionSequence: 23,
+      },
+    }
+    const merge = useColonyStore.persist.getOptions().merge!
+    const merged = merge(persisted, useColonyStore.getState())
+
+    expect(merged.settlement.constructionOrders.map((order) => order.forcedCrewId)).toEqual([
+      'crew-amina-okafor',
+      null,
+      null,
+    ])
+    expect(merged.settlement.constructionOrders[0].assignedCrewId)
+      .toBe('crew-amina-okafor')
     useColonyStore.getState().resetColony()
   })
 

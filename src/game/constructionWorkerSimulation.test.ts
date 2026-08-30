@@ -599,6 +599,157 @@ describe('spatial construction worker simulation', () => {
     expect(retried.orders[0].status).toBe('complete')
   })
 
+  it('keeps a forced no-path job pending and retries when its forced worker changes', () => {
+    const barrier = Array.from({ length: 24 }, (_, x): BoundaryCell => ({
+      x,
+      y: 2,
+      kind: 'wall',
+    }))
+    const order = {
+      ...wallOrder(),
+      status: 'building' as const,
+      assignedCrewId: null,
+      forcedCrewId: 'beta',
+      travelPhase: 'idle' as const,
+      materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
+      target: {
+        kind: 'boundary' as const,
+        cells: [{ x: 5, y: 4 }] as [{ x: number; y: number }],
+        construct: { x: 5, y: 4, kind: 'wall' as const },
+        deconstruct: null,
+      },
+    }
+    const workers = [
+      {
+        id: 'alpha',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+      {
+        id: 'beta',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+    ]
+    const first = advanceConstructionWorkerSimulation({
+      ...inputFor(order, 0),
+      layout: { ...createConstructionLayout(), boundaries: barrier },
+      crewPositions: [
+        { crewId: 'alpha', cell: { x: 3, y: 4 }, moveCredit: 0 },
+        { crewId: 'beta', cell: { x: 1, y: 1 }, moveCredit: 0 },
+      ],
+      workers,
+    })
+
+    expect(first.noPathOrderIds).toEqual([order.id])
+    expect(first.orders[0]).toMatchObject({
+      status: 'blocked',
+      block: { kind: 'no_path' },
+      forcedCrewId: 'beta',
+      assignedCrewId: null,
+    })
+
+    const unchanged = advanceConstructionWorkerSimulation({
+      ...inputFor(first.orders[0], 0),
+      layout: first.layout,
+      crewPositions: first.crewPositions,
+      constructionStock: first.constructionStock,
+      workers,
+    })
+    expect(unchanged.orders[0]).toMatchObject({
+      block: { kind: 'no_path' },
+      forcedCrewId: 'beta',
+      assignedCrewId: null,
+    })
+
+    const reassigned = { ...unchanged.orders[0], forcedCrewId: 'alpha' }
+    const retried = advanceConstructionWorkerSimulation({
+      ...inputFor(reassigned, 0),
+      layout: unchanged.layout,
+      crewPositions: unchanged.crewPositions,
+      constructionStock: unchanged.constructionStock,
+      workers,
+    })
+    expect(retried.noPathOrderIds).toEqual([])
+    expect(retried.orders[0]).toMatchObject({
+      status: 'building',
+      block: null,
+      forcedCrewId: 'alpha',
+      assignedCrewId: 'alpha',
+    })
+  })
+
+  it('keeps forced work with its cargo carrier until delivery, then hands it off', () => {
+    const order: ConstructionOrder & { forcedCrewId: string } = {
+      ...wallOrder(),
+      status: 'building',
+      assignedCrewId: 'beta',
+      forcedCrewId: 'beta',
+      travelPhase: 'at_site',
+      materials: {
+        required: 1,
+        reserved: 0,
+        delivered: 0,
+        recoverable: 0,
+        carried: 1,
+        carriedByCrewId: 'alpha',
+      },
+    }
+    const workers = [
+      {
+        id: 'alpha',
+        canConstruct: false,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+      {
+        id: 'beta',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+    ]
+    const delivered = advanceConstructionWorkerSimulation({
+      ...inputFor(order, 0),
+      crewPositions: [
+        { crewId: 'alpha', cell: { x: 4, y: 1 }, moveCredit: 0 },
+        { crewId: 'beta', cell: { x: 0, y: 2 }, moveCredit: 0 },
+      ],
+      workers,
+    })
+
+    expect(delivered.orders[0]).toMatchObject({
+      forcedCrewId: 'beta',
+      assignedCrewId: 'alpha',
+      materials: {
+        delivered: 1,
+        carried: 0,
+        carriedByCrewId: null,
+      },
+      work: { completed: 0 },
+    })
+    expect(delivered.constructionStock).toBe(4)
+
+    const handedOff = advanceConstructionWorkerSimulation({
+      ...inputFor(delivered.orders[0], 0),
+      crewPositions: delivered.crewPositions,
+      constructionStock: delivered.constructionStock,
+      workers,
+    })
+    expect(handedOff.orders[0]).toMatchObject({
+      forcedCrewId: 'beta',
+      assignedCrewId: 'beta',
+      materials: { delivered: 1, carried: 0, carriedByCrewId: null },
+      work: { completed: 0 },
+    })
+  })
+
   it('releases a former builder while keeping its persisted map position', () => {
     const order = { ...wallOrder(), assignedCrewId: 'builder' }
     const result = advanceConstructionWorkerSimulation(inputFor(order, 1, {

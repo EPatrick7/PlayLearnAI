@@ -88,6 +88,8 @@ export interface ConstructionOrder {
   status: ConstructionOrderStatus
   block: ConstructionBlock | null
   assignedCrewId: string | null
+  /** Durable player intent. Routing may release the live claim without losing this priority. */
+  forcedCrewId?: string | null
   /** Persisted physical phase used by the spatial worker simulation. */
   travelPhase?: ConstructionTravelPhase
   /** Spatial context in which a route was last proven impossible. */
@@ -564,6 +566,7 @@ export const deriveConstructionOrders = (
           }
         : null,
       assignedCrewId: null,
+      forcedCrewId: null,
       travelPhase: 'idle',
       routeBlockedContextKey: null,
       prerequisiteOrderIds: [],
@@ -871,6 +874,12 @@ const normalizePersistedOrder = (
     value.assignedCrewId.trim()
       ? value.assignedCrewId
       : null
+  const persistedForcedCrewId =
+    !legacyV5 &&
+    typeof value.forcedCrewId === 'string' &&
+    value.forcedCrewId.trim()
+      ? value.forcedCrewId
+      : null
 
   if (isComplete) {
     return {
@@ -882,6 +891,7 @@ const normalizePersistedOrder = (
       status: 'complete',
       block: null,
       assignedCrewId: null,
+      forcedCrewId: null,
       travelPhase: 'idle',
       routeBlockedContextKey: null,
       prerequisiteOrderIds,
@@ -1005,6 +1015,7 @@ const normalizePersistedOrder = (
         ? insufficientMaterialsBlock(requirements.materialRequired - delivered - carried)
         : null,
     assignedCrewId: carriedByCrewId ?? persistedAssignedCrewId,
+    forcedCrewId: persistedForcedCrewId,
     travelPhase: carriedByCrewId ? 'to_site' : persistedTravelPhase,
     routeBlockedContextKey:
       !legacyV5 &&
@@ -1145,6 +1156,7 @@ export const reserveConstructionMaterials = (
       order.materials.reserved = 0
       order.block = null
       order.assignedCrewId = null
+      order.forcedCrewId = null
       order.travelPhase = 'idle'
       order.routeBlockedContextKey = null
       order.materials.carried = 0
@@ -1366,6 +1378,7 @@ export const advanceConstructionOrders = (
       order.status = 'complete'
       order.block = null
       order.assignedCrewId = null
+      order.forcedCrewId = null
       order.travelPhase = 'idle'
       order.routeBlockedContextKey = null
       order.materials.reserved = 0
@@ -1463,6 +1476,7 @@ export const advanceConstructionOrders = (
       order.travelPhase = 'idle'
       order.routeBlockedContextKey = null
       order.materials.reserved = 0
+      order.forcedCrewId = null
       if (applied.changed && order.materials.recoverable > 0) {
         constructionStock += order.materials.recoverable
         recoveredMaterials += order.materials.recoverable
@@ -1471,6 +1485,7 @@ export const advanceConstructionOrders = (
     } else {
       order.status = 'blocked'
       order.block = { kind: 'target_changed', message: applied.error }
+      order.forcedCrewId = null
     }
   })
 

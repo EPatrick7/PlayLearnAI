@@ -159,6 +159,10 @@ const constructionRouteContextKey = (
     stockpile: [stockpile.x, stockpile.y],
     eligibleWorkers: [...eligibleWorkerIds].sort((left, right) => left.localeCompare(right)),
     busyWorkers: [...busyWorkerIds].sort((left, right) => left.localeCompare(right)),
+    forcedAssignments: input.orders
+      .filter((order) => order.status !== 'complete' && order.forcedCrewId)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((order) => [order.id, order.forcedCrewId]),
     availableWorkerPositions: input.crewPositions
       .filter((position) => (
         eligibleWorkerIds.has(position.crewId) && !busyWorkerIds.has(position.crewId)
@@ -312,6 +316,7 @@ export const advanceConstructionWorkerSimulation = (
         )
         order.materials.carried = 0
         order.materials.carriedByCrewId = null
+        if (order.forcedCrewId && order.forcedCrewId !== arrival.crewId) return
       }
       if (order.materials.delivered + 0.000_001 < order.materials.required) {
         order.assignedCrewId = null

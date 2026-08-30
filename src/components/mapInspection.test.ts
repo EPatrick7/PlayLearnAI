@@ -182,7 +182,7 @@ describe('construction map inspection', () => {
             value: '2 / 4 supplied · 2 delivered at site · 2 reserved at pallet',
           },
           { label: 'Priority', value: 'P5' },
-          { label: 'Builder', value: 'Soo-jin Park' },
+          { label: 'Builder', value: 'Soo-jin Park · automatic' },
           { label: 'Operation', value: 'Inactive until enclosed' },
         ],
       })
@@ -233,7 +233,7 @@ describe('construction map inspection', () => {
       subtitle: 'Blueprint · Needs material · P5',
       detail: 'Needs 2 construction material.',
     })
-    expect(blueprint?.stats).toContainEqual({ label: 'Builder', value: 'Unassigned' })
+    expect(blueprint?.stats).toContainEqual({ label: 'Builder', value: 'Automatic · unassigned' })
   })
 
   it('prioritizes blockers, then pause, then an unassigned builder wait in activity labels', () => {

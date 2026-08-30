@@ -165,6 +165,42 @@ describe('Operations Plan staging and validation', () => {
     })
   })
 
+  it('reserves a manually prioritized colonist even while the live construction claim waits', () => {
+    const planned = makePlan()
+    const active = assignActiveConstruction(planned, 'crew-mateo-alvarez')
+    const forcedWaiting = {
+      ...active,
+      settlement: {
+        ...active.settlement,
+        constructionOrders: active.settlement.constructionOrders.map((order) => ({
+          ...order,
+          assignedCrewId: null,
+          forcedCrewId: 'crew-mateo-alvarez',
+          travelPhase: 'idle' as const,
+        })),
+      },
+    }
+
+    expect(validateOperationsPlan(forcedWaiting).issues).toContainEqual(
+      expect.objectContaining({
+        code: 'crew_conflict',
+        targetId: 'crew-mateo-alvarez',
+      }),
+    )
+
+    const automatic = {
+      ...forcedWaiting,
+      settlement: {
+        ...forcedWaiting.settlement,
+        constructionOrders: forcedWaiting.settlement.constructionOrders.map((order) => ({
+          ...order,
+          forcedCrewId: null,
+        })),
+      },
+    }
+    expect(validateOperationsPlan(automatic).valid).toBe(true)
+  })
+
   it('atomically refuses commit when construction claims a staged colonist', () => {
     const planned = makePlan()
     const conflicted = assignActiveConstruction(planned, 'crew-mateo-alvarez')

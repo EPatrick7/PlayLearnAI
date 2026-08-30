@@ -313,6 +313,9 @@ export function ConstructionMap({
       if (order.assignedCrewId && !byCrew.has(order.assignedCrewId)) {
         byCrew.set(order.assignedCrewId, order)
       }
+      if (order.forcedCrewId && !byCrew.has(order.forcedCrewId)) {
+        byCrew.set(order.forcedCrewId, order)
+      }
     })
     return byCrew
   }, [openOrders])
@@ -1615,7 +1618,7 @@ export function ConstructionMap({
                 aria-expanded={stackCount > 1 ? stackOpenCellKey === keyFor(cell) : undefined}
                 aria-haspopup={stackCount > 1 ? 'dialog' : undefined}
                 aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent${stackCount > 1 ? `, ${stackCount} things share this tile; activate to choose` : ''}`}
-                className={`construction-blueprint construction-blueprint-boundary construction-inspect-target construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+                className={`construction-blueprint construction-blueprint-boundary construction-inspect-target construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${order.forcedCrewId ? 'manual-priority' : ''} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
                 data-boundary-connection={connection.name}
                 data-boundary-mask={connection.mask}
                 data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -1624,6 +1627,7 @@ export function ConstructionMap({
                 data-connect-west={connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
                 data-construction-order-id={order.id}
                 data-construction-order-status={order.status}
+                data-forced-crew-id={order.forcedCrewId ?? undefined}
                 data-grid-x={cell.x}
                 data-grid-y={cell.y}
                 data-inspect-item-key={`blueprint:${order.id}`}
@@ -1648,9 +1652,10 @@ export function ConstructionMap({
               aria-expanded={stackCell ? stackOpenCellKey === keyFor(stackCell) : undefined}
               aria-haspopup={stackCell ? 'dialog' : undefined}
               aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent${stackCell ? `, ${overlapCounts.get(keyFor(stackCell))} things share this tile; activate to choose` : ''}`}
-              className={`construction-blueprint construction-blueprint-workstation construction-inspect-target blueprint-${order.operation} status-${order.status}`}
+              className={`construction-blueprint construction-blueprint-workstation construction-inspect-target blueprint-${order.operation} status-${order.status} ${order.forcedCrewId ? 'manual-priority' : ''}`}
               data-construction-order-id={order.id}
               data-construction-order-status={order.status}
+              data-forced-crew-id={order.forcedCrewId ?? undefined}
               data-grid-height={footprint.height}
               data-grid-width={footprint.width}
               data-grid-x={workstation.origin.x}
@@ -1694,7 +1699,7 @@ export function ConstructionMap({
               aria-label={`${order
                 ? `${name}, ${activity}, ${constructionOrderLabel(order)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} material` : ''}`
                 : `${name}, ${member.status}`}${stackCount > 1 ? `, ${stackCount} things share this tile; activate to choose` : ''}`}
-              className={`construction-pawn construction-inspect-target ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'} ${carriedMaterial > 0 ? 'worker-carrying' : ''}`}
+              className={`construction-pawn construction-inspect-target ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'} ${order?.forcedCrewId === member.id ? 'manual-priority-worker' : ''} ${carriedMaterial > 0 ? 'worker-carrying' : ''}`}
               data-construction-worker-id={order ? member.id : undefined}
               data-construction-worker-state={order ? activityClass : undefined}
               data-crew-id={member.id}

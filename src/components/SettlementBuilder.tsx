@@ -25,13 +25,23 @@ import {
 } from '../game/constructionCatalog'
 import {
   availableConstructionStock,
+  carriedConstructionMaterial,
   projectConstructionOrders,
+  type ConstructionOrder,
 } from '../game/constructionJobs'
+import {
+  previewConstructionWorkerRoute,
+  type RoutableConstructionOrder,
+} from '../game/constructionWorkerRouting'
 import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
 import type { Priority } from '../game/types'
 import { ConstructionClockControls } from './ConstructionClockControls'
 import { ConstructionMap } from './ConstructionMap'
+import {
+  ConstructionWorkerPicker,
+  type ConstructionWorkerOption,
+} from './ConstructionWorkerPicker'
 import {
   buildConstructionQueue,
   type ConstructionQueueCommand,
@@ -41,6 +51,7 @@ import { PawnSprite } from './PawnSprite'
 import { TileStackPicker } from './TileStackPicker'
 import {
   buildMapInspection,
+  constructionOrderPresentation,
   type MapInspectable,
   type MapInspectionStat,
   type MapTileInspection,
@@ -205,7 +216,9 @@ const compactInspectionStats = (item: MapInspectable): MapInspectionStat[] => {
     return item.stats.filter((stat) => stat.label !== 'Role')
   }
   if (item.kind === 'blueprint') {
-    const compact = item.stats.filter((stat) => stat.label !== 'Status' && stat.label !== 'Priority')
+    const compact = item.stats.filter((stat) => (
+      stat.label !== 'Status' && stat.label !== 'Priority' && stat.label !== 'Builder'
+    ))
     const order = ['Progress', 'Builder', 'Materials', 'Operation']
     return [...compact].sort((left, right) => (
       order.indexOf(left.label) - order.indexOf(right.label)
@@ -282,6 +295,8 @@ export function SettlementBuilder({
   const [stackSnapshot, setStackSnapshot] = useState<MapTileInspection | null>(null)
   const [stackTrigger, setStackTrigger] = useState<HTMLElement | null>(null)
   const [stackPreferredItemKey, setStackPreferredItemKey] = useState<string | null>(null)
+  const [builderPickerOrderId, setBuilderPickerOrderId] = useState<string | null>(null)
+  const [builderPickerTrigger, setBuilderPickerTrigger] = useState<HTMLElement | null>(null)
   const [constructionQueueOpen, setConstructionQueueOpen] = useState(false)
   const [mapFocusTarget, setMapFocusTarget] = useState<{
     cell: GridPoint
@@ -419,6 +434,131 @@ export function SettlementBuilder({
   const selectedBlueprint = selectedItem?.kind === 'blueprint'
     ? constructionOrders.find((order) => order.id === selectedItem.id) ?? null
     : null
+  const builderPickerOrder = builderPickerOrderId && selectedBlueprint?.id === builderPickerOrderId
+    ? constructionOrders.find((order) => (
+        order.id === builderPickerOrderId && order.status !== 'complete'
+      )) ?? null
+    : null
+  const selectedCrewId = selectedItem?.kind === 'crew' ? selectedItem.id : null
+  const selectedCrewConstructionOrder = selectedCrewId
+    ? constructionOrders.find((order) => (
+        order.status !== 'complete' &&
+        (order.forcedCrewId === selectedCrewId || order.assignedCrewId === selectedCrewId)
+      )) ?? null
+    : null
+  const selectedBuilderCrewId = selectedBlueprint?.forcedCrewId
+    ?? selectedBlueprint?.assignedCrewId
+    ?? null
+  const selectedBuilder = selectedBuilderCrewId
+    ? colony.crew.find((member) => member.id === selectedBuilderCrewId) ?? null
+    : null
+  const selectedBlueprintHasCargo = Boolean(
+    selectedBlueprint && carriedConstructionMaterial(selectedBlueprint) > 0,
+  )
+  const constructionWorkerOptions = useMemo<ConstructionWorkerOption[]>(() => {
+    if (!builderPickerOrder) return []
+    const routableOrders: RoutableConstructionOrder[] = constructionOrders.map((order) => ({
+      ...order,
+      travelPhase: order.travelPhase ?? 'idle',
+    }))
+    const routableTarget = routableOrders.find((order) => order.id === builderPickerOrder.id)
+    if (!routableTarget) return []
+    const targetCarrierId = carriedConstructionMaterial(builderPickerOrder) > 0
+      ? builderPickerOrder.materials.carriedByCrewId ?? null
+      : null
+    const terminalReason = builderPickerOrder.block?.kind === 'target_changed'
+      ? 'Blueprint target changed — place it again'
+      : builderPickerOrder.block?.kind === 'carrier_unavailable'
+        ? builderPickerOrder.block.message
+        : builderPickerOrder.block?.kind === 'prerequisite'
+          ? 'Waiting for prerequisite construction'
+          : builderPickerOrder.block?.kind === 'insufficient_materials'
+            ? 'Needs construction material first'
+            : null
+
+    return visibleCrew.map((member) => {
+      const crewIndex = colony.crew.findIndex((candidate) => candidate.id === member.id)
+      const activeIncident = colony.workOrders.find((order) => (
+        order.status !== 'complete' && order.assignedCrewIds.includes(member.id)
+      ))
+      const carriedElsewhere = constructionOrders.find((order) => (
+        order.id !== builderPickerOrder.id &&
+        order.status !== 'complete' &&
+        carriedConstructionMaterial(order) > 0 &&
+        order.materials.carriedByCrewId === member.id
+      ))
+      const otherConstruction = constructionOrders.find((order) => (
+        order.id !== builderPickerOrder.id &&
+        order.status !== 'complete' &&
+        (order.forcedCrewId === member.id || order.assignedCrewId === member.id)
+      ))
+      const crewCell = crewCells.get(member.id)
+      const route = crewCell
+        ? previewConstructionWorkerRoute({
+            layout,
+            orders: routableOrders,
+            order: routableTarget,
+            stockpile: colony.settlement.constructionStockpile,
+            crewCell,
+          })
+        : null
+      const unavailable = terminalReason
+        ?? (member.health <= 0 ? 'Incapacitated' : null)
+        ?? (member.status === 'resting' ? 'Resting' : null)
+        ?? (member.taskId || activeIncident
+          ? `Assigned to ${activeIncident?.label ?? 'incident work'}`
+          : null)
+        ?? (targetCarrierId && targetCarrierId !== member.id
+          ? 'Another colonist must finish this material delivery'
+          : null)
+        ?? (carriedElsewhere
+          ? 'Carrying material to another blueprint — finish delivery first'
+          : null)
+        ?? (!crewCell ? 'No map position' : null)
+        ?? (route && !route.reachable ? 'No route to this blueprint' : null)
+      const manuallyAssigned = builderPickerOrder.forcedCrewId === member.id
+      const automaticallyWorking = !builderPickerOrder.forcedCrewId &&
+        builderPickerOrder.assignedCrewId === member.id
+      const badge = unavailable
+        ? 'Unavailable' as const
+        : manuallyAssigned
+          ? 'Assigned' as const
+          : automaticallyWorking
+            ? 'Working' as const
+            : otherConstruction
+              ? 'Reassign' as const
+              : 'Available' as const
+      const detail = unavailable
+        ?? (manuallyAssigned
+          ? builderPickerOrder.assignedCrewId === member.id
+            ? 'Manually assigned to this blueprint'
+            : 'Priority held — waiting to resume'
+          : automaticallyWorking
+            ? 'Working this blueprint automatically'
+            : otherConstruction
+              ? `${constructionOrderPresentation(otherConstruction).label} · will reassign`
+              : route?.phase === 'to_stockpile'
+                ? 'Will collect material, then walk to site'
+                : 'Ready to walk to this site')
+      return {
+        member,
+        crewIndex: Math.max(0, crewIndex),
+        available: !unavailable,
+        badge,
+        detail,
+        routeSteps: route?.steps ?? null,
+      }
+    })
+  }, [
+    builderPickerOrder,
+    colony.crew,
+    colony.settlement.constructionStockpile,
+    colony.workOrders,
+    constructionOrders,
+    crewCells,
+    layout,
+    visibleCrew,
+  ])
   const selectedRemovalQueued = Boolean(selectedTile && selectedItem && constructionOrders.some((order) => {
     if (order.status === 'complete' || !order.target.deconstruct) return false
     if (selectedItem.kind === 'boundary' && order.target.kind === 'boundary') {
@@ -461,7 +601,11 @@ export function SettlementBuilder({
     setConstructionQueueOpen(true)
   }
 
-  const inspectConstructionCommand = (command: ConstructionQueueCommand) => {
+  const focusConstructionOrder = (
+    order: ConstructionOrder,
+    message = `${constructionOrderPresentation(order).label} selected.`,
+  ) => {
+    const targetCell = order.target.cells[0]
     setConstructionQueueOpen(false)
     setBuildOpen(false)
     setSelectedTool(null)
@@ -469,15 +613,24 @@ export function SettlementBuilder({
     setStackTrigger(null)
     setStackPreferredItemKey(null)
     setSelection({
-      cellKey: pointKey(command.targetCell),
-      itemKey: `blueprint:${command.targetOrderId}`,
+      cellKey: pointKey(targetCell),
+      itemKey: `blueprint:${order.id}`,
     })
     mapFocusRequestIdRef.current += 1
     setMapFocusTarget({
-      cell: { ...command.targetCell },
+      cell: { ...targetCell },
       requestId: mapFocusRequestIdRef.current,
     })
-    announce(`${command.label} selected · ${command.activity.toLowerCase()}.`)
+    announce(message)
+  }
+
+  const inspectConstructionCommand = (command: ConstructionQueueCommand) => {
+    const order = constructionOrders.find((candidate) => candidate.id === command.targetOrderId)
+    if (!order) return
+    focusConstructionOrder(
+      order,
+      `${command.label} selected · ${command.activity.toLowerCase()}.`,
+    )
   }
 
   const handleConstructionQueueKeyDown = (
@@ -638,6 +791,42 @@ export function SettlementBuilder({
     }
   }
 
+  const openBuilderPicker = (trigger: HTMLElement) => {
+    if (!selectedBlueprint) return
+    setConstructionQueueOpen(false)
+    setBuildOpen(false)
+    setStackSnapshot(null)
+    setStackTrigger(null)
+    setStackPreferredItemKey(null)
+    setBuilderPickerOrderId(selectedBlueprint.id)
+    setBuilderPickerTrigger(trigger)
+  }
+
+  const chooseConstructionBuilder = (crewId: string | null) => {
+    if (!builderPickerOrder) return
+    const result = colony.setConstructionOrderBuilder(builderPickerOrder.id, crewId)
+    if (!result.ok) {
+      announce(result.error ?? 'That builder cannot take this blueprint right now.')
+      return
+    }
+    const member = crewId
+      ? colony.crew.find((candidate) => candidate.id === crewId) ?? null
+      : null
+    announce(member
+      ? `${member.name} will prioritize this ${constructionOrderPresentation(builderPickerOrder).label.toLowerCase()}.`
+      : `${constructionOrderPresentation(builderPickerOrder).label} returned to automatic assignment.`)
+  }
+
+  const inspectSelectedBuilder = () => {
+    if (!selectedBuilder) return
+    const cell = crewCells.get(selectedBuilder.id)
+    if (!cell) return
+    setSelection({ cellKey: pointKey(cell), itemKey: `crew:${selectedBuilder.id}` })
+    mapFocusRequestIdRef.current += 1
+    setMapFocusTarget({ cell: { ...cell }, requestId: mapFocusRequestIdRef.current })
+    announce(`${selectedBuilder.name} selected.`)
+  }
+
   const deconstructSelectedItem = () => {
     if (!selectedTile || !selectedItem) return
     if (selectedItem.kind === 'boundary') {
@@ -795,6 +984,7 @@ export function SettlementBuilder({
 
   useEffect(() => {
     const keyboardShortcuts = (event: KeyboardEvent) => {
+      if (builderPickerOrder) return
       if (
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
@@ -828,6 +1018,7 @@ export function SettlementBuilder({
     return () => window.removeEventListener('keydown', keyboardShortcuts)
   }, [
     buildOpen,
+    builderPickerOrder,
     cancelTool,
     closeConstructionQueue,
     constructionQueueOpen,
@@ -929,7 +1120,10 @@ export function SettlementBuilder({
         </div>
       </header>
 
-      <main className={`construction-stage ${constructionQueueOpen ? 'queue-open' : ''}`}>
+      <main
+        className={`construction-stage ${constructionQueueOpen ? 'queue-open' : ''} ${builderPickerOrder ? 'builder-picker-open' : ''}`}
+        inert={builderPickerOrder ? true : undefined}
+      >
         {constructionQueueOpen && (
           <button
             aria-hidden="true"
@@ -1177,6 +1371,45 @@ export function SettlementBuilder({
             )}
 
             {selectedBlueprint && (
+              <div className="construction-builder-row">
+                <button
+                  aria-label={selectedBuilder
+                    ? `Inspect ${selectedBuilder.name}`
+                    : 'No builder currently assigned'}
+                  className="construction-builder-link"
+                  disabled={!selectedBuilder}
+                  onClick={inspectSelectedBuilder}
+                  type="button"
+                >
+                  <span><GameIcon name="crew" /></span>
+                  <span>
+                    <small>Builder</small>
+                    <strong>{selectedBuilder?.name ?? 'Automatic'}</strong>
+                    <em>{selectedBlueprint.forcedCrewId
+                      ? selectedBlueprint.assignedCrewId === selectedBlueprint.forcedCrewId
+                        ? 'Assigned manually · active'
+                        : 'Assigned manually · waiting'
+                      : selectedBlueprint.assignedCrewId
+                        ? 'Automatic · currently working'
+                        : 'Automatic · waiting for builder'}</em>
+                  </span>
+                </button>
+                <button
+                  aria-expanded={builderPickerOrder?.id === selectedBlueprint.id}
+                  aria-haspopup="dialog"
+                  aria-label={`${selectedBlueprint.forcedCrewId ? 'Change' : 'Assign'} builder for ${selectedItem?.label ?? 'blueprint'}`}
+                  className="construction-builder-trigger"
+                  onClick={(event) => openBuilderPicker(event.currentTarget)}
+                  type="button"
+                >
+                  <GameIcon name={selectedBlueprint.forcedCrewId ? 'crew' : 'plus'} />
+                  <span>{selectedBlueprint.forcedCrewId ? 'Change' : 'Assign'}</span>
+                  <GameIcon name="chevron" />
+                </button>
+              </div>
+            )}
+
+            {selectedBlueprint && (
               <div className="construction-inspector-actions">
                 <span className="construction-priority-stepper">
                   <small>
@@ -1191,6 +1424,23 @@ export function SettlementBuilder({
                 </span>
                 <button className="construction-destructive-action" onClick={cancelSelectedBlueprint} type="button">
                   <GameIcon name="close" /><span>Cancel blueprint</span>
+                </button>
+              </div>
+            )}
+
+            {selectedCrewConstructionOrder && (
+              <div className="construction-inspector-actions construction-inspector-single-action">
+                <button
+                  className="construction-jump-action"
+                  onClick={() => focusConstructionOrder(
+                    selectedCrewConstructionOrder,
+                    `${constructionOrderPresentation(selectedCrewConstructionOrder).label} selected for ${selectedItem?.label ?? 'colonist'}.`,
+                  )}
+                  type="button"
+                >
+                  <GameIcon name="map" />
+                  <span>Jump to {constructionOrderPresentation(selectedCrewConstructionOrder).label}</span>
+                  <GameIcon name="chevron" />
                 </button>
               </div>
             )}
@@ -1321,6 +1571,24 @@ export function SettlementBuilder({
             tile={stackSnapshot}
             trigger={stackTrigger}
             preferredItemKey={stackPreferredItemKey}
+          />
+        )}
+
+        {builderPickerOrder && (
+          <ConstructionWorkerPicker
+            automaticAvailable={!selectedBlueprintHasCargo}
+            automaticDetail={selectedBlueprintHasCargo
+              ? 'Finish the current material delivery before switching'
+              : 'Best available colonist takes this job'}
+            onClose={() => {
+              setBuilderPickerOrderId(null)
+              setBuilderPickerTrigger(null)
+            }}
+            onSelect={chooseConstructionBuilder}
+            options={constructionWorkerOptions}
+            orderLabel={constructionOrderPresentation(builderPickerOrder).label}
+            selectedCrewId={builderPickerOrder.forcedCrewId ?? null}
+            trigger={builderPickerTrigger}
           />
         )}
       </main>
