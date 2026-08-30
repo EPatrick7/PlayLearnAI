@@ -152,6 +152,38 @@ const inspectionTile = (
 })
 
 describe('ConstructionMap pan and zoom', () => {
+  it('waits for a fresh target after activation even when the stale cursor is valid', () => {
+    const { cell, map, rerenderSelectedTool } = renderMap()
+
+    fireEvent.pointerDown(cell({ x: 2, y: 2 }), {
+      button: 0,
+      clientX: 80,
+      clientY: 80,
+      pointerId: 90,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(cell({ x: 2, y: 2 }), {
+      button: 0,
+      clientX: 80,
+      clientY: 80,
+      pointerId: 90,
+      pointerType: 'mouse',
+    })
+
+    rerenderSelectedTool('wall')
+
+    expect(map.querySelector('.construction-preview')).not.toBeInTheDocument()
+    fireEvent.pointerMove(cell({ x: 2, y: 2 }), {
+      clientX: 80,
+      clientY: 80,
+      pointerId: 90,
+      pointerType: 'mouse',
+    })
+    expect(map.querySelector(
+      '[data-preview-kind="wall"][data-grid-x="2"][data-grid-y="2"]',
+    )).toBeInTheDocument()
+  })
+
   it('does not reuse a stale touch inspection as the preview target when the tool changes', () => {
     const placed = placeWorkstation(createConstructionLayout(), {
       id: 'battery-1',
@@ -345,6 +377,44 @@ describe('ConstructionMap pan and zoom', () => {
       crewCell,
       { x: 120, y: 140 },
       `crew:${builder.id}`,
+    )
+  })
+
+  it('inspects the exact non-origin tile clicked inside a multi-tile workstation', () => {
+    const placed = placeWorkstation(createConstructionLayout(), {
+      id: 'battery-footprint',
+      type: 'battery-bank',
+      label: 'Battery bank',
+      origin: { x: 4, y: 5 },
+      size: { width: 2, height: 1 },
+      rotation: 0,
+    })
+    if (!placed.ok) throw new Error(placed.error)
+    const { map, onInspectCell } = renderMap(null, { layout: placed.layout })
+    vi.spyOn(map, 'getBoundingClientRect').mockReturnValue(mockRect(100, 100, 480, 360))
+    const workstation = map.querySelector<HTMLElement>(
+      '[data-workstation-id="battery-footprint"]',
+    )!
+
+    fireEvent.pointerDown(workstation, {
+      button: 0,
+      clientX: 210,
+      clientY: 210,
+      pointerId: 75,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(workstation, {
+      button: 0,
+      clientX: 210,
+      clientY: 210,
+      pointerId: 75,
+      pointerType: 'mouse',
+    })
+
+    expect(onInspectCell).toHaveBeenCalledWith(
+      { x: 5, y: 5 },
+      { x: 210, y: 210 },
+      'workstation:battery-footprint',
     )
   })
 
@@ -829,6 +899,12 @@ describe('ConstructionMap pan and zoom', () => {
 
   it('keeps an idle designator label inside the viewport after resize and camera scroll', () => {
     const { cell, container, map, scroll } = renderMap('wall')
+    fireEvent.pointerMove(cell({ x: 8, y: 9 }), {
+      clientX: 200,
+      clientY: 300,
+      pointerId: 58,
+      pointerType: 'mouse',
+    })
     const preview = map.querySelector<HTMLElement>('.construction-preview')!
     const previewCell = cell({
       x: Number(preview.dataset.gridX),
@@ -968,6 +1044,12 @@ describe('ConstructionMap pan and zoom', () => {
   it('allows indoor workstations outdoors with a clear non-blocking room warning', () => {
     const { cell, onApply } = renderMap('storage-rack')
 
+    fireEvent.pointerMove(cell({ x: 10, y: 5 }), {
+      clientX: 180,
+      clientY: 140,
+      pointerId: 63,
+      pointerType: 'mouse',
+    })
     expect(screen.getAllByText(/placeable.*inactive until enclosed/i)).toHaveLength(2)
 
     fireEvent.pointerDown(cell({ x: 10, y: 5 }), {
@@ -1044,8 +1126,8 @@ describe('ConstructionMap pan and zoom', () => {
 
     fireEvent.pointerDown(cell({ x: 2, y: 2 }), {
       button: 0,
-      clientX: 180,
-      clientY: 120,
+      clientX: 80,
+      clientY: 140,
       pointerId: 62,
       pointerType: 'mouse',
     })
@@ -1628,6 +1710,45 @@ describe('ConstructionMap pan and zoom', () => {
     expect(onApply.mock.calls[0][1]).toBe('Wall')
   })
 
+  it('drops a keyboard line anchor across cancellation and reactivation epochs', () => {
+    const { map, onApply, rerenderSelectedTool } = renderMap('wall')
+
+    fireEvent.keyDown(map, { key: 'Enter' })
+    expect(onApply).not.toHaveBeenCalled()
+
+    rerenderSelectedTool(null)
+    rerenderSelectedTool('wall')
+    fireEvent.keyDown(map, { key: 'ArrowRight' })
+    fireEvent.keyDown(map, { key: 'Enter' })
+    expect(onApply).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(map, { key: 'ArrowRight' })
+    fireEvent.keyDown(map, { key: 'Enter' })
+    expect(onApply).toHaveBeenCalledOnce()
+  })
+
+  it('uses Escape for a local line draft before cancelling the active tool', () => {
+    const { map, onApply, onCancelTool } = renderMap('wall')
+    const bubbledKeyDown = vi.fn()
+    window.addEventListener('keydown', bubbledKeyDown)
+
+    try {
+      fireEvent.keyDown(map, { key: 'Enter' })
+      bubbledKeyDown.mockClear()
+      fireEvent.keyDown(map, { key: 'Escape' })
+
+      expect(onApply).not.toHaveBeenCalled()
+      expect(onCancelTool).not.toHaveBeenCalled()
+      expect(bubbledKeyDown).not.toHaveBeenCalled()
+
+      fireEvent.keyDown(map, { key: 'Escape' })
+      expect(onCancelTool).toHaveBeenCalledOnce()
+      expect(bubbledKeyDown).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('keydown', bubbledKeyDown)
+    }
+  })
+
   it('does not arm a line draft when Space wraps a WASD camera move', () => {
     const { map, onApply, scroll } = renderMap('wall')
     scroll.scrollLeft = 80
@@ -1698,7 +1819,7 @@ describe('ConstructionMap pan and zoom', () => {
     expect(scroll.scrollTop).toBe(15)
   })
 
-  it('moves an active designator preview without applying, cancelling, or inspecting', () => {
+  it('waits for keyboard targeting after external focus before moving a designator preview', () => {
     const target = { x: 3, y: 3 }
     const {
       cell,
@@ -1716,8 +1837,11 @@ describe('ConstructionMap pan and zoom', () => {
     rerenderFocusTarget({ cell: target, requestId: 201 })
 
     expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+    expect(map.querySelector('.construction-preview')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(map, { key: 'ArrowRight' })
     expect(map.querySelector(
-      '[data-preview-kind="solar-array"][data-grid-x="3"][data-grid-y="3"]',
+      '[data-preview-kind="solar-array"][data-grid-x="4"][data-grid-y="3"]',
     )).toBeInTheDocument()
     expect(onApply).not.toHaveBeenCalled()
     expect(onCancelTool).not.toHaveBeenCalled()

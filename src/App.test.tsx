@@ -47,24 +47,53 @@ const constructionCell = ({ x, y }: GridPoint) => {
   return cell
 }
 
-const dragConstructionTool = (start: GridPoint, end: GridPoint, pointerId = 1) => {
+interface ConstructionPointerGestureOptions {
+  button?: number
+  endClient?: { x: number; y: number }
+  pointerType?: 'mouse' | 'pen' | 'touch'
+  startClient?: { x: number; y: number }
+}
+
+const clientPointForCell = ({ x, y }: GridPoint) => ({
+  x: 40 + x * 32,
+  y: 40 + y * 32,
+})
+
+const buttonsForButton = (button: number) => button === 0 ? 1 : button === 1 ? 4 : 2
+
+const dragConstructionTool = (
+  start: GridPoint,
+  end: GridPoint,
+  pointerId = 1,
+  options: ConstructionPointerGestureOptions = {},
+) => {
+  const button = options.button ?? 0
+  const startClient = options.startClient ?? clientPointForCell(start)
+  const endClient = options.endClient ?? clientPointForCell(end)
+  const pointerType = options.pointerType ?? 'mouse'
   fireEvent.pointerDown(constructionCell(start), {
-    button: 0,
-    buttons: 1,
+    button,
+    buttons: buttonsForButton(button),
+    clientX: startClient.x,
+    clientY: startClient.y,
     pointerId,
-    pointerType: 'mouse',
+    pointerType,
   })
   fireEvent.pointerMove(constructionCell(end), {
-    button: 0,
-    buttons: 1,
+    button,
+    buttons: buttonsForButton(button),
+    clientX: endClient.x,
+    clientY: endClient.y,
     pointerId,
-    pointerType: 'mouse',
+    pointerType,
   })
   fireEvent.pointerUp(constructionCell(end), {
-    button: 0,
+    button,
     buttons: 0,
+    clientX: endClient.x,
+    clientY: endClient.y,
     pointerId,
-    pointerType: 'mouse',
+    pointerType,
   })
 }
 
@@ -87,6 +116,47 @@ const cancelConstructionToolWithSecondaryClick = (pointerId: number) => {
     pointerType: 'mouse',
   })
   fireEvent.contextMenu(constructionMap())
+}
+
+const dragConstructionCamera = ({
+  button,
+  endClient,
+  pointerId,
+  pointerType = 'mouse',
+  startClient,
+}: {
+  button: 0 | 1 | 2
+  endClient: { x: number; y: number }
+  pointerId: number
+  pointerType?: 'mouse' | 'pen' | 'touch'
+  startClient: { x: number; y: number }
+}) => {
+  const map = constructionMap()
+  fireEvent.pointerDown(map, {
+    button,
+    buttons: buttonsForButton(button),
+    clientX: startClient.x,
+    clientY: startClient.y,
+    pointerId,
+    pointerType,
+  })
+  fireEvent.pointerMove(map, {
+    button,
+    buttons: buttonsForButton(button),
+    clientX: endClient.x,
+    clientY: endClient.y,
+    pointerId,
+    pointerType,
+  })
+  fireEvent.pointerUp(map, {
+    button,
+    buttons: 0,
+    clientX: endClient.x,
+    clientY: endClient.y,
+    pointerId,
+    pointerType,
+  })
+  if (button === 2) fireEvent.contextMenu(map)
 }
 
 const boundaryConnectionSignature = (root: HTMLElement) =>
@@ -118,9 +188,10 @@ const selectTool = (
   const tool = within(tray).getByRole('button', { name: toolName })
   fireEvent.click(tool)
   expect(constructionMap()).toHaveClass('tool-active')
-  expect(screen.getByRole('region', { name: new RegExp(`^${category} build tools$`, 'i') })).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'true')
-  expect(tool).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.queryByRole('region', { name: new RegExp(`^${category} build tools$`, 'i') }))
+    .not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByRole('button', { name: /Return to Select mode from/i })).toBeVisible()
   expect(screen.queryByRole('button', { name: /Move \/ Select|Continue placing/i })).not.toBeInTheDocument()
 }
 
@@ -326,47 +397,152 @@ describe('freeform settlement builder', () => {
     })
   })
 
-  it('keeps the desktop catalog open and cancels the active designator when categories change', () => {
+  it('closes the desktop catalog after choosing a tool and reselecting it keeps the designator', () => {
     renderFreshApp()
     const structureTools = openCategory('Structure')
     const wall = within(structureTools).getByRole('button', { name: /^Wall:/i })
 
     fireEvent.click(wall)
-    expect(structureTools).toBeVisible()
-    expect(wall).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('region', { name: /^Structure build tools$/i }))
+      .not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Build menu' }))
+      .toHaveAttribute('aria-pressed', 'false')
     expect(constructionMap()).toHaveClass('tool-active')
+    expect(document.querySelector('.active-tool-summary')).toHaveTextContent('Wall')
     expect(document.querySelector('.construction-designator-strip')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Move \/ Select|Continue placing/i })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /^Furniture$/i }))
-    expect(constructionMap()).toHaveClass('pan-active')
-    expect(screen.getByRole('region', { name: /^Furniture build tools$/i })).toBeVisible()
-    expect(document.querySelector('.active-tool-summary')).not.toBeInTheDocument()
-
-    const bunk = screen.getByRole('button', { name: /^Bunk bed:/i })
-    fireEvent.click(bunk)
-    expect(constructionMap()).toHaveClass('tool-active')
-    expect(bunk).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('region', { name: /^Furniture build tools$/i })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Rotate Bunk bed to 90°' })).toBeVisible()
-
     fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
-    expect(screen.queryByRole('region', { name: /build tools$/i })).not.toBeInTheDocument()
-    expect(document.querySelector('.active-tool-summary')).toHaveTextContent('Bunk bed')
-    expect(screen.getByRole('button', { name: 'Rotate Bunk bed to 90°' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Return to Select mode from Bunk bed' })).toBeVisible()
+    const reopenedStructureTools = screen.getByRole('region', {
+      name: /^Structure build tools$/i,
+    })
+    const selectedWall = within(reopenedStructureTools).getByRole('button', { name: /^Wall:/i })
+    expect(selectedWall).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(selectedWall)
+
+    expect(screen.queryByRole('region', { name: /^Structure build tools$/i }))
+      .not.toBeInTheDocument()
+    expect(constructionMap()).toHaveClass('tool-active')
+    expect(document.querySelector('.active-tool-summary')).toHaveTextContent('Wall')
+    expect(screen.getByRole('button', { name: 'Return to Select mode from Wall' })).toBeVisible()
     expect(screen.queryByRole('button', { name: /Move \/ Select|Continue placing/i })).not.toBeInTheDocument()
+    expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(0)
 
     cancelConstructionToolWithSecondaryClick(91)
-    expect(constructionMap()).toHaveClass('pan-active')
-    expect(document.querySelector('.active-tool-summary')).not.toBeInTheDocument()
+    expect(constructionMap()).toHaveClass('select-active')
+    expect(document.querySelector('.active-tool-summary')).toHaveTextContent('Select')
+
+    selectTool('Structure', /^Wall/i)
+    fireEvent.keyDown(constructionMap(), { key: 'Escape' })
+    expect(constructionMap()).toHaveClass('select-active')
+    expect(screen.queryByRole('button', { name: 'Return to Select mode from Wall' })).not.toBeInTheDocument()
+  })
+
+  it('keeps placement, active-tool camera drags, and Select inspection in one coherent flow', () => {
+    renderFreshApp()
+    const completedLayoutBefore = structuredClone(
+      useColonyStore.getState().settlement.layout,
+    )
+
+    selectTool('Structure', /^Wall/i)
+    dragConstructionTool(
+      { x: 9, y: 6 },
+      { x: 11, y: 6 },
+      201,
+      {
+        startClient: { x: 360, y: 260 },
+        endClient: { x: 440, y: 260 },
+      },
+    )
+
+    let state = useColonyStore.getState()
+    expect(state.settlement.layout).toEqual(completedLayoutBefore)
+    expect(state.settlement.constructionOrders).toHaveLength(3)
+    expect(state.settlement.constructionOrders.every(
+      (order) => order.status !== 'complete' && order.target.kind === 'boundary',
+    )).toBe(true)
+    expect(constructionMap()).toHaveClass('tool-active')
+    expect(screen.getByRole('button', { name: 'Build menu' }))
+      .toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Return to Select mode from Wall' })).toBeVisible()
+
+    const orderSnapshot = structuredClone(state.settlement.constructionOrders)
+    const revisionAfterPlacement = state.worldRevision
+    const scroll = constructionMap().closest<HTMLElement>('.construction-map-scroll')!
+    scroll.scrollLeft = 180
+    scroll.scrollTop = 140
+
+    dragConstructionCamera({
+      button: 2,
+      startClient: { x: 320, y: 280 },
+      endClient: { x: 270, y: 245 },
+      pointerId: 202,
+    })
+    expect(scroll.scrollLeft).toBe(230)
+    expect(scroll.scrollTop).toBe(175)
+    expect(constructionMap()).toHaveClass('tool-active')
+
+    dragConstructionCamera({
+      button: 1,
+      startClient: { x: 270, y: 245 },
+      endClient: { x: 240, y: 225 },
+      pointerId: 203,
+    })
+    expect(scroll.scrollLeft).toBe(260)
+    expect(scroll.scrollTop).toBe(195)
+    expect(constructionMap()).toHaveClass('tool-active')
+
+    state = useColonyStore.getState()
+    expect(state.settlement.constructionOrders).toEqual(orderSnapshot)
+    expect(state.settlement.layout).toEqual(completedLayoutBefore)
+    expect(state.worldRevision).toBe(revisionAfterPlacement)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Select mode from Wall' }))
+    expect(constructionMap()).toHaveClass('select-active')
+
+    dragConstructionCamera({
+      button: 0,
+      startClient: { x: 240, y: 225 },
+      endClient: { x: 205, y: 195 },
+      pointerId: 204,
+    })
+    expect(scroll.scrollLeft).toBe(295)
+    expect(scroll.scrollTop).toBe(225)
+    expect(document.querySelector('.construction-selection-inspector')).not.toBeInTheDocument()
+    expect(useColonyStore.getState().settlement.constructionOrders).toEqual(orderSnapshot)
+
+    clickConstructionCell({ x: 0, y: 0 }, 205)
+    expect(screen.getByRole('region', { name: 'Lunar regolith inspector' })).toBeVisible()
+    expect(useColonyStore.getState().settlement.constructionOrders).toEqual(orderSnapshot)
+  })
+
+  it('uses Escape for the active designator, a Build drawer, and tile inspection in sequence', () => {
+    renderFreshApp()
+    selectTool('Structure', /^Wall/i)
+
+    const map = constructionMap()
+    fireEvent.keyDown(map, { key: 'Escape' })
+    expect(map).toHaveClass('select-active')
+    expect(screen.queryByRole('button', { name: 'Return to Select mode from Wall' }))
+      .not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
-    fireEvent.click(screen.getByRole('button', { name: /^Bunk bed:/i }))
-    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
-    fireEvent.keyDown(constructionMap(), { key: 'Escape' })
-    expect(constructionMap()).toHaveClass('pan-active')
-    expect(screen.queryByRole('button', { name: 'Return to Select mode from Bunk bed' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Build menu' }))
+      .toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('region', { name: /^Structure build tools$/i })).toBeVisible()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.getByRole('button', { name: 'Build menu' }))
+      .toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('region', { name: /^Structure build tools$/i }))
+      .not.toBeInTheDocument()
+
+    clickConstructionCell({ x: 0, y: 0 }, 206)
+    expect(screen.getByRole('region', { name: 'Lunar regolith inspector' })).toBeVisible()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: 'Lunar regolith inspector' }))
+      .not.toBeInTheDocument()
+    expect(map).toHaveClass('select-active')
+    expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(0)
   })
 
   it('auto-collapses the catalog after a phone-size tool choice', () => {
@@ -424,7 +600,7 @@ describe('freeform settlement builder', () => {
     selectTool('Structure', /^Wall/i)
     clickConstructionCell({ x: 9, y: 6 })
     cancelConstructionToolWithSecondaryClick(92)
-    expect(constructionMap()).toHaveClass('pan-active')
+    expect(constructionMap()).toHaveClass('select-active')
 
     act(() => {
       useColonyStore.getState().setConstructionSpeed(1)
@@ -590,10 +766,12 @@ describe('freeform settlement builder', () => {
 
     const map = constructionMap()
     const status = screen.getByRole('status')
-    expect(status).toHaveTextContent(/column 9, row 10.*construction pallet.*valid wall.*1 tile/i)
+    expect(status).toHaveTextContent(
+      /column 9, row 10.*construction pallet.*press enter to inspect/i,
+    )
 
     fireEvent.keyDown(map, { key: 'ArrowRight' })
-    expect(status).toHaveTextContent(/column 10, row 10/i)
+    expect(status).toHaveTextContent(/column 10, row 10.*valid wall.*1 tile/i)
     fireEvent.keyDown(map, { key: 'Enter' })
     fireEvent.keyDown(map, { key: 'ArrowRight' })
     expect(status).toHaveTextContent(/column 11, row 10.*valid wall.*2 tiles/i)
@@ -765,7 +943,6 @@ describe('freeform settlement builder', () => {
     const revision = useColonyStore.getState().worldRevision
 
     selectTool('Production', /^Life support/i)
-    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
     const rotate = screen.getByRole('button', { name: /^Rotate Life support to 90°$/i })
     fireEvent.click(rotate)
     expect(screen.getByRole('button', { name: /^Rotate Life support to 180°$/i })).toBeVisible()
@@ -890,7 +1067,6 @@ describe('freeform settlement builder', () => {
     )
     expect(screen.getByRole('img', { name: /Deconstruct Life support blueprint, paused/i })).toBeVisible()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
     const undo = screen.getByRole('button', { name: /^Undo/i })
     expect(undo).toBeEnabled()
     fireEvent.click(undo)

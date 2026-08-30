@@ -190,7 +190,7 @@
 }
 
 .construction-map { touch-action: none; }
-.construction-map.pan-active { cursor: grab; user-select: none; }
+.construction-map.select-active { cursor: default; user-select: none; }
 .construction-map.is-panning { cursor: grabbing; }
 .construction-map:focus-visible {
   outline: 3px solid #b8eef2;
@@ -1862,7 +1862,7 @@
   user-select: none;
 }
 
-.construction-camera-surface.pan-active { cursor: grab; }
+.construction-camera-surface.select-active { cursor: default; }
 .construction-camera-surface.tool-active { cursor: crosshair; }
 .construction-camera-surface.is-panning { cursor: grabbing; }
 .construction-camera-surface.is-edge-panning { cursor: crosshair; }
@@ -2024,8 +2024,8 @@
 
 .construction-stack-count b { font: inherit; }
 
-.construction-map.pan-active .construction-inspect-target,
-.construction-map.pan-active .construction-stack-count {
+.construction-map.select-active .construction-inspect-target,
+.construction-map.select-active .construction-stack-count {
   cursor: pointer;
   pointer-events: auto;
 }
@@ -3263,6 +3263,183 @@
     display: inline;
     font-size: 8px;
   }
+}
+
+/* Unified Select → Build drawer → persistent blueprint designator contract. */
+.construction-controls {
+  border-color: rgba(12, 15, 13, 0.98);
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, rgba(246, 232, 195, 0.035), transparent 28px),
+    rgba(25, 29, 26, 0.97);
+  box-shadow:
+    0 1px 0 rgba(255, 248, 226, 0.08) inset,
+    0 0 0 1px rgba(185, 173, 139, 0.08),
+    0 10px 26px rgba(0, 0, 0, 0.46);
+}
+
+.construction-controls.catalog-open { width: min(680px, calc(100% - 28px)); }
+.construction-controls.active-tool { width: min(650px, calc(100% - 28px)); }
+
+.construction-category-bar .architect-button {
+  color: #e1c77f;
+}
+
+.construction-category-bar .architect-button[aria-pressed="true"] {
+  border-color: rgba(221, 178, 92, 0.44);
+  color: #f0dcaa;
+  background: rgba(151, 109, 44, 0.2);
+}
+
+.construction-category-bar .pan-button {
+  color: #a9ced0;
+}
+
+.construction-category-bar .pan-button:hover,
+.construction-category-bar .pan-button:focus-visible {
+  border-color: rgba(126, 200, 207, 0.36);
+  color: #d4eff0;
+  background: rgba(71, 132, 137, 0.15);
+}
+
+.active-tool-summary,
+.select-mode-summary {
+  position: relative;
+  min-height: 42px;
+  background: linear-gradient(90deg, rgba(195, 151, 69, 0.085), transparent 74%);
+}
+
+.select-mode-summary {
+  background: linear-gradient(90deg, rgba(80, 151, 157, 0.09), transparent 74%);
+}
+
+.active-tool-summary::before,
+.select-mode-summary::before {
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: #c3a25a;
+  box-shadow: 0 0 7px rgba(195, 162, 90, 0.3);
+  content: "";
+}
+
+.select-mode-summary::before {
+  background: #79bcc1;
+  box-shadow: 0 0 7px rgba(121, 188, 193, 0.28);
+}
+
+.select-mode-summary > .game-icon { color: #86c8cc; }
+
+.active-tool-summary small,
+.select-mode-summary small {
+  color: #999b91;
+  font-family: ui-monospace, monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.construction-tool-tray {
+  background: rgba(4, 7, 6, 0.14);
+}
+
+.construction-tool-tray .construction-designator-strip {
+  min-height: 44px;
+  margin: 0 0 5px;
+  display: flex;
+  border-color: rgba(195, 162, 90, 0.18);
+  background: rgba(119, 88, 36, 0.07);
+}
+
+.construction-tool-list > button {
+  transition: border-color 100ms ease, color 100ms ease, background-color 100ms ease;
+}
+
+.construction-tool-list > button:hover,
+.construction-tool-list > button:focus-visible,
+.construction-tool-list > button.selected {
+  border-color: rgba(221, 178, 92, 0.46);
+  color: #f0e2c4;
+  background: rgba(151, 109, 44, 0.16);
+  outline: 0;
+}
+
+.construction-map.select-active .construction-cell:hover {
+  background-color: rgba(123, 190, 196, 0.075);
+  box-shadow: 0 0 0 1px rgba(137, 203, 210, 0.18) inset;
+}
+
+.construction-map.select-active .construction-cursor { opacity: 0.48; }
+.construction-map.tool-active .construction-cell {
+  border-right-color: rgba(215, 203, 170, 0.105);
+  border-bottom-color: rgba(215, 203, 170, 0.105);
+}
+
+@media (max-width: 700px) {
+  .construction-controls.catalog-open,
+  .construction-controls.active-tool {
+    width: auto;
+  }
+
+  .construction-controls.catalog-open .construction-category-bar {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .construction-controls.catalog-open .construction-category-bar button,
+  .construction-controls.catalog-open.active-tool .construction-category-bar button {
+    min-width: 44px;
+    flex: 1 0 44px;
+  }
+
+  .construction-tool-tray .construction-designator-strip {
+    display: flex;
+  }
+
+  .construction-tool-tray .construction-designator-strip button {
+    min-width: 62px;
+    grid-template-columns: 15px auto;
+  }
+
+  .construction-tool-tray .construction-designator-strip button > span {
+    display: inline;
+    font-size: 8px;
+  }
+
+  .active-tool-summary,
+  .select-mode-summary {
+    min-width: 0;
+    padding: 4px 7px 4px 9px;
+    flex: 1 1 112px;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .active-tool-summary strong,
+  .select-mode-summary strong {
+    overflow: hidden;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .active-tool-summary small,
+  .select-mode-summary small {
+    display: block;
+    overflow: hidden;
+    font-size: 7px;
+    line-height: 1.1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .construction-tool-list > button { transition: none; }
 }
 
 @media (max-width: 380px) {

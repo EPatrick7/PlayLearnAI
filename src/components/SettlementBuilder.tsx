@@ -125,7 +125,7 @@ const toolsByCategory: Record<BuildCategory, ToolDefinition[]> = {
 }
 
 const toolName = (tool: ConstructionTool | null) => {
-  if (!tool) return 'Pan'
+  if (!tool) return 'Select'
   if (tool === 'wall') return 'Wall'
   if (tool === 'door') return 'Door'
   if (tool === 'erase') return 'Deconstruct'
@@ -133,21 +133,19 @@ const toolName = (tool: ConstructionTool | null) => {
 }
 
 const instructionFor = (tool: ConstructionTool | null) => {
-  if (!tool) return 'Open Build to place blueprints. Colonists haul materials and construct every funded plan.'
-  if (tool === 'wall') return 'Wall designator · drag a one-tile line · two fingers pan on touch. Colonists build the blueprints.'
-  if (tool === 'door') return 'Door designator · tap a wall tile · touch-drag pans. Colonists build the blueprint.'
-  if (tool === 'erase') return 'Deconstruct designator · click or drag built objects · two fingers pan on touch.'
-  return `${WORKSTATION_SPECS[tool].description} · tap to place · touch-drag pans · R rotates. Colonists haul and build.`
+  if (!tool) return 'Select · click or tap to inspect · drag open ground to move · wheel or pinch to zoom.'
+  if (tool === 'wall') return 'Wall blueprint · drag a one-tile line · middle/Space-drag or two-finger pan. Colonists build every tile.'
+  if (tool === 'door') return 'Door blueprint · click or tap a wall tile · middle/Space-drag or touch-drag to move.'
+  if (tool === 'erase') return 'Deconstruct order · click or drag built objects · middle/Space-drag or two-finger pan.'
+  return `${WORKSTATION_SPECS[tool].description} · click or tap to place · middle/Space-drag or touch-drag to move · rotate as needed.`
 }
 
 const gestureFor = (tool: ConstructionTool) => (
   tool === 'wall' || tool === 'erase'
-    ? 'Drag to draw · right-drag / 2-finger pan'
-    : 'Click/tap to place · right-drag or touch-drag pans'
-)
-
-const shouldCollapseCatalogAfterToolChoice = () => (
-  typeof window !== 'undefined' && window.innerWidth <= 700
+    ? 'Drag a tile line'
+    : tool === 'door'
+      ? 'Choose a wall tile'
+      : 'Choose a tile · rotate as needed'
 )
 
 interface SettlementBuilderProps {
@@ -587,6 +585,17 @@ export function SettlementBuilder({
     }
   }, [])
 
+  const closeInspectionStack = useCallback(() => {
+    setStackSnapshot(null)
+    setStackTrigger(null)
+    setStackPreferredItemKey(null)
+  }, [])
+
+  const closeBuilderPicker = useCallback(() => {
+    setBuilderPickerOrderId(null)
+    setBuilderPickerTrigger(null)
+  }, [])
+
   const toggleConstructionQueue = () => {
     if (constructionQueue.length === 0) return
     if (constructionQueueOpen) {
@@ -851,12 +860,14 @@ export function SettlementBuilder({
       ? `Select mode. ${toolName(cancelledTool)} designator stopped.`
       : 'Select mode active.')
     setToastVisible(true)
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.construction-map')?.focus({ preventScroll: true })
+    })
   }, [selectedTool])
 
   const activateTool = (
     tool: ConstructionTool,
     nextRotation: WorkstationRotation = 0,
-    closeCatalog = shouldCollapseCatalogAfterToolChoice(),
     message?: string,
   ) => {
     setConstructionQueueOpen(false)
@@ -867,16 +878,12 @@ export function SettlementBuilder({
     setToolActivationId((current) => current + 1)
     setSelectedTool(tool)
     setRotation(nextRotation)
-    if (closeCatalog) setBuildOpen(false)
-    announce(message ?? `${toolName(tool)} ready. ${tool === 'wall' || tool === 'erase' ? 'Drag to draw.' : 'Tap to place.'}`)
+    setBuildOpen(false)
+    announce(message ?? `${toolName(tool)} ready. ${tool === 'wall' || tool === 'erase' ? 'Drag to draw.' : 'Click or tap to place.'}`)
   }
 
   const chooseTool = (tool: ConstructionTool) => {
-    if (selectedTool === tool) {
-      cancelTool()
-      return
-    }
-    activateTool(tool)
+    activateTool(tool, selectedTool === tool ? rotation : 0)
   }
 
   const chooseCategory = (nextCategory: BuildCategory) => {
@@ -885,14 +892,10 @@ export function SettlementBuilder({
     setStackSnapshot(null)
     setStackTrigger(null)
     setStackPreferredItemKey(null)
-    const categoryChanged = nextCategory !== category
-    if (categoryChanged && selectedTool) {
-      setSelectedTool(null)
-    }
     setCategory(nextCategory)
     setBuildOpen(true)
-    announce(categoryChanged && selectedTool
-      ? `${categoryLabels[nextCategory]} tools open. ${toolName(selectedTool)} designator cancelled.`
+    announce(selectedTool
+      ? `${categoryLabels[nextCategory]} tools open. ${toolName(selectedTool)} blueprint remains active.`
       : `${categoryLabels[nextCategory]} blueprint tools open.`)
   }
 
@@ -936,8 +939,7 @@ export function SettlementBuilder({
     activateTool(
       copiedTool,
       copiedRotation,
-      true,
-      `${toolName(copiedTool)} copied. ${copiedTool === 'wall' ? 'Drag to draw.' : 'Tap to place.'}`,
+      `${toolName(copiedTool)} copied. ${copiedTool === 'wall' ? 'Drag to draw.' : 'Click or tap to place.'}`,
     )
     window.requestAnimationFrame(() => {
       document.querySelector<HTMLElement>('.construction-map')?.focus()
@@ -954,7 +956,6 @@ export function SettlementBuilder({
       activateTool(
         'wall',
         0,
-        true,
         'Wall ready. Enclose a second room, then replace one wall tile with a door.',
       )
       return
@@ -964,7 +965,6 @@ export function SettlementBuilder({
       activateTool(
         'door',
         0,
-        true,
         'Door ready. Replace one wall tile in the closed shell.',
       )
       return
@@ -974,7 +974,6 @@ export function SettlementBuilder({
       activateTool(
         'life-support',
         0,
-        true,
         'Life support ready. Place it inside an enclosed room.',
       )
       return
@@ -984,34 +983,43 @@ export function SettlementBuilder({
 
   useEffect(() => {
     const keyboardShortcuts = (event: KeyboardEvent) => {
-      if (builderPickerOrder) return
       if (
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
         event.target instanceof HTMLSelectElement ||
         (event.target instanceof HTMLElement && event.target.isContentEditable)
       ) return
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        if (constructionQueueOpen) {
+          closeConstructionQueue()
+        } else if (stackSnapshot) {
+          closeInspectionStack()
+        } else if (builderPickerOrder) {
+          closeBuilderPicker()
+        } else if (selectedTool) {
+          cancelTool()
+        } else if (buildOpen) {
+          setBuildOpen(false)
+        } else if (selection) {
+          setSelection(null)
+          setAnnouncement('Selection cleared.')
+          setToastVisible(true)
+        } else if (onExit) {
+          onExit()
+        }
+        return
+      }
+
+      if (builderPickerOrder) return
       if (event.key.toLowerCase() === 'b' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault()
         toggleBuildMenu()
         if (constructionQueueOpen) {
           window.requestAnimationFrame(() => buildMenuTriggerRef.current?.focus())
         }
-      }
-      if (event.key === 'Escape') {
-        if (constructionQueueOpen) {
-          closeConstructionQueue()
-        } else if (selection) {
-          setSelection(null)
-          setAnnouncement('Selection cleared.')
-          setToastVisible(true)
-        } else if (selectedTool) {
-          cancelTool()
-        } else if (buildOpen) {
-          setBuildOpen(false)
-        } else if (onExit) {
-          onExit()
-        }
+        return
       }
     }
     window.addEventListener('keydown', keyboardShortcuts)
@@ -1020,11 +1028,14 @@ export function SettlementBuilder({
     buildOpen,
     builderPickerOrder,
     cancelTool,
+    closeBuilderPicker,
     closeConstructionQueue,
+    closeInspectionStack,
     constructionQueueOpen,
     onExit,
     selectedTool,
     selection,
+    stackSnapshot,
     toggleBuildMenu,
   ])
 
@@ -1166,7 +1177,9 @@ export function SettlementBuilder({
               </strong>
               <small>{firstShiftGuide?.detail ?? (openOrders.length > 0
                 ? strongestQueueStatus?.activity ?? 'Waiting for a builder'
-                : constructionCompletionSummary ?? toolInstruction)}</small>
+                : constructionCompletionSummary ?? (selectedTool || buildOpen
+                  ? toolInstruction
+                  : 'Colonists haul and build every placed blueprint.'))}</small>
               {firstShiftGuide && openOrders.length === 0 && (
                 <span className="sr-only">No blueprints.</span>
               )}
@@ -1480,7 +1493,7 @@ export function SettlementBuilder({
               <GameIcon name="work" /><span>Build</span><small>B</small>
             </button>
 
-            {selectedTool && (
+            {selectedTool && !buildOpen && (
               <button
                 aria-label={`Return to Select mode from ${toolName(selectedTool)}`}
                 className="pan-button"
@@ -1492,7 +1505,7 @@ export function SettlementBuilder({
               </button>
             )}
 
-            {isWorkstationTool(selectedTool) && (
+            {!buildOpen && isWorkstationTool(selectedTool) && (
               <button aria-label={`Rotate ${toolName(selectedTool)} to ${nextRotation}°`} className="rotate-tool" onClick={rotate} type="button">
                 <GameIcon name="rotate" /><span>Rotate</span><small>→ {nextRotation}°</small>
               </button>
@@ -1514,7 +1527,14 @@ export function SettlementBuilder({
             {!buildOpen && selectedTool && (
               <span className="active-tool-summary">
                 <GameIcon name={selectedToolDefinition?.icon ?? 'work'} />
-                <span><strong>{toolName(selectedTool)}</strong><small>{gestureFor(selectedTool)}</small></span>
+                <span><strong>{toolName(selectedTool)}</strong><small>BLUEPRINT · {gestureFor(selectedTool)}</small></span>
+              </span>
+            )}
+
+            {!buildOpen && !selectedTool && (
+              <span className="active-tool-summary select-mode-summary">
+                <GameIcon name="inspect" />
+                <span><strong>Select</strong><small>Click/tap inspect · drag map</small></span>
               </span>
             )}
 
@@ -1528,6 +1548,27 @@ export function SettlementBuilder({
 
           {buildOpen && (
             <section aria-label={`${categoryLabels[category]} build tools`} className="construction-tool-tray">
+              {selectedTool && (
+                <div aria-label={`${toolName(selectedTool)} blueprint active`} className="construction-designator-strip" role="group">
+                  <span className="construction-designator-summary">
+                    <GameIcon name={selectedToolDefinition?.icon ?? 'work'} />
+                    <span><small>Active blueprint</small><strong>{toolName(selectedTool)} · {gestureFor(selectedTool)}</strong></span>
+                  </span>
+                  {isWorkstationTool(selectedTool) && (
+                    <button aria-label={`Rotate ${toolName(selectedTool)} to ${nextRotation}°`} onClick={rotate} type="button">
+                      <GameIcon name="rotate" /><span>Rotate</span>
+                    </button>
+                  )}
+                  <button
+                    aria-label={`Return to Select mode from ${toolName(selectedTool)}`}
+                    className="cancel-tool"
+                    onClick={cancelTool}
+                    type="button"
+                  >
+                    <GameIcon name="inspect" /><span>Select</span>
+                  </button>
+                </div>
+              )}
               <div className="construction-tool-list">
                 {activeTools.map((tool) => (
                   <button
@@ -1540,7 +1581,6 @@ export function SettlementBuilder({
                   >
                     <span><GameIcon name={tool.icon} /></span>
                     <strong>{tool.label}</strong>
-                    <small>{tool.detail}</small>
                     <em className="construction-tool-cost">
                       {toolMaterialCost(tool.id) > 0
                         ? <><GameIcon name="gear" />{toolMaterialCost(tool.id)}{tool.id === 'wall' ? ' / tile' : ''}</>
@@ -1561,11 +1601,7 @@ export function SettlementBuilder({
           <TileStackPicker
             gridHeight={layout.height}
             gridWidth={layout.width}
-            onClose={() => {
-              setStackSnapshot(null)
-              setStackTrigger(null)
-              setStackPreferredItemKey(null)
-            }}
+            onClose={closeInspectionStack}
             onSelectItem={(tile, item) => selectInspection(tile.key, item)}
             onSelectSurface={(tile) => selectInspection(tile.key, null)}
             tile={stackSnapshot}
@@ -1580,10 +1616,7 @@ export function SettlementBuilder({
             automaticDetail={selectedBlueprintHasCargo
               ? 'Finish the current material delivery before switching'
               : 'Best available colonist takes this job'}
-            onClose={() => {
-              setBuilderPickerOrderId(null)
-              setBuilderPickerTrigger(null)
-            }}
+            onClose={closeBuilderPicker}
             onSelect={chooseConstructionBuilder}
             options={constructionWorkerOptions}
             orderLabel={constructionOrderPresentation(builderPickerOrder).label}

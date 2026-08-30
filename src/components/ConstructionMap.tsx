@@ -276,7 +276,8 @@ export function ConstructionMap({
   const [dragEnd, setDragEnd] = useState<GridPoint | null>(null)
   const [draftTool, setDraftTool] = useState<ConstructionTool | null>(null)
   const [cursor, setCursor] = useState<GridPoint>({ x: 8, y: 9 })
-  const [previewActivationId, setPreviewActivationId] = useState(toolActivationId)
+  const interactionEpoch = `${toolActivationId}:${selectedTool ?? 'select'}`
+  const [previewTargetEpoch, setPreviewTargetEpoch] = useState<string | null>(null)
   const [suppressedPreview, setSuppressedPreview] = useState<{
     tool: ConstructionTool
     rotation: WorkstationRotation
@@ -321,9 +322,11 @@ export function ConstructionMap({
   }, [openOrders])
 
   const pointerPoint = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const direct = pointFromElement(event.target as Element)
-    if (direct) return direct
+    // Spanning workstation and blueprint nodes only store their origin in data
+    // attributes. Real pointer geometry identifies the exact footprint tile;
+    // the element lookup remains the zero-layout fallback used by jsdom.
     return pointAtClient({ x: event.clientX, y: event.clientY })
+      ?? pointFromElement(event.target as Element)
       ?? gridPointFromElement(event.target as Element)
   }
 
@@ -789,46 +792,68 @@ export function ConstructionMap({
     return stopEdgePan
   }, [selectedTool, stopEdgePan])
 
-  useEffect(() => {
-    const abandonGestures = () => {
-      edgePanPointerRef.current = null
-      edgePanLastTimestampRef.current = null
-      if (edgePanFrameRef.current !== null) {
-        cancelAnimationFrame(edgePanFrameRef.current)
-        edgePanFrameRef.current = null
-      }
-      pointerIdRef.current = null
-      dragStartRef.current = null
-      dragEndRef.current = null
-      draftPointerStartRef.current = null
-      draftDraggingRef.current = false
-      cancelledDraftPointerIdRef.current = null
-      keyboardAnchorRef.current = null
-      panPointerIdRef.current = null
-      panLastPointRef.current = null
-      panStartPointRef.current = null
-      panStartCellRef.current = null
-      panPointerTypeRef.current = 'mouse'
-      panButtonRef.current = null
-      panStartInspectItemKeyRef.current = null
-      panMovedRef.current = false
-      touchPointsRef.current.clear()
-      touchPanCenterRef.current = null
-      touchPinchDistanceRef.current = null
-      if (touchGestureFrameRef.current !== null) {
-        cancelAnimationFrame(touchGestureFrameRef.current)
-        touchGestureFrameRef.current = null
-      }
-      spacePressedRef.current = false
-      setDragStart(null)
-      setDragEnd(null)
-      setDraftTool(null)
-      setIsPanning(false)
-      setIsEdgePanning(false)
+  const resetGestureState = useCallback(() => {
+    const capturedPointerIds = new Set<number>()
+    if (pointerIdRef.current !== null) capturedPointerIds.add(pointerIdRef.current)
+    if (panPointerIdRef.current !== null) capturedPointerIds.add(panPointerIdRef.current)
+    if (cancelledDraftPointerIdRef.current !== null) {
+      capturedPointerIds.add(cancelledDraftPointerIdRef.current)
     }
-    window.addEventListener('blur', abandonGestures)
-    return () => window.removeEventListener('blur', abandonGestures)
-  }, [])
+    touchPointsRef.current.forEach((_, pointerId) => capturedPointerIds.add(pointerId))
+
+    stopEdgePan()
+    if (touchGestureFrameRef.current !== null) {
+      cancelAnimationFrame(touchGestureFrameRef.current)
+      touchGestureFrameRef.current = null
+    }
+    pointerIdRef.current = null
+    dragStartRef.current = null
+    dragEndRef.current = null
+    draftPointerStartRef.current = null
+    draftDraggingRef.current = false
+    cancelledDraftPointerIdRef.current = null
+    keyboardAnchorRef.current = null
+    panPointerIdRef.current = null
+    panLastPointRef.current = null
+    panStartPointRef.current = null
+    panStartCellRef.current = null
+    panPointerTypeRef.current = 'mouse'
+    panButtonRef.current = null
+    panStartInspectItemKeyRef.current = null
+    panMovedRef.current = false
+    panInspectsStationaryPointerRef.current = true
+    touchPointsRef.current.clear()
+    touchPanCenterRef.current = null
+    touchPinchDistanceRef.current = null
+    touchPinchZoomRef.current = zoomRef.current
+    spacePressedRef.current = false
+    setHoverCell(null)
+    setDragStart(null)
+    setDragEnd(null)
+    setDraftTool(null)
+    setSuppressedPreview(null)
+    setPreviewTargetEpoch(null)
+    setIsPanning(false)
+
+    const surface = surfaceRef.current
+    capturedPointerIds.forEach((pointerId) => {
+      if (surface?.hasPointerCapture?.(pointerId)) {
+        surface.releasePointerCapture(pointerId)
+      }
+    })
+  }, [setHoverCell, stopEdgePan])
+
+  useEffect(() => {
+    // A new tool epoch invalidates imperative pointer captures and local drafts;
+    // this reset intentionally mirrors an external gesture-cancellation event.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    resetGestureState()
+  }, [interactionEpoch, resetGestureState])
+
+  useEffect(() => {
+    window.addEventListener('blur', resetGestureState)
+    return () => window.removeEventListener('blur', resetGestureState)
+  }, [resetGestureState])
 
   const indoorFootprintWarning = useCallback((kind: WorkstationKind, cells: GridPoint[]) => {
     if (!WORKSTATION_SPECS[kind].indoor) return null
@@ -861,7 +886,7 @@ export function ConstructionMap({
 
   const preview = useMemo<DraftPreview | null>(() => {
     if (!selectedTool) return null
-    const needsFreshTarget = previewActivationId !== toolActivationId
+    if (previewTargetEpoch !== interactionEpoch) return null
     const point = (draftTool === selectedTool ? dragEnd : null) ?? hoverCell ?? cursor
     if (
       suppressedPreview?.tool === selectedTool &&
@@ -878,7 +903,6 @@ export function ConstructionMap({
         ? cells.some((cell) => Boolean(workstationAt(planningLayout, cell)))
         : false
       const valid = !outOfBounds && !occupied
-      if (needsFreshTarget && !valid) return null
       return {
         cells,
         valid,
@@ -892,7 +916,6 @@ export function ConstructionMap({
 
     if (selectedTool === 'door') {
       const valid = boundaryAt(planningLayout, point)?.kind === 'wall'
-      if (needsFreshTarget && !valid) return null
       return {
         cells: [point],
         valid,
@@ -904,7 +927,6 @@ export function ConstructionMap({
 
     const input = workstationInput(selectedTool, point, rotation)
     const validation = validateWorkstationPlacement(planningLayout, input)
-    if (needsFreshTarget && !validation.valid) return null
     const indoorWarning = validation.valid
       ? indoorFootprintWarning(selectedTool, validation.cells)
       : null
@@ -919,7 +941,7 @@ export function ConstructionMap({
       warning: indoorWarning,
       error: validation.valid ? null : workstationPlacementError(validation),
     }
-  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintWarning, planningLayout, previewActivationId, rotation, selectedTool, suppressedPreview, toolActivationId, workstationPlacementError])
+  }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintWarning, interactionEpoch, planningLayout, previewTargetEpoch, rotation, selectedTool, suppressedPreview, workstationPlacementError])
 
   const previewBoundaryLayout = useMemo<ConstructionLayout | null>(() => {
     if (!preview || (selectedTool !== 'wall' && selectedTool !== 'door')) return null
@@ -1017,7 +1039,8 @@ export function ConstructionMap({
       return
     }
     event.preventDefault()
-    setPreviewActivationId(toolActivationId)
+    mapRef.current?.focus({ preventScroll: true })
+    setPreviewTargetEpoch(interactionEpoch)
     setSuppressedPreview(null)
     updatePreviewLabelAnchor(event.clientX, event.clientY)
     pointerIdRef.current = event.pointerId
@@ -1117,7 +1140,7 @@ export function ConstructionMap({
     }
     const point = pointerPoint(event)
     if (!point) return
-    setPreviewActivationId(toolActivationId)
+    setPreviewTargetEpoch(interactionEpoch)
     setSuppressedPreview(null)
     setHoverCell(point)
     if (pointerIdRef.current !== event.pointerId) return
@@ -1218,7 +1241,7 @@ export function ConstructionMap({
 
   const commitKeyboardDraft = (point: GridPoint) => {
     if (!selectedTool) return
-    setPreviewActivationId(toolActivationId)
+    setPreviewTargetEpoch(interactionEpoch)
     setSuppressedPreview(null)
     if (selectedTool === 'wall' || selectedTool === 'erase') {
       if (!keyboardAnchorRef.current || draftTool !== selectedTool) {
@@ -1287,7 +1310,7 @@ export function ConstructionMap({
         x: Math.min(layout.width - 1, Math.max(0, cursor.x + movement.x)),
         y: Math.min(layout.height - 1, Math.max(0, cursor.y + movement.y)),
       }
-      setPreviewActivationId(toolActivationId)
+      setPreviewTargetEpoch(interactionEpoch)
       setSuppressedPreview(null)
       setCursor(next)
       setHoverCell(next)
@@ -1309,15 +1332,26 @@ export function ConstructionMap({
     }
     if (event.key.toLowerCase() === 'r' && isWorkstationTool(selectedTool)) {
       event.preventDefault()
-      setPreviewActivationId(toolActivationId)
       onRotate()
       return
     }
     if (event.key === 'Escape') {
+      if (!selectedTool) return
       event.preventDefault()
+      event.stopPropagation()
       spacePressedRef.current = false
-      keyboardAnchorRef.current = null
-      clearDraft()
+      const hasLocalLineDraft = (
+        (selectedTool === 'wall' || selectedTool === 'erase') &&
+        (keyboardAnchorRef.current !== null || pointerIdRef.current !== null)
+      )
+      if (hasLocalLineDraft) {
+        if (pointerIdRef.current !== null) {
+          cancelledDraftPointerIdRef.current = pointerIdRef.current
+        }
+        clearDraft()
+        setPreviewTargetEpoch(null)
+        return
+      }
       onCancelTool()
       return
     }
@@ -1340,7 +1374,7 @@ export function ConstructionMap({
 
   useEffect(() => {
     if (selectedTool) mapRef.current?.focus({ preventScroll: true })
-  }, [selectedTool])
+  }, [selectedTool, toolActivationId])
 
   const cursorStyle: CSSProperties = {
     gridColumn: `${cursor.x + 1}`,
@@ -1460,7 +1494,7 @@ export function ConstructionMap({
         >+</button>
       </div>
       <div
-        className={`construction-camera-surface ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''} ${isEdgePanning ? 'is-edge-panning' : ''}`}
+        className={`construction-camera-surface ${selectedTool ? 'tool-active' : 'select-active'} ${isPanning ? 'is-panning' : ''} ${isEdgePanning ? 'is-edge-panning' : ''}`}
         onContextMenu={(event) => {
           event.preventDefault()
         }}
@@ -1480,7 +1514,7 @@ export function ConstructionMap({
         aria-keyshortcuts="ArrowUp ArrowRight ArrowDown ArrowLeft W A S D Enter Space R Escape Control+Z Meta+Z"
         aria-label={`Freeform construction grid, ${layout.width} columns by ${layout.height} rows. ${rooms.length} ${rooms.length === 1 ? 'room' : 'rooms'}.`}
         aria-roledescription="freeform tile construction grid"
-        className={`construction-map ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''} ${isEdgePanning ? 'is-edge-panning' : ''}`}
+        className={`construction-map ${selectedTool ? 'tool-active' : 'select-active'} ${isPanning ? 'is-panning' : ''} ${isEdgePanning ? 'is-edge-panning' : ''}`}
         data-grid-height={layout.height}
         data-grid-width={layout.width}
         onBlur={clearSpaceGesture}

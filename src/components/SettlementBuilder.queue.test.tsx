@@ -43,7 +43,7 @@ describe('SettlementBuilder construction queue', () => {
 
     fireEvent.click(selectMode)
 
-    expect(view.container.querySelector('.construction-map')).toHaveClass('pan-active')
+    expect(view.container.querySelector('.construction-map')).toHaveClass('select-active')
     expect(screen.queryByRole('button', { name: 'Return to Select mode from Wall' }))
       .not.toBeInTheDocument()
     expect(view.container.querySelector('.construction-toast'))
