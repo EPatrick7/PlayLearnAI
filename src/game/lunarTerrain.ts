@@ -1,7 +1,8 @@
 export type LunarTerrainFeatureKind =
+  | 'boulder'
   | 'crater'
   | 'debris'
-  | 'outcrop'
+  | 'mountain'
   | 'regolith'
   | 'track'
 
@@ -19,9 +20,10 @@ export interface LunarTerrainFeature {
 }
 
 export interface LunarTerrain {
+  boulders: LunarTerrainFeature[]
   craters: LunarTerrainFeature[]
   debris: LunarTerrainFeature[]
-  outcrops: LunarTerrainFeature[]
+  mountains: LunarTerrainFeature[]
   regolith: LunarTerrainFeature[]
   tracks: LunarTerrainFeature[]
 }
@@ -112,7 +114,8 @@ const allCells = (width: number, height: number) => Array.from(
   (_, index) => ({ x: index % width, y: Math.floor(index / width) }),
 )
 
-const createOutcrops = ({ width, height, seed }: LunarTerrainOptions) => {
+const createMountains = ({ width, height, seed }: LunarTerrainOptions) => {
+  // Keep the original namespace so an existing terrain seed retains its ridge placement.
   const random = createRandom(seed, `outcrops:${width}x${height}`)
   const area = width * height
   const targetCount = clamp(Math.round(area * 0.068), 8, 34)
@@ -164,15 +167,23 @@ const createOutcrops = ({ width, height, seed }: LunarTerrainOptions) => {
       occupied.add(key)
       cluster.push(candidate)
     }
-    clusters.push(cluster)
+    if (cluster.length > 1) {
+      clusters.push(cluster)
+    } else {
+      occupied.delete(pointKey(start))
+    }
   }
 
   const fillCandidates = shuffled(candidates, random)
-  while (occupied.size < targetCount) {
-    const candidate = fillCandidates.find((cell) => !occupied.has(pointKey(cell)))
+  let fillAttempts = 0
+  while (occupied.size < targetCount && fillAttempts < fillCandidates.length * 2) {
+    fillAttempts += 1
+    const candidate = fillCandidates.find((cell) => (
+      !occupied.has(pointKey(cell)) &&
+      directions.some((direction) => occupied.has(`${cell.x + direction.x}:${cell.y + direction.y}`))
+    ))
     if (!candidate) break
     occupied.add(pointKey(candidate))
-    clusters.push([candidate])
   }
 
   const points = [...occupied].map((key) => {
@@ -187,10 +198,11 @@ const createOutcrops = ({ width, height, seed }: LunarTerrainOptions) => {
       (connected(point.x + 1, point.y) ? EAST : 0) |
       (connected(point.x, point.y + 1) ? SOUTH : 0) |
       (connected(point.x - 1, point.y) ? WEST : 0)
+    // Keep the original namespace so a renamed mountain tile keeps its local facet.
     const variantRandom = createRandom(seed, `outcrop:${point.x}:${point.y}`)
     return {
-      id: `outcrop-${point.x}-${point.y}`,
-      kind: 'outcrop' as const,
+      id: `mountain-${point.x}-${point.y}`,
+      kind: 'mountain' as const,
       x: point.x,
       y: point.y,
       width: 1,
@@ -200,6 +212,55 @@ const createOutcrops = ({ width, height, seed }: LunarTerrainOptions) => {
       neighborMask,
     }
   })
+}
+
+const createBoulders = ({
+  width,
+  height,
+  seed,
+  occupied,
+  mountains,
+}: LunarTerrainOptions & {
+  occupied: Set<string>
+  mountains: readonly LunarTerrainFeature[]
+}) => {
+  const random = createRandom(seed, `boulders:${width}x${height}`)
+  const targetCount = clamp(Math.round((width * height) / 62), 3, 8)
+  const rockCells = new Set(mountains.map((feature) => `${feature.x}:${feature.y}`))
+  const candidates = shuffled(
+    allCells(width, height).filter((cell) => !isLunarTerrainQuietCell(cell, width, height)),
+    random,
+  )
+  const boulders: LunarTerrainFeature[] = []
+
+  for (const candidate of candidates) {
+    if (boulders.length >= targetCount) break
+    const key = pointKey(candidate)
+    if (occupied.has(key)) continue
+
+    const touchesRock = [-1, 0, 1].some((offsetY) => (
+      [-1, 0, 1].some((offsetX) => rockCells.has(
+        `${candidate.x + offsetX}:${candidate.y + offsetY}`,
+      ))
+    ))
+    if (touchesRock) continue
+
+    const variant = Math.floor(random() * 4)
+    boulders.push({
+      id: `boulder-${boulders.length}-${candidate.x}-${candidate.y}`,
+      kind: 'boulder',
+      x: candidate.x,
+      y: candidate.y,
+      width: 1,
+      height: 1,
+      variant,
+      rotation: Math.round((random() * 30 - 15) * 10) / 10,
+    })
+    occupied.add(key)
+    rockCells.add(key)
+  }
+
+  return boulders
 }
 
 const footprintCells = (feature: Pick<LunarTerrainFeature, 'x' | 'y' | 'width' | 'height'>) => {
@@ -220,7 +281,7 @@ const createPlacedFeatures = ({
   sizes,
   allowQuiet = false,
 }: LunarTerrainOptions & {
-  kind: Exclude<LunarTerrainFeatureKind, 'outcrop'>
+  kind: Exclude<LunarTerrainFeatureKind, 'boulder' | 'mountain'>
   count: number
   occupied: Set<string>
   sizes: readonly { width: number; height: number }[]
@@ -259,11 +320,11 @@ const createPlacedFeatures = ({
 
 export const generateLunarTerrain = ({ width, height, seed }: LunarTerrainOptions): LunarTerrain => {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
-    return { craters: [], debris: [], outcrops: [], regolith: [], tracks: [] }
+    return { boulders: [], craters: [], debris: [], mountains: [], regolith: [], tracks: [] }
   }
 
-  const outcrops = createOutcrops({ width, height, seed })
-  const occupied = new Set(outcrops.map((feature) => `${feature.x}:${feature.y}`))
+  const mountains = createMountains({ width, height, seed })
+  const occupied = new Set(mountains.map((feature) => `${feature.x}:${feature.y}`))
   const area = width * height
   const craters = createPlacedFeatures({
     width,
@@ -293,6 +354,13 @@ export const generateLunarTerrain = ({ width, height, seed }: LunarTerrainOption
     ],
     allowQuiet: true,
   })
+  const boulders = createBoulders({
+    width,
+    height,
+    seed,
+    occupied,
+    mountains,
+  })
   const debris = createPlacedFeatures({
     width,
     height,
@@ -309,7 +377,10 @@ export const generateLunarTerrain = ({ width, height, seed }: LunarTerrainOption
     seed,
     kind: 'regolith',
     count: clamp(Math.round(area / 45), 3, 10),
-    occupied: new Set(outcrops.map((feature) => `${feature.x}:${feature.y}`)),
+    occupied: new Set([
+      ...mountains.map((feature) => `${feature.x}:${feature.y}`),
+      ...boulders.map((feature) => `${feature.x}:${feature.y}`),
+    ]),
     sizes: [
       { width: 2, height: 1 },
       { width: 3, height: 1 },
@@ -319,13 +390,14 @@ export const generateLunarTerrain = ({ width, height, seed }: LunarTerrainOption
     allowQuiet: true,
   })
 
-  return { craters, debris, outcrops, regolith, tracks }
+  return { boulders, craters, debris, mountains, regolith, tracks }
 }
 
 export const lunarTerrainFeatures = (terrain: LunarTerrain) => [
   ...terrain.regolith,
   ...terrain.craters,
   ...terrain.tracks,
-  ...terrain.outcrops,
+  ...terrain.mountains,
+  ...terrain.boulders,
   ...terrain.debris,
 ]

@@ -139,10 +139,16 @@ describe('lunar terrain generation', () => {
     const terrain = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
     const features = lunarTerrainFeatures(terrain)
 
-    expect(terrain.outcrops.length).toBeGreaterThanOrEqual(24)
-    expect(terrain.outcrops.length).toBeLessThanOrEqual(32)
-    expect(features.length).toBeGreaterThanOrEqual(42)
-    expect(features.length).toBeLessThanOrEqual(64)
+    expect(terrain.mountains.length).toBeGreaterThanOrEqual(24)
+    expect(terrain.mountains.length).toBeLessThanOrEqual(32)
+    expect(terrain.boulders.length).toBeGreaterThanOrEqual(4)
+    expect(terrain.boulders.length).toBeLessThanOrEqual(12)
+    expect((terrain.mountains.length + terrain.boulders.length) / (24 * 18))
+      .toBeGreaterThanOrEqual(0.05)
+    expect((terrain.mountains.length + terrain.boulders.length) / (24 * 18))
+      .toBeLessThanOrEqual(0.11)
+    expect(features.length).toBeGreaterThanOrEqual(46)
+    expect(features.length).toBeLessThanOrEqual(72)
     features.forEach((feature) => {
       expect(Number.isInteger(feature.x) && Number.isInteger(feature.y)).toBe(true)
       expect(feature.x).toBeGreaterThanOrEqual(0)
@@ -172,7 +178,13 @@ describe('lunar terrain generation', () => {
   it('does not overlap physical feature footprints', () => {
     const terrain = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
     const occupied = new Set<string>()
-    ;[...terrain.outcrops, ...terrain.craters, ...terrain.tracks, ...terrain.debris]
+    ;[
+      ...terrain.mountains,
+      ...terrain.boulders,
+      ...terrain.craters,
+      ...terrain.tracks,
+      ...terrain.debris,
+    ]
       .forEach((feature) => {
         for (let y = feature.y; y < feature.y + feature.height; y += 1) {
           for (let x = feature.x; x < feature.x + feature.width; x += 1) {
@@ -184,18 +196,40 @@ describe('lunar terrain generation', () => {
       })
   })
 
-  it('builds valid neighbour masks and leaves the surveyed basin clear of rock walls', () => {
-    const terrain = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
-    const outcropKeys = new Set(terrain.outcrops.map((feature) => `${feature.x}:${feature.y}`))
+  it('joins mountain walls while keeping individual boulders separate', () => {
+    ;[0, 1, 240826, 240827, -17].forEach((seed) => {
+      const terrain = generateLunarTerrain({ width: 24, height: 18, seed })
+      const mountainKeys = new Set(terrain.mountains.map((feature) => `${feature.x}:${feature.y}`))
+      const rockKeys = new Set([
+        ...mountainKeys,
+        ...terrain.boulders.map((feature) => `${feature.x}:${feature.y}`),
+      ])
 
-    terrain.outcrops.forEach((feature) => {
-      const expectedMask =
-        (outcropKeys.has(`${feature.x}:${feature.y - 1}`) ? 1 : 0) |
-        (outcropKeys.has(`${feature.x + 1}:${feature.y}`) ? 2 : 0) |
-        (outcropKeys.has(`${feature.x}:${feature.y + 1}`) ? 4 : 0) |
-        (outcropKeys.has(`${feature.x - 1}:${feature.y}`) ? 8 : 0)
-      expect(feature.neighborMask).toBe(expectedMask)
-      expect(isLunarTerrainQuietCell(feature, 24, 18)).toBe(false)
+      terrain.mountains.forEach((feature) => {
+        const expectedMask =
+          (mountainKeys.has(`${feature.x}:${feature.y - 1}`) ? 1 : 0) |
+          (mountainKeys.has(`${feature.x + 1}:${feature.y}`) ? 2 : 0) |
+          (mountainKeys.has(`${feature.x}:${feature.y + 1}`) ? 4 : 0) |
+          (mountainKeys.has(`${feature.x - 1}:${feature.y}`) ? 8 : 0)
+        expect(feature.width).toBe(1)
+        expect(feature.height).toBe(1)
+        expect(feature.neighborMask).toBe(expectedMask)
+        expect(feature.neighborMask).toBeGreaterThan(0)
+        expect(isLunarTerrainQuietCell(feature, 24, 18)).toBe(false)
+      })
+
+      terrain.boulders.forEach((feature) => {
+        expect(feature.width).toBe(1)
+        expect(feature.height).toBe(1)
+        expect(feature.neighborMask).toBeUndefined()
+        expect(isLunarTerrainQuietCell(feature, 24, 18)).toBe(false)
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+          for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+            if (offsetX === 0 && offsetY === 0) continue
+            expect(rockKeys.has(`${feature.x + offsetX}:${feature.y + offsetY}`)).toBe(false)
+          }
+        }
+      })
     })
   })
 })
@@ -205,9 +239,12 @@ describe('MoonbaseMap live construction layer', () => {
     const view = renderMap({ terrainSeed: 240826 })
     const terrain = () => view.container.querySelector<HTMLElement>('.lunar-terrain')
     const signature = () => terrain()?.dataset.terrainSignature
+    const generated = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
 
     const initialSignature = signature()
-    expect(Number(terrain()?.dataset.terrainFeatureCount)).toBeGreaterThanOrEqual(42)
+    expect(Number(terrain()?.dataset.terrainFeatureCount)).toBeGreaterThanOrEqual(46)
+    expect(Number(terrain()?.dataset.terrainMountainCount)).toBe(generated.mountains.length)
+    expect(Number(terrain()?.dataset.terrainBoulderCount)).toBe(generated.boulders.length)
     expect(view.container.querySelectorAll('[data-map-cell]')).toHaveLength(24 * 18)
     expect(terrain()).toHaveAttribute('aria-hidden', 'true')
     expect(terrain()).not.toHaveAttribute('data-map-cell')
