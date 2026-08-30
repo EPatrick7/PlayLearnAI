@@ -1,21 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   detectRooms,
+  eraseAt,
+  removeWorkstation,
   type ConstructionResult,
+  type GridPoint,
   type WorkstationRotation,
 } from '../game/construction'
 import {
+  BOUNDARY_SPECS,
   WORKSTATION_SPECS,
   categoryLabels,
   isWorkstationTool,
   type BuildCategory,
   type ConstructionTool,
 } from '../game/constructionCatalog'
-import { projectConstructionOrders } from '../game/constructionJobs'
+import { deriveConstructionCrewCells } from '../game/constructionCrew'
+import {
+  availableConstructionStock,
+  projectConstructionOrders,
+} from '../game/constructionJobs'
 import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
+import type { Priority } from '../game/types'
 import { ConstructionMap } from './ConstructionMap'
 import { GameIcon, type GameIconName } from './GameIcon'
+import { TileStackPicker } from './TileStackPicker'
+import {
+  buildMapInspection,
+  type MapInspectable,
+} from './mapInspection'
 
 interface ToolDefinition {
   id: ConstructionTool
@@ -104,6 +118,37 @@ interface SettlementBuilderProps {
   onExit?: () => void
 }
 
+interface ArchitectSelection {
+  cellKey: string
+  itemKey: string | null
+}
+
+const pointKey = ({ x, y }: GridPoint) => `${x}:${y}`
+
+const materialAmount = (value: number) => {
+  const rounded = Math.round(value * 10) / 10
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+}
+
+const toolMaterialCost = (tool: ConstructionTool) => {
+  if (tool === 'erase') return 0
+  if (tool === 'wall' || tool === 'door') return BOUNDARY_SPECS[tool].materialCost
+  return WORKSTATION_SPECS[tool].materialCost
+}
+
+const tileSurfaceIcon = (surfaceKind: string): GameIconName => {
+  if (surfaceKind === 'wall') return 'wall'
+  if (surfaceKind === 'door') return 'door'
+  if (surfaceKind === 'floor' || surfaceKind === 'corridor') return 'floor'
+  return 'map'
+}
+
+const pressureLabel = (atmosphere: 'yes' | 'low' | 'no' | 'exterior') => {
+  if (atmosphere === 'yes') return 'Nominal'
+  if (atmosphere === 'low') return 'Low'
+  return 'Vacuum'
+}
+
 export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const colony = useColonyStore()
   const layout = colony.settlement.layout
@@ -116,6 +161,14 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const assignedBuilders = new Set(
     openOrders.map((order) => order.assignedCrewId).filter(Boolean),
   ).size
+  const materialBlockedOrders = openOrders.filter(
+    (order) => order.block?.kind === 'insufficient_materials',
+  )
+  const availableStock = availableConstructionStock(
+    colony.reserves.constructionStock,
+    constructionOrders,
+  )
+  const reservedStock = Math.max(0, colony.reserves.constructionStock - availableStock)
   const [buildOpen, setBuildOpen] = useState(false)
   const [category, setCategory] = useState<BuildCategory>('structure')
   const [selectedTool, setSelectedTool] = useState<ConstructionTool | null>(null)
@@ -125,13 +178,107 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const [toastVisible, setToastVisible] = useState(false)
   const [simulationSpeed, setSimulationSpeed] = useState<0 | 1 | 2 | 3>(1)
   const [undoCount, setUndoCount] = useState(0)
+  const [selection, setSelection] = useState<ArchitectSelection | null>(null)
+  const [stackCellKey, setStackCellKey] = useState<string | null>(null)
+  const [stackTrigger, setStackTrigger] = useState<HTMLElement | null>(null)
   const undoStack = useRef<string[]>([])
   const rooms = useMemo(() => detectRooms(layout), [layout])
   const readyForShift = canBeginOperations(colony)
+  const visibleCrew = useMemo(
+    () => colony.settlement.phase === 'landing' ? colony.crew.slice(0, 2) : colony.crew,
+    [colony.crew, colony.settlement.phase],
+  )
+  const crewCells = useMemo(
+    () => deriveConstructionCrewCells(layout, visibleCrew, constructionOrders),
+    [constructionOrders, layout, visibleCrew],
+  )
+  const inspectionByCell = useMemo(() => buildMapInspection({
+    width: layout.width,
+    height: layout.height,
+    modules: [],
+    crew: visibleCrew,
+    equipment: [],
+    workOrders: [],
+    entityCells: {
+      crew: new Map(crewCells),
+      equipment: new Map(),
+      work: new Map(),
+    },
+    constructionLayout: layout,
+    constructionOrders,
+    constructionCrewNames: new Map(colony.crew.map((member) => [member.id, member.name])),
+  }), [colony.crew, constructionOrders, crewCells, layout, visibleCrew])
+  const selectedCrewCellKey = selection?.itemKey?.startsWith('crew:')
+    ? [...inspectionByCell.entries()].find(([, tile]) =>
+        tile.contents.some((item) => item.key === selection.itemKey),
+      )?.[0] ?? null
+    : null
+  const resolvedSelectionCellKey = selectedCrewCellKey ?? selection?.cellKey ?? null
+  const selectedTile = resolvedSelectionCellKey
+    ? inspectionByCell.get(resolvedSelectionCellKey) ?? null
+    : null
+  const directlySelectedItem = selectedTile && selection?.itemKey
+    ? selectedTile.contents.find((item) => item.key === selection.itemKey) ?? null
+    : null
+  const completedSelectionOrder = !directlySelectedItem && selection?.itemKey?.startsWith('blueprint:')
+    ? constructionOrders.find((order) => order.id === selection.itemKey!.slice('blueprint:'.length))
+    : null
+  const completedSelectionKey = completedSelectionOrder?.status === 'complete' && completedSelectionOrder.target.construct
+    ? completedSelectionOrder.target.kind === 'boundary'
+      ? `boundary:${pointKey(completedSelectionOrder.target.construct)}`
+      : `workstation:${completedSelectionOrder.target.construct.id}`
+    : null
+  const selectedItem = directlySelectedItem ?? (completedSelectionKey
+    ? selectedTile?.contents.find((item) => item.key === completedSelectionKey) ?? null
+    : null)
+  const selectedBlueprint = selectedItem?.kind === 'blueprint'
+    ? constructionOrders.find((order) => order.id === selectedItem.id) ?? null
+    : null
+  const selectedRemovalQueued = Boolean(selectedTile && selectedItem && constructionOrders.some((order) => {
+    if (order.status === 'complete' || !order.target.deconstruct) return false
+    if (selectedItem.kind === 'boundary' && order.target.kind === 'boundary') {
+      return pointKey(order.target.cells[0]) === selectedTile.key
+    }
+    if (selectedItem.kind === 'workstation' && order.target.kind === 'workstation') {
+      return order.target.deconstruct.id === selectedItem.id
+    }
+    return false
+  }))
+  const stackTile = stackCellKey ? inspectionByCell.get(stackCellKey) ?? null : null
+  const overlapCounts = useMemo(() => new Map(
+    [...inspectionByCell.entries()]
+      .filter(([, tile]) => tile.contents.length > 1)
+      .map(([key, tile]) => [key, tile.contents.length]),
+  ), [inspectionByCell])
 
   const announce = (message: string) => {
     setAnnouncement(message)
     setToastVisible(true)
+  }
+
+  const inspectCell = (cell: GridPoint, anchor: { x: number; y: number }) => {
+    const cellKey = pointKey(cell)
+    const tile = inspectionByCell.get(cellKey)
+    if (!tile) return
+    setBuildOpen(false)
+    const trigger = (typeof document.elementFromPoint === 'function'
+      ? document.elementFromPoint(anchor.x, anchor.y)?.closest<HTMLElement>('[data-construction-cell]')
+      : null) ?? document.querySelector<HTMLElement>(
+      `[data-construction-cell][data-grid-x="${cell.x}"][data-grid-y="${cell.y}"]`,
+    )
+    if (tile.contents.length > 1) {
+      setSelection(null)
+      setStackTrigger(trigger)
+      setStackCellKey(cellKey)
+      return
+    }
+    setStackCellKey(null)
+    setStackTrigger(null)
+    setSelection({ cellKey, itemKey: tile.contents[0]?.key ?? null })
+  }
+
+  const selectInspection = (tileKey: string, item: MapInspectable | null) => {
+    setSelection({ cellKey: tileKey, itemKey: item?.key ?? null })
   }
 
   const applyConstruction = (result: ConstructionResult, label: string) => {
@@ -147,7 +294,10 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     if (queued.commandId && queued.orderIds.length > 0) {
       undoStack.current = [...undoStack.current.slice(-19), queued.commandId]
       setUndoCount(undoStack.current.length)
-      announce(`${label} blueprint queued · ${queued.orderIds.length} ${queued.orderIds.length === 1 ? 'job' : 'jobs'}.`)
+      const blockedCount = queued.blockedOrderIds?.length ?? 0
+      announce(blockedCount > 0
+        ? `${label} queued · ${blockedCount} ${blockedCount === 1 ? 'job needs' : 'jobs need'} material.`
+        : `${label} blueprint queued · ${queued.orderIds.length} ${queued.orderIds.length === 1 ? 'job' : 'jobs'}.`)
     } else {
       announce('Pending blueprint cancelled.')
     }
@@ -165,6 +315,37 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     announce(cancelled.length > 0
       ? `Cancelled ${cancelled.length} unfinished ${cancelled.length === 1 ? 'job' : 'jobs'}.`
       : 'That order is already built; deconstruct it to remove it.')
+  }
+
+  const cancelSelectedBlueprint = () => {
+    if (!selectedBlueprint) return
+    const cancelled = colony.cancelConstructionOrder(selectedBlueprint.id)
+    if (!cancelled) {
+      announce('That blueprint is already complete.')
+      return
+    }
+    setSelection(selectedTile ? { cellKey: selectedTile.key, itemKey: null } : null)
+    announce('Blueprint cancelled. Delivered material returned to storage.')
+  }
+
+  const changeSelectedPriority = (change: -1 | 1) => {
+    if (!selectedBlueprint) return
+    const priority = Math.min(5, Math.max(1, selectedBlueprint.priority + change)) as Priority
+    if (colony.setConstructionOrderPriority(selectedBlueprint.id, priority)) {
+      announce(`${selectedItem?.label ?? 'Blueprint'} set to priority ${priority}.`)
+    }
+  }
+
+  const deconstructSelectedItem = () => {
+    if (!selectedTile || !selectedItem) return
+    if (selectedItem.kind === 'boundary') {
+      applyConstruction(eraseAt(projection.layout, selectedTile.cell), 'Deconstruct')
+    } else if (selectedItem.kind === 'workstation') {
+      applyConstruction(removeWorkstation(projection.layout, selectedItem.id), 'Deconstruct')
+    } else {
+      return
+    }
+    setSelection(null)
   }
 
   const rotate = () => {
@@ -195,6 +376,9 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   }
 
   const chooseTool = (tool: ConstructionTool) => {
+    setSelection(null)
+    setStackCellKey(null)
+    setStackTrigger(null)
     if (selectedTool === tool) {
       cancelTool()
       return
@@ -206,9 +390,18 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   }
 
   const chooseCategory = (nextCategory: BuildCategory) => {
+    setSelection(null)
+    setStackCellKey(null)
+    setStackTrigger(null)
+    if (nextCategory !== category && selectedTool) {
+      setParkedTool(selectedTool)
+      setSelectedTool(null)
+    }
     setCategory(nextCategory)
     setBuildOpen(true)
-    announce(`${categoryLabels[nextCategory]} tools open.`)
+    announce(nextCategory !== category && selectedTool
+      ? `${toolName(selectedTool)} paused while you browse ${categoryLabels[nextCategory]}.`
+      : `${categoryLabels[nextCategory]} tools open.`)
   }
 
   const resetSettlement = () => {
@@ -231,13 +424,29 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
 
   useEffect(() => {
     const keyboardShortcuts = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement ||
+        (event.target instanceof HTMLElement && event.target.isContentEditable)
+      ) return
       if (event.key.toLowerCase() === 'b' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault()
-        setBuildOpen((current) => !current)
+        setBuildOpen((current) => {
+          if (!current) {
+            setSelection(null)
+            setStackCellKey(null)
+            setStackTrigger(null)
+          }
+          return !current
+        })
       }
       if (event.key === 'Escape') {
-        if (selectedTool || parkedTool) {
+        if (selection) {
+          setSelection(null)
+          setAnnouncement('Select mode.')
+          setToastVisible(true)
+        } else if (selectedTool || parkedTool) {
           setSelectedTool(null)
           setParkedTool(null)
           setAnnouncement('Select mode.')
@@ -251,7 +460,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     }
     window.addEventListener('keydown', keyboardShortcuts)
     return () => window.removeEventListener('keydown', keyboardShortcuts)
-  }, [buildOpen, onExit, parkedTool, selectedTool])
+  }, [buildOpen, onExit, parkedTool, selectedTool, selection])
 
   useEffect(() => {
     if (!toastVisible) return
@@ -294,7 +503,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
         <div className="construction-status sr-only" aria-label="Settlement layout status">
           <span><small>Rooms</small><strong>{rooms.length}</strong></span>
           <span><small>Objects</small><strong>{layout.workstations.length}</strong></span>
-          <span className="status-crew"><small>Settlers</small><strong>2</strong></span>
+          <span className="status-crew"><small>Settlers</small><strong>{visibleCrew.length}</strong></span>
         </div>
 
         <div className="construction-top-actions">
@@ -323,11 +532,21 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
             <span>
               <strong>{openOrders.length > 0 ? `${openOrders.length} queued` : 'No blueprints'}</strong>
               <small>{openOrders.length > 0
-                ? assignedBuilders > 0
+                ? simulationSpeed === 0
+                  ? materialBlockedOrders.length > 0
+                    ? `Paused · ${materialBlockedOrders.length} ${materialBlockedOrders.length === 1 ? 'job needs' : 'jobs need'} material`
+                    : 'Construction paused'
+                  : materialBlockedOrders.length > 0
+                    ? `${materialBlockedOrders.length} ${materialBlockedOrders.length === 1 ? 'job needs' : 'jobs need'} material`
+                    : assignedBuilders > 0
                   ? `${assignedBuilders} ${assignedBuilders === 1 ? 'builder' : 'builders'} working`
                   : 'Waiting for a builder'
                 : toolInstruction}</small>
             </span>
+          </span>
+          <span className="construction-material-summary" title={`${materialAmount(colony.reserves.constructionStock)} material physically in storage`}>
+            <GameIcon name="gear" />
+            <span><strong>{materialAmount(availableStock)} free</strong><small>{materialAmount(reservedStock)} reserved</small></span>
           </span>
           <div aria-label="Construction speed" className="construction-speed-controls" role="group">
             <button aria-label="Pause construction" aria-pressed={simulationSpeed === 0} onClick={() => setSimulationSpeed(0)} type="button">Ⅱ</button>
@@ -338,19 +557,102 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
         </section>
         <div className="construction-map-scroll">
           <ConstructionMap
+            constructionPaused={simulationSpeed === 0}
             constructionOrders={constructionOrders}
-            crew={colony.crew}
+            crew={visibleCrew}
+            crewCells={crewCells}
             layout={layout}
             onApply={applyConstruction}
             onCancelTool={cancelTool}
             onError={announce}
+            onInspectCell={inspectCell}
             onRotate={rotate}
             onUndo={undo}
+            overlapCounts={overlapCounts}
             planningLayout={projection.layout}
             rotation={rotation}
+            selectedCell={selectedTile?.cell ?? stackTile?.cell ?? null}
             selectedTool={selectedTool}
           />
         </div>
+
+        {selectedTile && (
+          <section
+            aria-label={`${selectedItem?.label ?? selectedTile.surfaceLabel} inspector`}
+            aria-live="polite"
+            className={`selection-inspector construction-selection-inspector ${selectedItem ? `selection-${selectedItem.kind}` : 'selection-surface'}`}
+            data-inspected-kind={selectedItem?.kind ?? 'surface'}
+          >
+            <div className="selection-heading">
+              <span className="selection-kind">
+                <GameIcon name={selectedItem?.icon ?? tileSurfaceIcon(selectedTile.surfaceKind)} />
+              </span>
+              <span>
+                <small>{selectedItem ? selectedItem.subtitle : `Tile ${selectedTile.cell.x + 1}, ${selectedTile.cell.y + 1}`}</small>
+                <strong>{selectedItem?.label ?? selectedTile.surfaceLabel}</strong>
+              </span>
+              <button aria-label="Close inspector" className="inspector-close" onClick={() => setSelection(null)} type="button">
+                <GameIcon name="close" />
+              </button>
+            </div>
+
+            <p className="selection-context">
+              <GameIcon name={selectedItem?.icon ?? tileSurfaceIcon(selectedTile.surfaceKind)} />
+              {selectedItem?.detail ?? selectedTile.surfaceDetail}
+            </p>
+
+            {selectedItem ? (
+              <div className="selection-stats tile-selection-stats">
+                {selectedItem.stats.map((stat) => (
+                  <span key={stat.label}><small>{stat.label}</small><strong>{stat.value}</strong></span>
+                ))}
+              </div>
+            ) : (
+              <div className="selection-stats tile-selection-stats">
+                <span><small>Surface</small><strong>{selectedTile.surfaceLabel}</strong></span>
+                <span><small>Room</small><strong>{selectedTile.roomLabel ?? 'Exterior'}</strong></span>
+                <span><small>Contents</small><strong>{selectedTile.contents.length}</strong></span>
+                <span><small>Pressure</small><strong>{pressureLabel(selectedTile.atmosphere)}</strong></span>
+              </div>
+            )}
+
+            <dl className="selection-details">
+              <div><dt>Coordinates</dt><dd>Column {selectedTile.cell.x + 1} · Row {selectedTile.cell.y + 1}</dd></div>
+              <div><dt>Area</dt><dd>{selectedTile.roomLabel ?? 'Lunar exterior'}</dd></div>
+              <div><dt>Surface</dt><dd>{selectedTile.surfaceLabel}</dd></div>
+              <div><dt>On tile</dt><dd>{selectedTile.contents.length === 0 ? 'Nothing' : `${selectedTile.contents.length} ${selectedTile.contents.length === 1 ? 'thing' : 'things'}`}</dd></div>
+            </dl>
+
+            {selectedBlueprint && (
+              <div className="construction-inspector-actions">
+                <span className="construction-priority-stepper">
+                  <small>Work priority</small>
+                  <span>
+                    <button aria-label="Lower blueprint priority" disabled={selectedBlueprint.priority <= 1} onClick={() => changeSelectedPriority(-1)} type="button"><GameIcon name="minus" /></button>
+                    <strong>P{selectedBlueprint.priority}</strong>
+                    <button aria-label="Raise blueprint priority" disabled={selectedBlueprint.priority >= 5} onClick={() => changeSelectedPriority(1)} type="button"><GameIcon name="plus" /></button>
+                  </span>
+                </span>
+                <button className="construction-destructive-action" onClick={cancelSelectedBlueprint} type="button">
+                  <GameIcon name="close" /><span>Cancel blueprint</span>
+                </button>
+              </div>
+            )}
+
+            {selectedItem && (selectedItem.kind === 'boundary' || selectedItem.kind === 'workstation') && (
+              <div className="construction-inspector-actions construction-inspector-single-action">
+                <button
+                  className="construction-destructive-action"
+                  disabled={selectedRemovalQueued}
+                  onClick={deconstructSelectedItem}
+                  type="button"
+                >
+                  <GameIcon name="minus" /><span>{selectedRemovalQueued ? 'Removal queued' : 'Deconstruct'}</span>
+                </button>
+              </div>
+            )}
+          </section>
+        )}
 
         <div className={`construction-controls ${buildOpen ? 'catalog-open' : ''} ${currentTool ? 'active-tool' : ''}`}>
           <nav aria-label="Construction modes" className="construction-category-bar">
@@ -360,7 +662,14 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
               aria-pressed={buildOpen}
               className="architect-button"
               onClick={() => {
-                setBuildOpen((current) => !current)
+                setBuildOpen((current) => {
+                  if (!current) {
+                    setSelection(null)
+                    setStackCellKey(null)
+                    setStackTrigger(null)
+                  }
+                  return !current
+                })
               }}
               type="button"
             >
@@ -420,10 +729,49 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
 
           {buildOpen && (
             <section aria-label={`${categoryLabels[category]} build tools`} className="construction-tool-tray">
-              <div>
+              {(currentTool || undoCount > 0) && (
+                <div className="construction-designator-strip">
+                  {currentTool && (
+                    <span className="construction-designator-summary">
+                      <GameIcon name={currentToolDefinition?.icon ?? 'work'} />
+                      <span>
+                        <small>{parkedTool ? 'Paused designator' : 'Active designator'}</small>
+                        <strong>{toolName(currentTool)}</strong>
+                      </span>
+                    </span>
+                  )}
+                  {undoCount > 0 && (
+                    <button aria-label="Undo last construction order" className="undo-tool" onClick={undo} type="button">
+                      <GameIcon name="reset" /><span>Undo</span>
+                    </button>
+                  )}
+                  {isWorkstationTool(selectedTool) && (
+                    <button aria-label={`Rotate ${toolName(selectedTool)} to ${nextRotation}°`} className="rotate-tool" onClick={rotate} type="button">
+                      <GameIcon name="reset" /><span>Rotate</span>
+                    </button>
+                  )}
+                  {currentTool && (
+                    <button
+                      aria-label={parkedTool ? `Resume ${toolName(parkedTool)} construction` : 'Pan'}
+                      aria-pressed={selectedTool === null}
+                      className="pan-button"
+                      onClick={togglePan}
+                      type="button"
+                    >
+                      <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? 'Resume' : 'Move'}</span>
+                    </button>
+                  )}
+                  {currentTool && (
+                    <button aria-label="Cancel active construction tool" className="cancel-tool" onClick={cancelTool} type="button">
+                      <GameIcon name="close" /><span>Cancel</span>
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="construction-tool-list">
                 {activeTools.map((tool) => (
                   <button
-                    aria-label={`${tool.label}: ${tool.detail}`}
+                    aria-label={`${tool.label}: ${tool.detail}. ${toolMaterialCost(tool.id) > 0 ? `${toolMaterialCost(tool.id)} construction material` : 'No material cost'}`}
                     aria-pressed={selectedTool === tool.id}
                     className={selectedTool === tool.id ? 'selected' : ''}
                     key={tool.id}
@@ -433,6 +781,11 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
                     <span><GameIcon name={tool.icon} /></span>
                     <strong>{tool.label}</strong>
                     <small>{tool.detail}</small>
+                    <em className="construction-tool-cost">
+                      {toolMaterialCost(tool.id) > 0
+                        ? <><GameIcon name="gear" />{toolMaterialCost(tool.id)}{tool.id === 'wall' ? ' / tile' : ''}</>
+                        : 'No material'}
+                    </em>
                   </button>
                 ))}
               </div>
@@ -443,6 +796,21 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
         <div aria-atomic="true" aria-live="polite" className={`construction-toast ${toastVisible ? 'visible' : ''}`}>
           {announcement}
         </div>
+
+        {stackTile && (
+          <TileStackPicker
+            gridHeight={layout.height}
+            gridWidth={layout.width}
+            onClose={() => {
+              setStackCellKey(null)
+              setStackTrigger(null)
+            }}
+            onSelectItem={(tile, item) => selectInspection(tile.key, item)}
+            onSelectSurface={(tile) => selectInspection(tile.key, null)}
+            tile={stackTile}
+            trigger={stackTrigger}
+          />
+        )}
       </main>
     </div>
   )

@@ -15,6 +15,7 @@ import {
   cellsOnConstructionLine,
   detectRooms,
   eraseLine,
+  getWorkstationCells,
   getWorkstationFootprintSize,
   isInConstructionBounds,
   paintBoundaryCell,
@@ -29,6 +30,7 @@ import {
   type WorkstationRotation,
 } from '../game/construction'
 import {
+  BOUNDARY_SPECS,
   WORKSTATION_SPECS,
   isWorkstationTool,
   type ConstructionTool,
@@ -48,7 +50,9 @@ interface ConstructionMapProps {
   layout: ConstructionLayout
   planningLayout?: ConstructionLayout
   constructionOrders?: readonly ConstructionOrder[]
+  constructionPaused?: boolean
   crew?: readonly CrewMember[]
+  crewCells?: ReadonlyMap<string, GridPoint>
   selectedTool: ConstructionTool | null
   rotation: WorkstationRotation
   onApply: (result: ConstructionResult, label: string) => void
@@ -56,6 +60,9 @@ interface ConstructionMapProps {
   onError: (message: string) => void
   onRotate: () => void
   onUndo: () => void
+  onInspectCell?: (cell: GridPoint, anchor: PointerPosition) => void
+  selectedCell?: GridPoint | null
+  overlapCounts?: ReadonlyMap<string, number>
 }
 
 interface DraftPreview {
@@ -80,6 +87,7 @@ interface ZoomAnchor {
 const MIN_ZOOM = 0.7
 const MAX_ZOOM = 1.8
 const ZOOM_STEP = 0.1
+const PAN_DRAG_THRESHOLD = 6
 
 const clampZoom = (zoom: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))
 
@@ -151,7 +159,9 @@ export function ConstructionMap({
   layout,
   planningLayout = layout,
   constructionOrders = [],
+  constructionPaused = false,
   crew = [],
+  crewCells = new Map(),
   selectedTool,
   rotation,
   onApply,
@@ -159,17 +169,27 @@ export function ConstructionMap({
   onError,
   onRotate,
   onUndo,
+  onInspectCell,
+  selectedCell = null,
+  overlapCounts = new Map(),
 }: ConstructionMapProps) {
   const mapRef = useRef<HTMLDivElement>(null)
+  const surfaceRef = useRef<HTMLDivElement>(null)
   const pointerIdRef = useRef<number | null>(null)
   const panPointerIdRef = useRef<number | null>(null)
   const panLastPointRef = useRef<PointerPosition | null>(null)
+  const panStartPointRef = useRef<PointerPosition | null>(null)
+  const panStartCellRef = useRef<GridPoint | null>(null)
+  const panMovedRef = useRef(false)
+  const cameraInitializedRef = useRef(false)
   const zoomAnchorRef = useRef<ZoomAnchor | null>(null)
   const dragStartRef = useRef<GridPoint | null>(null)
   const dragEndRef = useRef<GridPoint | null>(null)
   const keyboardAnchorRef = useRef<GridPoint | null>(null)
   const touchPointsRef = useRef(new Map<number, PointerPosition>())
   const touchPanCenterRef = useRef<PointerPosition | null>(null)
+  const touchPinchDistanceRef = useRef<number | null>(null)
+  const touchPinchZoomRef = useRef(1)
   const [hoverCell, setHoverCell] = useState<GridPoint | null>({ x: 8, y: 9 })
   const [dragStart, setDragStart] = useState<GridPoint | null>(null)
   const [dragEnd, setDragEnd] = useState<GridPoint | null>(null)
@@ -204,7 +224,9 @@ export function ConstructionMap({
   const pointerPoint = (event: ReactPointerEvent<HTMLDivElement>) => {
     const direct = pointFromElement(event.target as Element)
     if (direct) return direct
-    return pointFromElement(document.elementFromPoint(event.clientX, event.clientY))
+    return typeof document.elementFromPoint === 'function'
+      ? pointFromElement(document.elementFromPoint(event.clientX, event.clientY))
+      : null
   }
 
   const clearDraft = () => {
@@ -226,25 +248,97 @@ export function ConstructionMap({
     }
   }
 
+  const touchDistance = () => {
+    const [first, second] = [...touchPointsRef.current.values()]
+    if (!first || !second) return null
+    return Math.hypot(second.x - first.x, second.y - first.y)
+  }
+
   const scrollContainer = () => mapRef.current?.closest<HTMLElement>('.construction-map-scroll') ?? null
+
+  const revealKeyboardCell = (point: GridPoint) => {
+    const container = scrollContainer()
+    const cell = mapRef.current?.querySelector<HTMLElement>(
+      `[data-construction-cell][data-grid-x="${point.x}"][data-grid-y="${point.y}"]`,
+    )
+    if (!container || !cell) return
+
+    const viewport = container.getBoundingClientRect()
+    const cellBounds = cell.getBoundingClientRect()
+    if (viewport.width <= 0 || viewport.height <= 0 || cellBounds.width <= 0 || cellBounds.height <= 0) return
+
+    const inset = Math.min(24, viewport.width / 4, viewport.height / 4)
+    const leftEdge = viewport.left + inset
+    const rightEdge = viewport.right - inset
+    const topEdge = viewport.top + inset
+    const bottomEdge = viewport.bottom - inset
+
+    if (cellBounds.left < leftEdge) container.scrollLeft += cellBounds.left - leftEdge
+    else if (cellBounds.right > rightEdge) container.scrollLeft += cellBounds.right - rightEdge
+
+    if (cellBounds.top < topEdge) container.scrollTop += cellBounds.top - topEdge
+    else if (cellBounds.bottom > bottomEdge) container.scrollTop += cellBounds.bottom - bottomEdge
+  }
 
   const beginPan = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault()
     panPointerIdRef.current = event.pointerId
     panLastPointRef.current = { x: event.clientX, y: event.clientY }
+    panStartPointRef.current = { x: event.clientX, y: event.clientY }
+    panStartCellRef.current = pointerPoint(event)
+    panMovedRef.current = false
     setIsPanning(true)
     event.currentTarget.setPointerCapture?.(event.pointerId)
   }
 
-  const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const endPan = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    inspectStationaryPointer = true,
+  ) => {
     if (panPointerIdRef.current !== event.pointerId) return false
+    const clicked = !panMovedRef.current
+    const inspectedCell = pointerPoint(event) ?? panStartCellRef.current
     panPointerIdRef.current = null
     panLastPointRef.current = null
+    panStartPointRef.current = null
+    panStartCellRef.current = null
+    panMovedRef.current = false
     setIsPanning(false)
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
+    if (inspectStationaryPointer && clicked && inspectedCell && onInspectCell) {
+      setCursor(inspectedCell)
+      setHoverCell(inspectedCell)
+      onInspectCell(inspectedCell, { x: event.clientX, y: event.clientY })
+    }
     return true
+  }
+
+  const centerMapInViewport = useCallback(() => {
+    const container = scrollContainer()
+    const map = mapRef.current
+    if (!container || !map) return
+    const occupiedCells = [
+      ...layout.boundaries,
+      ...layout.workstations.flatMap(getWorkstationCells),
+    ]
+    const focus = occupiedCells.length > 0
+      ? {
+          x: occupiedCells.reduce((sum, cell) => sum + cell.x, 0) / occupiedCells.length,
+          y: occupiedCells.reduce((sum, cell) => sum + cell.y, 0) / occupiedCells.length,
+        }
+      : { x: (layout.width - 1) / 2, y: (layout.height - 1) / 2 }
+    const focusLeft = map.offsetLeft + ((focus.x + 0.5) / layout.width) * map.offsetWidth
+    const focusTop = map.offsetTop + ((focus.y + 0.5) / layout.height) * map.offsetHeight
+    container.scrollLeft = Math.max(0, focusLeft - container.clientWidth / 2)
+    container.scrollTop = Math.max(0, focusTop - container.clientHeight / 2)
+  }, [layout])
+
+  const resetView = () => {
+    zoomAnchorRef.current = null
+    setZoom(1)
+    requestAnimationFrame(() => requestAnimationFrame(centerMapInViewport))
   }
 
   const setZoomAround = (nextZoom: number, clientX: number, clientY: number) => {
@@ -289,6 +383,13 @@ export function ConstructionMap({
     container.scrollTop += rect.top + rect.height * anchor.mapY - anchor.clientY
   }, [zoom])
 
+  useLayoutEffect(() => {
+    if (cameraInitializedRef.current) return
+    cameraInitializedRef.current = true
+    const frame = requestAnimationFrame(centerMapInViewport)
+    return () => cancelAnimationFrame(frame)
+  }, [centerMapInViewport])
+
   const indoorFootprintError = useCallback((kind: WorkstationKind, cells: GridPoint[]) => {
     if (!WORKSTATION_SPECS[kind].indoor) return null
     const roomIds = cells.map((cell) => roomByCell.get(keyFor(cell))?.id ?? null)
@@ -314,7 +415,7 @@ export function ConstructionMap({
         cells,
         valid,
         label: selectedTool === 'wall'
-          ? `Wall · ${cells.length} ${cells.length === 1 ? 'tile' : 'tiles'}`
+          ? `Wall · ${cells.length} ${cells.length === 1 ? 'tile' : 'tiles'} · ${cells.length * BOUNDARY_SPECS.wall.materialCost} material`
           : `Deconstruct · ${cells.length} ${cells.length === 1 ? 'tile' : 'tiles'}`,
         error: outOfBounds ? 'Outside the construction grid.' : occupied ? 'A workstation occupies this wall line.' : null,
       }
@@ -325,7 +426,7 @@ export function ConstructionMap({
       return {
         cells: [point],
         valid,
-        label: 'Door · 1 tile',
+        label: `Door · 1 tile · ${BOUNDARY_SPECS.door.materialCost} material`,
         error: valid ? null : 'Door needs an existing wall tile.',
       }
     }
@@ -342,7 +443,7 @@ export function ConstructionMap({
     return {
       cells: validation.cells,
       valid: validation.valid && !indoorError,
-      label: `${WORKSTATION_SPECS[selectedTool].label} · ${footprint.width}×${footprint.height}`,
+      label: `${WORKSTATION_SPECS[selectedTool].label} · ${footprint.width}×${footprint.height} · ${WORKSTATION_SPECS[selectedTool].materialCost} material`,
       error: validation.error ?? indoorError,
     }
   }, [cursor, draftTool, dragEnd, dragStart, hoverCell, indoorFootprintError, planningLayout, rotation, selectedTool])
@@ -402,6 +503,8 @@ export function ConstructionMap({
         panLastPointRef.current = null
         setIsPanning(true)
         touchPanCenterRef.current = touchCenter()
+        touchPinchDistanceRef.current = touchDistance()
+        touchPinchZoomRef.current = zoom
         event.currentTarget.setPointerCapture?.(event.pointerId)
         return
       }
@@ -432,11 +535,24 @@ export function ConstructionMap({
       if (touchPanCenterRef.current) {
         event.preventDefault()
         const nextCenter = touchCenter()
+        const nextDistance = touchDistance()
         const container = scrollContainer()
         if (nextCenter && container) {
           container.scrollLeft -= nextCenter.x - touchPanCenterRef.current.x
           container.scrollTop -= nextCenter.y - touchPanCenterRef.current.y
           touchPanCenterRef.current = nextCenter
+        }
+        if (
+          nextCenter &&
+          nextDistance &&
+          touchPinchDistanceRef.current &&
+          Math.abs(nextDistance - touchPinchDistanceRef.current) >= 2
+        ) {
+          setZoomAround(
+            touchPinchZoomRef.current * (nextDistance / touchPinchDistanceRef.current),
+            nextCenter.x,
+            nextCenter.y,
+          )
         }
         return
       }
@@ -444,7 +560,11 @@ export function ConstructionMap({
     if (panPointerIdRef.current === event.pointerId) {
       event.preventDefault()
       const previous = panLastPointRef.current
+      const start = panStartPointRef.current
       const container = scrollContainer()
+      if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) >= PAN_DRAG_THRESHOLD) {
+        panMovedRef.current = true
+      }
       if (previous && container) {
         container.scrollLeft -= event.clientX - previous.x
         container.scrollTop -= event.clientY - previous.y
@@ -466,6 +586,7 @@ export function ConstructionMap({
     if (wasTouchPan) {
       if (touchPointsRef.current.size < 2) {
         touchPanCenterRef.current = null
+        touchPinchDistanceRef.current = null
         setIsPanning(false)
       }
       if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
@@ -487,9 +608,10 @@ export function ConstructionMap({
     if (event.pointerType === 'touch') touchPointsRef.current.delete(event.pointerId)
     if (touchPointsRef.current.size < 2) {
       touchPanCenterRef.current = null
+      touchPinchDistanceRef.current = null
       setIsPanning(false)
     }
-    endPan(event)
+    endPan(event, false)
     if (pointerIdRef.current !== null) onError('Draft cancelled.')
     clearDraft()
   }
@@ -528,12 +650,25 @@ export function ConstructionMap({
       }
       setCursor(next)
       setHoverCell(next)
+      revealKeyboardCell(next)
       if (keyboardAnchorRef.current && draftTool === selectedTool) setDragEnd(next)
       return
     }
     if ((event.key === 'Enter' || event.key === ' ') && selectedTool) {
       event.preventDefault()
       commitKeyboardDraft(cursor)
+      return
+    }
+    if ((event.key === 'Enter' || event.key === ' ') && !selectedTool && onInspectCell) {
+      event.preventDefault()
+      const cell = mapRef.current?.querySelector<HTMLElement>(
+        `[data-construction-cell][data-grid-x="${cursor.x}"][data-grid-y="${cursor.y}"]`,
+      )
+      const rect = cell?.getBoundingClientRect()
+      onInspectCell(cursor, {
+        x: rect ? rect.left + rect.width / 2 : 0,
+        y: rect ? rect.top + rect.height / 2 : 0,
+      })
       return
     }
     if (event.key.toLowerCase() === 'r' && isWorkstationTool(selectedTool)) {
@@ -570,12 +705,12 @@ export function ConstructionMap({
     order.target.cells.some((cell) => cell.x === cursor.x && cell.y === cursor.y),
   )
   const cursorRoom = roomByCell.get(keyFor(cursor))
-  const cursorContents = cursorBoundary
-    ? cursorBoundary.kind === 'door' ? 'Door.' : 'Wall.'
-    : cursorWorkstation
-      ? `${cursorWorkstation.label}.`
-      : cursorOrder
-        ? `${constructionOrderLabel(cursorOrder)} blueprint, ${cursorOrder.status}.`
+  const cursorContents = cursorOrder
+    ? `${constructionOrderLabel(cursorOrder)} blueprint, ${cursorOrder.block?.message ?? cursorOrder.status}.`
+    : cursorBoundary
+      ? cursorBoundary.kind === 'door' ? 'Door.' : 'Wall.'
+      : cursorWorkstation
+        ? `${cursorWorkstation.label}.`
       : cursorRoom
         ? `Room ${cursorRoom.id.replace('room-', '')} floor.`
         : 'Open lunar ground.'
@@ -605,6 +740,12 @@ export function ConstructionMap({
         role="group"
       >
         <button
+          aria-label="Center construction map"
+          onClick={resetView}
+          title="Center map and reset zoom"
+          type="button"
+        >⌂</button>
+        <button
           aria-label="Zoom out construction map"
           disabled={zoom <= MIN_ZOOM}
           onClick={() => zoomFromViewportCenter(-1)}
@@ -621,17 +762,11 @@ export function ConstructionMap({
         >+</button>
       </div>
       <div
-        aria-describedby="construction-grid-help construction-grid-status"
-        aria-label={`Freeform construction grid, ${layout.width} columns by ${layout.height} rows. ${rooms.length} ${rooms.length === 1 ? 'room' : 'rooms'}.`}
-        aria-roledescription="freeform tile construction grid"
-        className={`construction-map ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''}`}
-        data-grid-height={layout.height}
-        data-grid-width={layout.width}
+        className={`construction-camera-surface ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''}`}
         onContextMenu={(event) => {
           event.preventDefault()
-          onCancelTool()
+          if (selectedTool) onCancelTool()
         }}
-        onKeyDown={handleKeyboard}
         onPointerCancel={cancelPointer}
         onPointerDown={beginPointer}
         onPointerLeave={() => {
@@ -640,12 +775,22 @@ export function ConstructionMap({
         onPointerMove={movePointer}
         onPointerUp={finishPointer}
         onWheel={handleWheel}
+        ref={surfaceRef}
+        style={{ '--construction-zoom': zoom } as CSSProperties}
+      >
+      <div
+        aria-describedby="construction-grid-help construction-grid-status"
+        aria-label={`Freeform construction grid, ${layout.width} columns by ${layout.height} rows. ${rooms.length} ${rooms.length === 1 ? 'room' : 'rooms'}.`}
+        aria-roledescription="freeform tile construction grid"
+        className={`construction-map ${selectedTool ? 'tool-active' : 'pan-active'} ${isPanning ? 'is-panning' : ''}`}
+        data-grid-height={layout.height}
+        data-grid-width={layout.width}
+        onKeyDown={handleKeyboard}
         ref={mapRef}
         role="group"
         style={{
           gridTemplateColumns: `repeat(${layout.width}, minmax(0, 1fr))`,
           gridTemplateRows: `repeat(${layout.height}, minmax(0, 1fr))`,
-          '--construction-zoom': zoom,
         } as CSSProperties}
         tabIndex={0}
       >
@@ -785,49 +930,46 @@ export function ConstructionMap({
             >
               <span className="blueprint-workstation-art"><GameIcon name={spec?.icon ?? 'work'} /></span>
               <strong>{order.operation === 'deconstruct' ? 'Remove' : spec?.shortLabel ?? workstation.label}</strong>
-              <small>{order.status === 'hauling' ? 'Hauling' : order.status === 'blocked' ? 'Blocked' : 'Building'}</small>
+              <small>{order.status === 'hauling' ? 'Hauling' : order.block?.kind === 'insufficient_materials' ? 'Needs material' : order.status === 'blocked' ? 'Blocked' : 'Building'}</small>
               <b className="construction-job-progress"><i style={{ width: `${progress}%` }} /></b>
             </span>
           )
         })}
 
-        {!assignedOrderByCrew.has('crew-amina-okafor') && (
-          <span aria-label="Amina Okafor, idle" className="construction-pawn pawn-amina" role="img">
-            <PawnSprite accent="#a75b4c" initials="AO" size="compact" variant="umber" />
-            <small className="construction-pawn-label">Amina</small>
-          </span>
-        )}
-        {!assignedOrderByCrew.has('crew-mateo-alvarez') && (
-          <span aria-label="Mateo Alvarez, idle" className="construction-pawn pawn-mateo" role="img">
-            <PawnSprite accent="#527b7d" initials="MA" size="compact" variant="gold" />
-            <small className="construction-pawn-label">Mateo</small>
-          </span>
-        )}
-        {[...assignedOrderByCrew.entries()].map(([crewId, order]) => {
-          const memberIndex = Math.max(0, crew.findIndex((member) => member.id === crewId))
-          const member = crew[memberIndex]
-          const cell = order.target.cells[0]
-          const name = member?.name ?? crewId
+        {crew.map((member, memberIndex) => {
+          const order = assignedOrderByCrew.get(member.id)
+          const workerActive = Boolean(order && !constructionPaused)
+          const cell = crewCells.get(member.id)
+          if (!cell) return null
+          const name = member.name
           const workerInitials = name.split(' ').map((part) => part[0]).join('').slice(0, 2)
           return (
             <span
-              aria-label={`${name}, ${order.status} ${constructionOrderLabel(order)}`}
-              className={`construction-pawn construction-worker worker-${order.status}`}
-              data-construction-worker-id={crewId}
-              data-order-id={order.id}
-              key={crewId}
+              aria-label={order
+                ? constructionPaused
+                  ? `${name}, waiting, construction paused`
+                  : `${name}, ${order.status} ${constructionOrderLabel(order)}`
+                : `${name}, ${member.status}`}
+              className={`construction-pawn ${order ? `construction-worker ${constructionPaused ? 'worker-paused' : `worker-${order.status}`}` : 'construction-idle-pawn'}`}
+              data-construction-worker-id={order ? member.id : undefined}
+              data-construction-worker-state={order ? constructionPaused ? 'paused' : order.status : undefined}
+              data-crew-id={member.id}
+              data-grid-x={cell.x}
+              data-grid-y={cell.y}
+              data-order-id={order?.id}
+              key={member.id}
               role="img"
               style={{ gridColumn: `${cell.x + 1}`, gridRow: `${cell.y + 1}` }}
             >
               <PawnSprite
                 accent={workerAccents[memberIndex % workerAccents.length]}
                 initials={workerInitials}
-                showStatusDot
+                showStatusDot={!order || workerActive}
                 size="compact"
-                status="working"
+                status={workerActive ? 'working' : member.status}
                 variant={workerVariants[memberIndex % workerVariants.length]}
               />
-              <span className="construction-worker-task"><GameIcon name="work" /></span>
+              {workerActive && <span className="construction-worker-task"><GameIcon name="work" /></span>}
               <small className="construction-pawn-label">{name.split(' ')[0]}</small>
             </span>
           )
@@ -887,9 +1029,33 @@ export function ConstructionMap({
           </span>
         )}
 
+        {selectedCell && (
+          <span
+            aria-hidden="true"
+            className="construction-selection-cell"
+            data-grid-x={selectedCell.x}
+            data-grid-y={selectedCell.y}
+            style={{ gridColumn: `${selectedCell.x + 1}`, gridRow: `${selectedCell.y + 1}` }}
+          />
+        )}
+
+        {[...overlapCounts.entries()].map(([cellKey, count]) => {
+          if (count < 2) return null
+          const [x, y] = cellKey.split(':').map(Number)
+          return (
+            <span
+              aria-hidden="true"
+              className="construction-stack-count"
+              key={`stack-count-${cellKey}`}
+              style={{ gridColumn: `${x + 1}`, gridRow: `${y + 1}` }}
+            >{count}</span>
+          )
+        })}
+
         <span aria-hidden="true" className="construction-north">N<i /></span>
         <span aria-hidden="true" className="construction-scale">20 m</span>
         <span aria-hidden="true" className="construction-grid-shade" />
+      </div>
       </div>
     </>
   )

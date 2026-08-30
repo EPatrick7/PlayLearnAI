@@ -10,6 +10,7 @@ import {
   WORKSTATION_SPECS,
   type WorkstationKind,
 } from '../game/constructionCatalog'
+import type { ConstructionOrder } from '../game/constructionJobs'
 import type {
   CrewMember,
   Equipment,
@@ -22,6 +23,7 @@ export type MapInspectableKind =
   | 'crew'
   | 'equipment'
   | 'work'
+  | 'blueprint'
   | 'workstation'
   | 'boundary'
 
@@ -73,7 +75,7 @@ export interface MapEntityCells {
   work: Map<string, GridPoint>
 }
 
-interface BuildMapInspectionInput {
+export interface BuildMapInspectionInput {
   width: number
   height: number
   modules: ModuleState[]
@@ -82,6 +84,14 @@ interface BuildMapInspectionInput {
   workOrders: WorkOrder[]
   entityCells: MapEntityCells
   constructionLayout?: ConstructionLayout | null
+  /**
+   * Construction designations that should be inspectable on the map. Complete
+   * orders are intentionally ignored because their completed target is already
+   * represented by `constructionLayout`.
+   */
+  constructionOrders?: readonly ConstructionOrder[]
+  /** Optional display-name override for workers referenced by construction orders. */
+  constructionCrewNames?: ReadonlyMap<string, string>
 }
 
 const pointKey = ({ x, y }: GridPoint) => `${x}:${y}`
@@ -112,9 +122,64 @@ const inspectableOrder: Record<MapInspectableKind, number> = {
   crew: 0,
   work: 1,
   equipment: 2,
-  workstation: 3,
-  boundary: 4,
+  blueprint: 3,
+  workstation: 4,
+  boundary: 5,
 }
+
+const clampRatio = (value: number) => Number.isFinite(value)
+  ? Math.min(1, Math.max(0, value))
+  : 0
+
+/** Matches the combined hauling/building progress shown on construction ghosts. */
+export const constructionOrderProgress = (order: ConstructionOrder) => {
+  const haulingShare = order.materials.required > 0 ? 0.35 : 0
+  const hauling = order.materials.required > 0
+    ? clampRatio(order.materials.delivered / order.materials.required) * haulingShare
+    : 0
+  const building = order.work.required > 0
+    ? clampRatio(order.work.completed / order.work.required) * (1 - haulingShare)
+    : 1 - haulingShare
+  return Math.round(clampRatio(hauling + building) * 100)
+}
+
+const constructionOrderPresentation = (order: ConstructionOrder) => {
+  if (order.target.kind === 'boundary') {
+    const boundary = order.target.construct ?? order.target.deconstruct
+    const subject = boundary?.kind === 'door' ? 'Door' : 'Wall'
+    return {
+      icon: boundary?.kind === 'door' ? 'door' as const : 'wall' as const,
+      label: order.operation === 'deconstruct' ? `Deconstruct ${subject.toLowerCase()}` : `${subject} blueprint`,
+      detail: order.operation === 'deconstruct'
+        ? `Remove the ${subject.toLowerCase()} on this tile.`
+        : order.operation === 'replace'
+          ? `Replace the existing structure with a ${subject.toLowerCase()}.`
+          : `Build a one-tile ${subject.toLowerCase()}.`,
+    }
+  }
+
+  const workstation = order.target.construct ?? order.target.deconstruct
+  const kind = workstation?.type as WorkstationKind | undefined
+  const spec = kind ? WORKSTATION_SPECS[kind] : undefined
+  const subject = workstation?.label ?? spec?.label ?? 'Workstation'
+  return {
+    icon: spec?.icon ?? 'work' as const,
+    label: order.operation === 'deconstruct' ? `Deconstruct ${subject}` : `${subject} blueprint`,
+    detail: order.operation === 'deconstruct'
+      ? `Remove the complete ${subject.toLowerCase()} footprint.`
+      : order.operation === 'replace'
+        ? `Replace the existing ${subject.toLowerCase()}.`
+        : spec?.description ?? `Build ${subject}.`,
+  }
+}
+
+const formatConstructionAmount = (value: number) => {
+  if (!Number.isFinite(value)) return '0'
+  const rounded = Math.round(value * 10) / 10
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+}
+
+const fallbackCrewName = (crewId: string) => titleCase(crewId.replace(/^crew-/, ''))
 
 const modulesAtCell = (modules: ModuleState[], cell: GridPoint) => modules
   .filter((module) => (
@@ -210,6 +275,8 @@ export const buildMapInspection = ({
   workOrders,
   entityCells,
   constructionLayout = null,
+  constructionOrders = [],
+  constructionCrewNames = new Map<string, string>(),
 }: BuildMapInspectionInput): Map<string, MapTileInspection> => {
   const rooms = constructionLayout ? detectRooms(constructionLayout) : []
   const roomByCell = new Map(
@@ -223,7 +290,7 @@ export const buildMapInspection = ({
       const module = moduleAtCell(modules, cell)
       const room = roomByCell.get(pointKey(cell)) ?? null
       const roomAtmosphere = room
-        ? pressureModuleAtCell(modules, cell)?.atmosphere ?? 'yes'
+        ? pressureModuleAtCell(modules, cell)?.atmosphere ?? 'no'
         : null
       const surface = constructionLayout
         ? room
@@ -266,7 +333,7 @@ export const buildMapInspection = ({
         roomArea: room?.area ?? null,
         moduleId: module?.id ?? null,
         moduleName: module?.name ?? null,
-        atmosphere: room ? roomAtmosphere ?? 'yes' : module?.atmosphere ?? 'exterior',
+        atmosphere: room ? roomAtmosphere ?? 'no' : module?.atmosphere ?? 'exterior',
         contents: [],
         focusedItem: null,
       })
@@ -325,21 +392,74 @@ export const buildMapInspection = ({
     })
   }
 
+  const crewNamesById = new Map(crew.map((member) => [member.id, member.name]))
+  constructionCrewNames.forEach((name, crewId) => crewNamesById.set(crewId, name))
+  const constructionAssignmentByCrewId = new Map<string, ConstructionOrder>()
+
+  constructionOrders
+    .filter((order) => order.status !== 'complete')
+    .forEach((order) => {
+      if (order.assignedCrewId && !constructionAssignmentByCrewId.has(order.assignedCrewId)) {
+        constructionAssignmentByCrewId.set(order.assignedCrewId, order)
+      }
+      const presentation = constructionOrderPresentation(order)
+      const progress = constructionOrderProgress(order)
+      const builder = order.assignedCrewId
+        ? crewNamesById.get(order.assignedCrewId) ?? fallbackCrewName(order.assignedCrewId)
+        : 'Unassigned'
+      const materials = order.materials.required > 0
+        ? [
+            `${formatConstructionAmount(order.materials.delivered)} / ${formatConstructionAmount(order.materials.required)} delivered`,
+            order.materials.reserved > 0
+              ? `${formatConstructionAmount(order.materials.reserved)} reserved`
+              : '',
+          ].filter(Boolean).join(' · ')
+        : order.materials.recoverable > 0
+          ? `${formatConstructionAmount(order.materials.recoverable)} recoverable`
+          : 'Not required'
+
+      order.target.cells.forEach((cell) => addInspectable(tiles, cell, {
+        key: `blueprint:${order.id}`,
+        kind: 'blueprint',
+        id: order.id,
+        label: presentation.label,
+        subtitle: `Blueprint · ${titleCase(order.status)} · P${order.priority}`,
+        detail: order.block?.message ?? presentation.detail,
+        icon: presentation.icon,
+        stats: [
+          { label: 'Status', value: titleCase(order.status) },
+          { label: 'Progress', value: `${progress}%` },
+          { label: 'Materials', value: materials },
+          { label: 'Priority', value: `P${order.priority}` },
+          { label: 'Builder', value: builder },
+        ],
+      }))
+    })
+
   crew.forEach((member) => {
     const cell = entityCells.crew.get(member.id)
     if (!cell) return
+    const constructionAssignment = constructionAssignmentByCrewId.get(member.id)
+    const constructionPresentation = constructionAssignment
+      ? constructionOrderPresentation(constructionAssignment)
+      : null
     addInspectable(tiles, cell, {
       key: `crew:${member.id}`,
       kind: 'crew',
       id: member.id,
       label: member.name,
-      subtitle: `Colonist · ${titleCase(member.status)}`,
-      detail: member.role,
+      subtitle: `Colonist · ${titleCase(constructionAssignment?.status ?? member.status)}`,
+      detail: constructionPresentation
+        ? `${member.role} · ${constructionPresentation.label}`
+        : member.role,
       icon: 'crew',
       stats: [
         { label: 'Health', value: `${Math.round(member.health)}%` },
         { label: 'Fatigue', value: `${Math.round(member.fatigue)}%` },
         { label: 'Role', value: member.role },
+        ...(constructionPresentation
+          ? [{ label: 'Task', value: constructionPresentation.label }]
+          : []),
       ],
     })
   })

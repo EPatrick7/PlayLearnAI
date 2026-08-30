@@ -8,6 +8,7 @@ afterEach(cleanup)
 
 const renderMap = (selectedTool: 'wall' | null = null) => {
   const onApply = vi.fn()
+  const onInspectCell = vi.fn()
   const view = render(
     <div className="construction-map-scroll">
       <ConstructionMap
@@ -15,6 +16,7 @@ const renderMap = (selectedTool: 'wall' | null = null) => {
         onApply={onApply}
         onCancelTool={vi.fn()}
         onError={vi.fn()}
+        onInspectCell={onInspectCell}
         onRotate={vi.fn()}
         onUndo={vi.fn()}
         rotation={0}
@@ -24,10 +26,11 @@ const renderMap = (selectedTool: 'wall' | null = null) => {
   )
   const map = screen.getByRole('group', { name: /freeform construction grid/i })
   const scroll = view.container.querySelector<HTMLElement>('.construction-map-scroll')!
+  const surface = view.container.querySelector<HTMLElement>('.construction-camera-surface')!
   const cell = ({ x, y }: GridPoint) => map.querySelector<HTMLElement>(
     `[data-construction-cell][data-grid-x="${x}"][data-grid-y="${y}"]`,
   )!
-  return { cell, map, onApply, scroll }
+  return { cell, map, onApply, onInspectCell, scroll, surface }
 }
 
 describe('ConstructionMap pan and zoom', () => {
@@ -72,6 +75,70 @@ describe('ConstructionMap pan and zoom', () => {
 
     expect(scroll.scrollLeft).toBe(150)
     expect(scroll.scrollTop).toBe(110)
+  })
+
+  it('treats a stationary click as inspection but suppresses inspection after a pan', () => {
+    const { cell, map, onInspectCell } = renderMap()
+
+    fireEvent.pointerDown(cell({ x: 4, y: 5 }), {
+      button: 0,
+      clientX: 120,
+      clientY: 140,
+      pointerId: 20,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(cell({ x: 4, y: 5 }), {
+      button: 0,
+      clientX: 120,
+      clientY: 140,
+      pointerId: 20,
+      pointerType: 'mouse',
+    })
+    expect(onInspectCell).toHaveBeenCalledWith({ x: 4, y: 5 }, { x: 120, y: 140 })
+
+    onInspectCell.mockClear()
+    fireEvent.pointerDown(cell({ x: 4, y: 5 }), {
+      button: 0,
+      clientX: 120,
+      clientY: 140,
+      pointerId: 21,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 105,
+      clientY: 140,
+      pointerId: 21,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(map, {
+      button: 0,
+      clientX: 105,
+      clientY: 140,
+      pointerId: 21,
+      pointerType: 'mouse',
+    })
+    expect(onInspectCell).not.toHaveBeenCalled()
+  })
+
+  it.each(['mouse', 'touch'])('never inspects a cancelled stationary %s pointer', (pointerType) => {
+    const { cell, map, onInspectCell } = renderMap()
+
+    fireEvent.pointerDown(cell({ x: 4, y: 5 }), {
+      button: 0,
+      clientX: 120,
+      clientY: 140,
+      pointerId: 22,
+      pointerType,
+    })
+    fireEvent.pointerCancel(map, {
+      clientX: 121,
+      clientY: 140,
+      pointerId: 22,
+      pointerType,
+    })
+
+    expect(onInspectCell).not.toHaveBeenCalled()
+    expect(map).not.toHaveClass('is-panning')
   })
 
   it('keeps left drag for construction while middle drag pans with a tool active', () => {
@@ -142,6 +209,36 @@ describe('ConstructionMap pan and zoom', () => {
     expect(onApply).not.toHaveBeenCalled()
   })
 
+  it('pinch-zooms around the two-finger centroid', () => {
+    const { cell, map } = renderMap()
+    const output = screen.getByText('100%')
+
+    fireEvent.pointerDown(cell({ x: 1, y: 1 }), {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+      pointerId: 40,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerDown(cell({ x: 2, y: 1 }), {
+      button: 0,
+      clientX: 140,
+      clientY: 100,
+      pointerId: 41,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 180,
+      clientY: 100,
+      pointerId: 41,
+      pointerType: 'touch',
+    })
+
+    expect(Number.parseInt(output.textContent ?? '0')).toBeGreaterThan(100)
+    fireEvent.pointerUp(map, { pointerId: 41, pointerType: 'touch' })
+    fireEvent.pointerUp(map, { pointerId: 40, pointerType: 'touch' })
+  })
+
   it('zooms with the wheel and exposes clamped accessible controls', () => {
     const { map } = renderMap()
     const output = screen.getByText('100%')
@@ -158,5 +255,64 @@ describe('ConstructionMap pan and zoom', () => {
     for (let index = 0; index < 12; index += 1) fireEvent.click(zoomOut)
     expect(output).toHaveTextContent('70%')
     expect(zoomOut).toBeDisabled()
+    expect(screen.getByRole('button', { name: /center construction map/i })).toBeVisible()
+  })
+
+  it('keeps the pan surface larger than the grid so margins also accept camera drags', () => {
+    const { map, scroll, surface } = renderMap()
+    scroll.scrollLeft = 80
+
+    fireEvent.pointerDown(surface, {
+      button: 0,
+      clientX: 80,
+      clientY: 80,
+      pointerId: 30,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(surface, {
+      clientX: 55,
+      clientY: 80,
+      pointerId: 30,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(surface, { pointerId: 30, pointerType: 'mouse' })
+
+    expect(scroll.scrollLeft).toBe(105)
+    expect(map).not.toBe(surface)
+    expect(surface).toContainElement(map)
+  })
+
+  it('pans the camera to keep the keyboard cursor in view', () => {
+    const { cell, map, scroll } = renderMap()
+    scroll.scrollLeft = 40
+    scroll.scrollTop = 25
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
+      bottom: 200,
+      height: 200,
+      left: 0,
+      right: 200,
+      top: 0,
+      width: 200,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    vi.spyOn(cell({ x: 9, y: 9 }), 'getBoundingClientRect').mockReturnValue({
+      bottom: 150,
+      height: 40,
+      left: 210,
+      right: 250,
+      top: 110,
+      width: 40,
+      x: 210,
+      y: 110,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.keyDown(map, { key: 'ArrowRight' })
+
+    expect(scroll.scrollLeft).toBe(114)
+    expect(scroll.scrollTop).toBe(25)
+    expect(screen.getByRole('status')).toHaveTextContent(/column 10, row 10/i)
   })
 })

@@ -734,9 +734,9 @@
 
 .construction-tool-tray > header strong { color: #ece0c4; font: 800 9px/1 ui-monospace, monospace; text-transform: uppercase; }
 .construction-tool-tray > header small { color: #87877e; font-size: 8px; }
-.construction-tool-tray > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.construction-tool-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 
-.construction-tool-tray > div > button {
+.construction-tool-list > button {
   min-width: 0;
   min-height: 58px;
   padding: 6px 8px;
@@ -752,7 +752,7 @@
   background: rgba(6, 9, 8, 0.16);
 }
 
-.construction-tool-tray > div > button > span {
+.construction-tool-list > button > span {
   grid-row: 1 / 3;
   width: 36px;
   height: 36px;
@@ -764,11 +764,11 @@
   background: rgba(4, 7, 6, 0.18);
 }
 
-.construction-tool-tray > div > button .game-icon { width: 21px; height: 21px; }
-.construction-tool-tray > div > button strong { align-self: end; overflow: hidden; font: 800 9px/1 ui-monospace, monospace; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-.construction-tool-tray > div > button small { align-self: start; overflow: hidden; color: #898980; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
-.construction-tool-tray > div > button:hover,
-.construction-tool-tray > div > button.selected { color: #f1e2c2; border-color: rgba(224, 180, 95, 0.62); background: rgba(151, 109, 44, 0.2); }
+.construction-tool-list > button .game-icon { width: 21px; height: 21px; }
+.construction-tool-list > button strong { align-self: end; overflow: hidden; font: 800 9px/1 ui-monospace, monospace; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.construction-tool-list > button small { align-self: start; overflow: hidden; color: #898980; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.construction-tool-list > button:hover,
+.construction-tool-list > button.selected { color: #f1e2c2; border-color: rgba(224, 180, 95, 0.62); background: rgba(151, 109, 44, 0.2); }
 
 .rotate-tool,
 .cancel-tool {
@@ -900,17 +900,17 @@
   }
 
   .construction-tool-tray > header { display: none; }
-  .construction-tool-tray > div { gap: 5px; }
-  .construction-tool-tray > div > button {
+  .construction-tool-list { gap: 5px; }
+  .construction-tool-list > button {
     min-height: 50px;
     padding: 4px 5px;
     grid-template-columns: 31px minmax(0, 1fr);
     gap: 2px 5px;
   }
-  .construction-tool-tray > div > button > span { width: 29px; height: 38px; }
-  .construction-tool-tray > div > button .game-icon { width: 17px; height: 17px; }
-  .construction-tool-tray > div > button strong { font-size: 7px; }
-  .construction-tool-tray > div > button small { font-size: 6px; }
+  .construction-tool-list > button > span { width: 29px; height: 38px; }
+  .construction-tool-list > button .game-icon { width: 17px; height: 17px; }
+  .construction-tool-list > button strong { font-size: 7px; }
+  .construction-tool-list > button small { font-size: 6px; }
   .rotate-tool,
   .cancel-tool { width: 58px; min-height: 50px; font-size: 6px; }
   .construction-room-label { display: none; }
@@ -923,7 +923,7 @@
   .construction-topbar { grid-template-columns: minmax(115px, 1fr) auto; }
   .construction-category-bar button { min-width: 61px; }
   .construction-tool-tray { grid-template-columns: minmax(0, 1fr) 54px 54px; }
-  .construction-tool-tray > div { grid-template-columns: 1fr 1fr; }
+  .construction-tool-list { grid-template-columns: 1fr 1fr; }
   .construction-coach { width: calc(100% - 16px); }
   .construction-workstation strong { font-size: 6px; }
   .construction-pawn > small { display: none; }
@@ -1046,13 +1046,13 @@
   display: block;
 }
 
-.construction-tool-tray > div {
+.construction-tool-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 5px;
 }
 
-.construction-tool-tray > div > button {
+.construction-tool-list > button {
   min-height: 48px;
   padding: 5px 8px;
   grid-template-columns: 30px minmax(0, 1fr);
@@ -1063,7 +1063,7 @@
   background: rgba(255, 255, 255, 0.018);
 }
 
-.construction-tool-tray > div > button > span {
+.construction-tool-list > button > span {
   grid-row: 1;
   width: 28px;
   height: 34px;
@@ -1071,14 +1071,14 @@
   background: transparent;
 }
 
-.construction-tool-tray > div > button .game-icon { width: 20px; height: 20px; }
-.construction-tool-tray > div > button strong {
+.construction-tool-list > button .game-icon { width: 20px; height: 20px; }
+.construction-tool-list > button strong {
   align-self: center;
   font: 700 11px/1 system-ui, sans-serif;
   letter-spacing: 0;
   text-transform: none;
 }
-.construction-tool-tray > div > button small { display: none; }
+.construction-tool-list > button small { display: none; }
 
 .construction-category-bar .rotate-tool,
 .construction-category-bar .cancel-tool,
@@ -1152,8 +1152,8 @@
   .construction-category-bar button .game-icon { width: 15px; height: 15px; }
 
   .construction-tool-tray { padding: 5px; }
-  .construction-tool-tray > div > button { min-height: 46px; padding: 4px 6px; }
-  .construction-tool-tray > div > button strong { font-size: 10px; }
+  .construction-tool-list > button { min-height: 46px; padding: 4px 6px; }
+  .construction-tool-list > button strong { font-size: 10px; }
 
   .construction-controls.active-tool .construction-category-bar button {
     min-width: 44px;
@@ -1338,9 +1338,14 @@
 .blueprint-deconstruct .construction-job-progress > i { background: #e58376; }
 
 .construction-worker { z-index: 15; transform: translate(18%, -12%); }
-.construction-worker .pawn-sprite__art {
+.construction-worker:not(.worker-paused) .pawn-sprite__art {
   animation: construction-worker-bob 520ms steps(2, end) infinite;
   filter: drop-shadow(0 0 3px rgba(146, 218, 225, 0.62)) drop-shadow(0 3px 2px rgba(7, 11, 10, 0.48));
+}
+
+.construction-worker.worker-paused .pawn-sprite__art {
+  animation: none;
+  filter: drop-shadow(0 3px 2px rgba(7, 11, 10, 0.38));
 }
 
 .construction-worker-task {
@@ -1402,4 +1407,383 @@
 
 @media (prefers-reduced-motion: reduce) {
   .construction-worker .pawn-sprite__art { animation: none; }
+}
+
+/* Camera workspace: the lunar grid always has enough travel to clear fixed HUDs. */
+.construction-camera-surface {
+  --construction-viewport-height: calc(100dvh - 48px);
+  --construction-base-cell-size: min(calc(100vw / 24), calc((100dvh - 48px) / 18));
+  --construction-cell-size: calc(var(--construction-base-cell-size) * var(--construction-zoom, 1));
+  --construction-map-width: calc(var(--construction-cell-size) * 24);
+  --construction-map-height: calc(var(--construction-cell-size) * 18);
+  --construction-camera-gutter-x: max(50vw, 420px);
+  --construction-camera-gutter-top: max(24vh, 150px);
+  --construction-camera-gutter-bottom: max(28vh, 180px);
+  position: relative;
+  width: max(100%, calc(var(--construction-map-width) + var(--construction-camera-gutter-x) + var(--construction-camera-gutter-x)));
+  height: max(100%, calc(var(--construction-map-height) + var(--construction-camera-gutter-top) + var(--construction-camera-gutter-bottom)));
+  padding:
+    var(--construction-camera-gutter-top)
+    var(--construction-camera-gutter-x)
+    var(--construction-camera-gutter-bottom);
+  box-sizing: border-box;
+  touch-action: none;
+  user-select: none;
+}
+
+.construction-camera-surface.pan-active { cursor: grab; }
+.construction-camera-surface.tool-active { cursor: crosshair; }
+.construction-camera-surface.is-panning { cursor: grabbing; }
+
+.construction-camera-surface .construction-map {
+  left: auto;
+  top: auto;
+  width: var(--construction-map-width);
+  height: var(--construction-map-height);
+}
+
+.construction-designator-strip {
+  min-height: 46px;
+  margin: -1px -1px 6px;
+  padding: 4px;
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  border: 1px solid rgba(228, 206, 155, 0.14);
+  border-radius: 4px;
+  background: rgba(8, 11, 10, 0.28);
+}
+
+.construction-designator-summary {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 4px 8px;
+  display: grid;
+  grid-template-columns: 21px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: #dfd3b9;
+}
+
+.construction-designator-summary > .game-icon {
+  width: 19px;
+  height: 19px;
+  color: var(--construction-amber);
+}
+
+.construction-designator-summary > span { min-width: 0; display: grid; gap: 2px; }
+.construction-designator-summary small {
+  color: #908e84;
+  font: 700 6px/1 ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.construction-designator-summary strong {
+  overflow: hidden;
+  font: 750 10px/1 system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.construction-designator-strip button {
+  min-width: 48px;
+  min-height: 42px;
+  padding: 4px 7px;
+  display: grid;
+  grid-template-columns: 15px auto;
+  place-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: #aaa796;
+  background: transparent;
+  font: 700 8px/1 system-ui, sans-serif;
+}
+
+.construction-designator-strip button:hover,
+.construction-designator-strip button:focus-visible {
+  border-color: rgba(224, 180, 95, 0.36);
+  color: #f0dfbb;
+  background: rgba(151, 109, 44, 0.15);
+}
+
+.construction-designator-strip button .game-icon { width: 15px; height: 15px; }
+.construction-designator-strip .cancel-tool:hover,
+.construction-designator-strip .cancel-tool:focus-visible {
+  border-color: rgba(221, 111, 97, 0.4);
+  color: #efbbb4;
+}
+
+.construction-selection-cell {
+  position: relative;
+  z-index: 19;
+  min-width: 0;
+  min-height: 0;
+  border: 2px solid #f0d89f;
+  background:
+    linear-gradient(#f0d89f, #f0d89f) left top / 7px 2px no-repeat,
+    linear-gradient(#f0d89f, #f0d89f) left top / 2px 7px no-repeat,
+    linear-gradient(#f0d89f, #f0d89f) right top / 7px 2px no-repeat,
+    linear-gradient(#f0d89f, #f0d89f) right top / 2px 7px no-repeat,
+    linear-gradient(#f0d89f, #f0d89f) left bottom / 7px 2px no-repeat,
+    linear-gradient(#f0d89f, #f0d89f) left bottom / 2px 7px no-repeat,
+    linear-gradient(#f0d89f, #f0d89f) right bottom / 7px 2px no-repeat,
+    linear-gradient(#f0d89f, #f0d89f) right bottom / 2px 7px no-repeat,
+    rgba(240, 216, 159, 0.08);
+  box-shadow: 0 0 0 1px rgba(20, 18, 15, 0.92), 0 0 8px rgba(240, 216, 159, 0.28);
+  pointer-events: none;
+}
+
+.construction-stack-count {
+  position: relative;
+  z-index: 20;
+  min-width: 15px;
+  height: 15px;
+  margin: -5px -5px 0 0;
+  padding: 0 3px;
+  place-self: start end;
+  display: grid;
+  place-items: center;
+  border: 2px solid #252721;
+  border-radius: 8px;
+  color: #d8c58f;
+  background: #3b3d34;
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.42);
+  font: 900 7px/1 ui-monospace, monospace;
+  pointer-events: none;
+}
+
+@media (max-width: 700px) {
+  .construction-camera-surface {
+    --construction-viewport-height: calc(100dvh - 44px);
+    --construction-base-cell-size: 40px;
+    --construction-camera-gutter-x: max(62vw, 240px);
+    --construction-camera-gutter-top: 150px;
+    --construction-camera-gutter-bottom: 210px;
+  }
+
+  .construction-zoom-controls button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .construction-zoom-value { min-width: 44px; }
+
+  .construction-designator-strip { min-height: 48px; }
+  .construction-designator-strip button { min-width: 44px; min-height: 44px; padding: 3px; }
+  .construction-designator-strip button > span { display: none; }
+  .construction-designator-summary { padding-inline: 5px; grid-template-columns: 18px minmax(0, 1fr); gap: 5px; }
+  .construction-designator-summary > .game-icon { width: 17px; height: 17px; }
+  .construction-designator-summary strong { font-size: 9px; }
+}
+
+/* Architect inspection and material economy. */
+.construction-material-summary {
+  min-width: 94px;
+  padding: 4px 7px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  border-left: 1px solid rgba(235, 226, 204, 0.09);
+  color: #d8c892;
+}
+
+.construction-material-summary > .game-icon { width: 16px; height: 16px; }
+.construction-material-summary > span { min-width: 0; display: grid; gap: 2px; }
+.construction-material-summary strong {
+  color: #e6dcbf;
+  font: 750 9px/1 system-ui, sans-serif;
+  white-space: nowrap;
+}
+.construction-material-summary small {
+  color: #8f9188;
+  font: 600 7px/1 system-ui, sans-serif;
+  white-space: nowrap;
+}
+
+.construction-tool-list > button {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+}
+
+.construction-tool-cost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  color: #b9a66f;
+  font: 700 8px/1 ui-monospace, monospace;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.construction-tool-list > button .construction-tool-cost .game-icon {
+  width: 11px;
+  height: 11px;
+}
+
+.stack-kind-blueprint .tile-stack-item-icon {
+  color: #90d8df;
+  border-color: rgba(113, 202, 211, 0.42);
+  background: rgba(42, 91, 97, 0.34);
+}
+
+.construction-selection-inspector {
+  z-index: 64;
+  left: 12px;
+  bottom: 76px;
+  width: min(430px, calc(100vw - 24px));
+  max-height: min(70dvh, 520px);
+  overflow-y: auto;
+}
+
+.construction-selection-inspector.selection-crew::before { background: #8dcfd4; }
+.construction-selection-inspector.selection-blueprint::before { background: #86cbd2; }
+.construction-selection-inspector.selection-boundary::before,
+.construction-selection-inspector.selection-workstation::before { background: #bdc4ae; }
+
+.construction-selection-inspector .selection-context {
+  white-space: normal;
+}
+
+.construction-selection-inspector .tile-selection-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.construction-selection-inspector .selection-stats > span {
+  min-height: 46px;
+}
+
+.construction-selection-inspector .selection-stats strong {
+  white-space: normal;
+}
+
+.construction-inspector-actions {
+  margin-top: 8px;
+  padding-top: 8px;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 7px;
+  border-top: 1px solid rgba(222, 209, 174, 0.13);
+}
+
+.construction-priority-stepper {
+  min-width: 145px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.construction-priority-stepper > small {
+  color: #96998f;
+  font: 750 7px/1 ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.construction-priority-stepper > span {
+  height: 34px;
+  display: grid;
+  grid-template-columns: 34px 38px 34px;
+  overflow: hidden;
+  border: 1px solid rgba(218, 207, 177, 0.16);
+  border-radius: 3px;
+  background: rgba(7, 9, 8, 0.2);
+}
+
+.construction-priority-stepper button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  color: #b9b9ae;
+  background: transparent;
+}
+
+.construction-priority-stepper button:hover:not(:disabled),
+.construction-priority-stepper button:focus-visible {
+  color: #f1d999;
+  background: rgba(213, 175, 89, 0.12);
+}
+
+.construction-priority-stepper button:disabled { opacity: 0.28; }
+.construction-priority-stepper button .game-icon { width: 13px; height: 13px; }
+.construction-priority-stepper strong {
+  display: grid;
+  place-items: center;
+  border-inline: 1px solid rgba(218, 207, 177, 0.12);
+  color: #ecd89c;
+  font: 850 10px/1 ui-monospace, monospace;
+}
+
+.construction-destructive-action {
+  min-height: 36px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(222, 113, 99, 0.32);
+  border-radius: 3px;
+  color: #e4aaa1;
+  background: rgba(132, 54, 45, 0.12);
+  font: 750 9px/1 system-ui, sans-serif;
+}
+
+.construction-destructive-action:hover:not(:disabled),
+.construction-destructive-action:focus-visible {
+  border-color: rgba(231, 134, 121, 0.62);
+  color: #f5c1b9;
+  background: rgba(156, 62, 51, 0.22);
+}
+
+.construction-destructive-action:disabled { opacity: 0.5; cursor: default; }
+.construction-destructive-action .game-icon { width: 14px; height: 14px; }
+.construction-inspector-single-action { justify-content: flex-end; }
+
+@media (max-width: 700px) {
+  .construction-job-hud {
+    max-width: calc(100% - 112px);
+  }
+
+  .construction-material-summary {
+    min-width: 62px;
+    padding-inline: 4px;
+    grid-template-columns: 14px minmax(0, 1fr);
+    gap: 3px;
+  }
+
+  .construction-material-summary > .game-icon { width: 13px; height: 13px; }
+  .construction-material-summary strong { font-size: 8px; }
+  .construction-material-summary small { display: none; }
+
+  .construction-tool-list > button {
+    grid-template-columns: 26px minmax(0, 1fr) auto;
+    gap: 4px;
+  }
+
+  .construction-tool-cost { font-size: 7px; }
+
+  .construction-selection-inspector {
+    right: 8px;
+    bottom: 68px;
+    left: 8px;
+    width: auto;
+    max-height: min(53dvh, 390px);
+  }
+
+  .construction-selection-inspector .tile-selection-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .construction-inspector-actions { align-items: stretch; }
+  .construction-priority-stepper { min-width: 0; flex: 1 1 auto; }
+  .construction-priority-stepper > small { display: none; }
+  .construction-priority-stepper > span { grid-template-columns: 40px 42px 40px; }
+  .construction-priority-stepper button { width: 40px; height: 34px; }
+  .construction-destructive-action { min-height: 40px; }
 }

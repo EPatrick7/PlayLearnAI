@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { paintBoundaryCell } from './construction'
+import { deriveConstructionOrders, projectConstructionOrders } from './constructionJobs'
 import { createInitialState } from './seed'
 import {
   advanceSimulation,
@@ -191,7 +193,7 @@ describe('tiny-start settlement construction', () => {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(5)
+    expect(saved.version).toBe(6)
     expect(saved.state?.settlement).toMatchObject({
       phase: 'power_online',
       constructionOrders: [],
@@ -225,6 +227,44 @@ describe('tiny-start settlement construction', () => {
     expect(migratedV3.settlement.constructionOrders).toEqual([])
     expect(migratedV3.settlement.constructionSequence).toBe(1)
 
+    const plannedWall = paintBoundaryCell(
+      saved.state!.settlement.layout,
+      { x: 9, y: 6 },
+      'wall',
+    )
+    const currentOrders = deriveConstructionOrders(
+      saved.state!.settlement.layout,
+      plannedWall,
+      { commandId: 'legacy-command', priority: 3, sequenceStart: 4 },
+    )
+    const legacyOrders = currentOrders.map((order) => {
+      const legacy = {
+        ...order,
+        status: 'building' as const,
+        assignedCrewId: 'crew-amina-okafor',
+        materials: {
+          required: order.materials.required,
+          delivered: order.materials.required,
+        },
+        work: { ...order.work, completed: 0.5 },
+      } as Partial<typeof order>
+      delete legacy.block
+      return legacy
+    })
+    const legacyV5 = structuredClone(saved.state!) as unknown as Record<string, unknown>
+    ;(legacyV5.settlement as Record<string, unknown>).constructionOrders = legacyOrders
+    ;(legacyV5.settlement as Record<string, unknown>).constructionSequence = 1
+    const migratedV5 = await migrate!(legacyV5, 5) as MoonbaseState
+    expect(migratedV5.reserves.constructionStock).toBe(saved.state?.reserves.constructionStock)
+    expect(migratedV5.settlement.constructionSequence).toBe(5)
+    expect(migratedV5.settlement.constructionOrders[0]).toMatchObject({
+      status: 'hauling',
+      assignedCrewId: null,
+      block: null,
+      materials: { required: 1, reserved: 1, delivered: 0, recoverable: 0 },
+      work: { required: 1, completed: 0 },
+    })
+
     const merge = useColonyStore.persist.getOptions().merge
     expect(merge).toBeTypeOf('function')
     const malformedCurrentVersion = structuredClone(saved.state!) as unknown as Record<string, unknown>
@@ -232,7 +272,77 @@ describe('tiny-start settlement construction', () => {
     const recovered = merge!(malformedCurrentVersion, useColonyStore.getState())
     expect(recovered.settlement.layout.boundaries).toHaveLength(16)
 
-    const future = await migrate!(saved.state, 6) as MoonbaseState
+    const staleCurrentVersion = structuredClone(saved.state!) as unknown as Record<string, unknown>
+    ;(staleCurrentVersion.settlement as Record<string, unknown>).constructionOrders = [{
+      ...currentOrders[0],
+      materials: undefined,
+      work: undefined,
+    }]
+    ;(staleCurrentVersion.settlement as Record<string, unknown>).constructionSequence = 1
+    const normalized = merge!(staleCurrentVersion, useColonyStore.getState())
+    expect(normalized.settlement.constructionSequence).toBe(5)
+    expect(normalized.settlement.constructionOrders[0]).toMatchObject({
+      id: 'legacy-command:4',
+      operation: 'construct',
+      materials: { required: 1, reserved: 1, delivered: 0, recoverable: 0 },
+      work: { required: 1, completed: 0 },
+    })
+
+    const malformedLegacyV5 = structuredClone(legacyV5)
+    ;(malformedLegacyV5.settlement as Record<string, unknown>).constructionOrders = [
+      null,
+      ...legacyOrders,
+    ]
+    const filteredV5 = await migrate!(malformedLegacyV5, 5) as MoonbaseState
+    expect(filteredV5.settlement.constructionOrders).toHaveLength(1)
+
+    const future = await migrate!(saved.state, 7) as MoonbaseState
     expect(future).toMatchObject({ worldRevision: 1, settlement: { phase: 'landing' } })
+  })
+
+  it('refunds staged material from dependent jobs when one blueprint is cancelled', () => {
+    const initial = createInitialState()
+    const wallOrders = deriveConstructionOrders(
+      initial.settlement.layout,
+      paintBoundaryCell(initial.settlement.layout, { x: 10, y: 6 }, 'wall'),
+      { commandId: 'wall', sequenceStart: 1 },
+    )
+    const projected = projectConstructionOrders(
+      initial.settlement.layout,
+      wallOrders,
+    ).layout
+    const doorOrders = deriveConstructionOrders(
+      projected,
+      paintBoundaryCell(projected, { x: 10, y: 6 }, 'door'),
+      { commandId: 'door', sequenceStart: 2 },
+    )
+    const staged = [...wallOrders, ...doorOrders].map((order) => ({
+      ...order,
+      status: 'building' as const,
+      block: null,
+      materials: {
+        ...order.materials,
+        reserved: 0,
+        delivered: order.materials.required,
+      },
+    }))
+    useColonyStore.setState({
+      settlement: {
+        ...initial.settlement,
+        constructionOrders: staged,
+        constructionSequence: 3,
+      },
+      reserves: {
+        ...initial.reserves,
+        constructionStock: initial.reserves.constructionStock - 2,
+      },
+    })
+
+    expect(useColonyStore.getState().cancelConstructionOrder('wall:1')).toBe(true)
+    expect(useColonyStore.getState().settlement.constructionOrders).toEqual([])
+    expect(useColonyStore.getState().reserves.constructionStock).toBe(
+      initial.reserves.constructionStock,
+    )
+    useColonyStore.getState().resetColony()
   })
 })

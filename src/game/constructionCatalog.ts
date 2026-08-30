@@ -1,6 +1,7 @@
 import type { GameIconName } from '../components/GameIcon'
 import type {
   BoundaryCell,
+  BoundaryKind,
   ConstructionLayout,
   WorkstationPlacement,
 } from './construction'
@@ -24,8 +25,28 @@ export interface WorkstationSpec {
   icon: GameIconName
   width: number
   height: number
+  materialCost: number
   indoor: boolean
   description: string
+}
+
+export interface BoundarySpec {
+  kind: BoundaryKind
+  label: string
+  materialCost: number
+}
+
+export const BOUNDARY_SPECS: Record<BoundaryKind, BoundarySpec> = {
+  wall: {
+    kind: 'wall',
+    label: 'Wall',
+    materialCost: 1,
+  },
+  door: {
+    kind: 'door',
+    label: 'Door',
+    materialCost: 1,
+  },
 }
 
 export const WORKSTATION_SPECS: Record<WorkstationKind, WorkstationSpec> = {
@@ -37,6 +58,7 @@ export const WORKSTATION_SPECS: Record<WorkstationKind, WorkstationSpec> = {
     icon: 'bed',
     width: 1,
     height: 2,
+    materialCost: 2,
     indoor: true,
     description: '1×2 sleeping place',
   },
@@ -48,6 +70,7 @@ export const WORKSTATION_SPECS: Record<WorkstationKind, WorkstationSpec> = {
     icon: 'storage',
     width: 2,
     height: 2,
+    materialCost: 4,
     indoor: true,
     description: '2×2 material storage',
   },
@@ -59,6 +82,7 @@ export const WORKSTATION_SPECS: Record<WorkstationKind, WorkstationSpec> = {
     icon: 'lifeSupport',
     width: 2,
     height: 2,
+    materialCost: 4,
     indoor: true,
     description: '2×2 atmosphere processor',
   },
@@ -70,6 +94,7 @@ export const WORKSTATION_SPECS: Record<WorkstationKind, WorkstationSpec> = {
     icon: 'microscope',
     width: 3,
     height: 2,
+    materialCost: 6,
     indoor: true,
     description: '3×2 science workstation',
   },
@@ -81,6 +106,7 @@ export const WORKSTATION_SPECS: Record<WorkstationKind, WorkstationSpec> = {
     icon: 'solar',
     width: 3,
     height: 2,
+    materialCost: 6,
     indoor: false,
     description: '3×2 exterior generator',
   },
@@ -92,6 +118,7 @@ export const WORKSTATION_SPECS: Record<WorkstationKind, WorkstationSpec> = {
     icon: 'battery',
     width: 2,
     height: 1,
+    materialCost: 2,
     indoor: false,
     description: '2×1 power storage',
   },
@@ -146,4 +173,3 @@ export const createStarterConstruction = (): ConstructionLayout => ({
 
 export const isWorkstationTool = (tool: ConstructionTool | null): tool is WorkstationKind =>
   Boolean(tool && tool in WORKSTATION_SPECS)
-
