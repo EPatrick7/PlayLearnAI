@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import {
   detectRooms,
@@ -309,6 +309,9 @@ describe('freeform settlement builder', () => {
     expect(screen.queryByRole('region', { name: /^Structure build tools$/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Move / Select' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Stop placing Wall' })).toBeVisible()
+    expect(document.querySelector('.active-tool-summary')).toHaveTextContent(
+      /Move \/ Select or Space\/middle-drag pans/i,
+    )
     expect(constructionMap()).toHaveClass('tool-active')
 
     fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
@@ -831,6 +834,128 @@ describe('freeform settlement builder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Return to colony' }))
     expect(screen.getByRole('main')).toHaveClass('world-stage')
     expect(screen.getByRole('navigation', { name: 'Colony commands' })).toBeVisible()
+  })
+
+  it('routes, supplies, and builds an operations blueprint on the live Architect clock', () => {
+    vi.useFakeTimers()
+    try {
+      startOperations()
+      expect(useColonyStore.getState().operationsPlan.baseline).toBeNull()
+      expect(screen.getByTitle('Advance one hour')).toBeDisabled()
+
+      fireEvent.click(within(
+        screen.getByRole('navigation', { name: 'Colony commands' }),
+      ).getByRole('button', { name: 'Build' }))
+
+      expect(screen.getByRole('group', { name: 'Construction speed' })).toBeVisible()
+      expect(screen.getByRole('button', { name: '3 times construction speed' })).toBeVisible()
+
+      const target = { x: 16, y: 9 }
+      selectTool('Structure', /^Wall/i)
+      clickConstructionCell(target)
+
+      let state = useColonyStore.getState()
+      const orderId = state.settlement.constructionOrders.at(-1)?.id
+      if (!orderId) throw new Error('The operations wall did not create a construction order.')
+      expect(state.settlement.layout.boundaries).not.toContainEqual({ ...target, kind: 'wall' })
+      expect(state.settlement.constructionOrders.find((order) => order.id === orderId)).toMatchObject({
+        status: 'hauling',
+        assignedCrewId: null,
+        materials: { required: 1, reserved: 1, delivered: 0 },
+        work: { completed: 0 },
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: '3 times construction speed' }))
+      act(() => vi.advanceTimersByTime(180))
+
+      state = useColonyStore.getState()
+      let order = state.settlement.constructionOrders.find((candidate) => candidate.id === orderId)!
+      expect(order.assignedCrewId).toBeTruthy()
+      expect(order.travelPhase).toBe('to_stockpile')
+      expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(
+        '1 collecting material',
+      )
+
+      const builderId = order.assignedCrewId!
+      const startingPosition = state.settlement.constructionCrew.find(
+        (position) => position.crewId === builderId,
+      )!
+      const startingCell = { ...startingPosition.cell }
+      const startingMoveCredit = startingPosition.moveCredit
+      let sawMovement = false
+      let sawCarriedMaterial = false
+      let sawDeliveredMaterial = false
+      let sawTimedWork = false
+
+      for (let tick = 0; tick < 80 && order.status !== 'complete'; tick += 1) {
+        act(() => vi.advanceTimersByTime(180))
+        state = useColonyStore.getState()
+        order = state.settlement.constructionOrders.find((candidate) => candidate.id === orderId)!
+        const builderPosition = state.settlement.constructionCrew.find(
+          (position) => position.crewId === builderId,
+        )!
+        sawMovement ||= builderPosition.cell.x !== startingCell.x ||
+          builderPosition.cell.y !== startingCell.y ||
+          builderPosition.moveCredit !== startingMoveCredit
+        sawCarriedMaterial ||= (order.materials.carried ?? 0) > 0 &&
+          order.materials.carriedByCrewId === builderId
+        sawDeliveredMaterial ||= order.materials.delivered > 0
+        sawTimedWork ||= order.work.completed > 0 && order.work.completed < order.work.required
+        if (order.status !== 'complete') {
+          expect(state.settlement.layout.boundaries).not.toContainEqual({ ...target, kind: 'wall' })
+        }
+      }
+
+      expect(sawMovement).toBe(true)
+      expect(sawCarriedMaterial).toBe(true)
+      expect(sawDeliveredMaterial).toBe(true)
+      expect(sawTimedWork).toBe(true)
+      const builderName = state.crew.find((member) => member.id === builderId)?.name
+      if (!builderName) throw new Error('The completed construction worker was not found.')
+      expect(order).toMatchObject({
+        status: 'complete',
+        assignedCrewId: null,
+        travelPhase: 'idle',
+        materials: { delivered: 1, carried: 0, carriedByCrewId: null },
+        work: { completed: 1 },
+      })
+      expect(state.settlement.layout.boundaries).toContainEqual({ ...target, kind: 'wall' })
+      expect(state.reserves.constructionStock).toBe(13)
+      expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(
+        `Construction complete1 wall completed by ${builderName}.`,
+      )
+      expect(document.querySelector('.construction-toast')).toHaveTextContent(
+        `1 wall completed by ${builderName}.`,
+      )
+
+      const batchStart = { x: 9, y: 12 }
+      const batchEnd = { x: 13, y: 12 }
+      dragConstructionTool(batchStart, batchEnd, 3)
+      state = useColonyStore.getState()
+      const batchOrders = state.settlement.constructionOrders.slice(-5)
+      expect(batchOrders).toHaveLength(5)
+      expect(batchOrders.every((candidate) => candidate.status !== 'complete')).toBe(true)
+
+      for (let tick = 0; tick < 180 && batchOrders.some((candidate) => {
+        const current = useColonyStore.getState().settlement.constructionOrders.find(
+          (orderCandidate) => orderCandidate.id === candidate.id,
+        )
+        return current?.status !== 'complete'
+      }); tick += 1) {
+        act(() => vi.advanceTimersByTime(180))
+      }
+
+      state = useColonyStore.getState()
+      expect(batchOrders.every((candidate) => state.settlement.constructionOrders.find(
+        (orderCandidate) => orderCandidate.id === candidate.id,
+      )?.status === 'complete')).toBe(true)
+      expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(
+        /Construction complete5 walls completed by .+\./,
+      )
+      expect(state.reserves.constructionStock).toBe(8)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not open Architect when B is typed into an operations field', () => {

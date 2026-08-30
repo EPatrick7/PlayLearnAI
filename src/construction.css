@@ -1207,6 +1207,16 @@
     display: inline;
     font-size: 8px;
   }
+  .construction-controls.active-tool .construction-category-bar .cancel-tool {
+    width: 58px;
+    min-width: 58px;
+    grid-template-columns: 15px auto;
+    gap: 3px;
+  }
+  .construction-controls.active-tool .construction-category-bar .cancel-tool::after {
+    content: "Stop";
+    font-size: 8px;
+  }
   .construction-controls.active-tool .construction-category-bar .architect-button { min-width: 48px; width: 48px; }
   .construction-controls.active-tool .active-tool-summary { flex-basis: 84px; padding: 4px 7px; grid-template-columns: 18px minmax(0, 1fr); gap: 5px; }
   .active-tool-summary > .game-icon { width: 17px; height: 17px; }

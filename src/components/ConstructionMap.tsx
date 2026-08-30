@@ -865,7 +865,10 @@ export function ConstructionMap({
     }
     if (!selectedTool || event.button !== 0) return
     const point = pointerPoint(event)
-    if (!point) return
+    if (!point) {
+      beginPan(event, false)
+      return
+    }
     event.preventDefault()
     updatePreviewLabelAnchor(event.clientX, event.clientY)
     pointerIdRef.current = event.pointerId
@@ -1159,7 +1162,8 @@ export function ConstructionMap({
     const usedForPan = spacePanUsedRef.current
     spacePressedRef.current = false
     spacePanUsedRef.current = false
-    if (wasPressed && !usedForPan) activateKeyboardCursor()
+    const isLineDraft = selectedTool === 'wall' || selectedTool === 'erase'
+    if (wasPressed && !usedForPan && isLineDraft) activateKeyboardCursor()
   }
 
   const clearSpaceGesture = () => {

@@ -472,6 +472,96 @@ describe('ConstructionMap pan and zoom', () => {
     expect(onApply).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ['mouse', 'wall'],
+    ['touch', 'wall'],
+    ['mouse', 'solar-array'],
+    ['touch', 'solar-array'],
+  ] as const)(
+    'pans from empty camera workspace with a primary %s pointer while %s remains active',
+    (pointerType, selectedTool) => {
+      const {
+        map,
+        onApply,
+        onCancelTool,
+        onInspectCell,
+        scroll,
+        surface,
+      } = renderMap(selectedTool)
+      scroll.scrollLeft = 120
+      scroll.scrollTop = 100
+
+      fireEvent.pointerDown(surface, {
+        button: 0,
+        clientX: 150,
+        clientY: 130,
+        pointerId: 75,
+        pointerType,
+      })
+      fireEvent.pointerMove(surface, {
+        button: 0,
+        clientX: 115,
+        clientY: 90,
+        pointerId: 75,
+        pointerType,
+      })
+      fireEvent.pointerUp(surface, {
+        button: 0,
+        clientX: 115,
+        clientY: 90,
+        pointerId: 75,
+        pointerType,
+      })
+
+      expect(scroll.scrollLeft).toBe(155)
+      expect(scroll.scrollTop).toBe(140)
+      expect(onApply).not.toHaveBeenCalled()
+      expect(onInspectCell).not.toHaveBeenCalled()
+      expect(onCancelTool).not.toHaveBeenCalled()
+      expect(map).toHaveClass('tool-active')
+      expect(map).not.toHaveClass('is-panning')
+    },
+  )
+
+  it.each(['mouse', 'touch'] as const)(
+    'leaves a stationary active-tool gutter %s tap inert',
+    (pointerType) => {
+      const {
+        map,
+        onApply,
+        onCancelTool,
+        onInspectCell,
+        scroll,
+        surface,
+      } = renderMap('wall')
+      scroll.scrollLeft = 120
+      scroll.scrollTop = 100
+
+      fireEvent.pointerDown(surface, {
+        button: 0,
+        clientX: 150,
+        clientY: 130,
+        pointerId: 76,
+        pointerType,
+      })
+      fireEvent.pointerUp(surface, {
+        button: 0,
+        clientX: 150,
+        clientY: 130,
+        pointerId: 76,
+        pointerType,
+      })
+
+      expect(scroll.scrollLeft).toBe(120)
+      expect(scroll.scrollTop).toBe(100)
+      expect(onApply).not.toHaveBeenCalled()
+      expect(onInspectCell).not.toHaveBeenCalled()
+      expect(onCancelTool).not.toHaveBeenCalled()
+      expect(map).toHaveClass('tool-active')
+      expect(map).not.toHaveClass('is-panning')
+    },
+  )
+
   it('turns an active touch draft into a two-finger pan without applying it', () => {
     const { cell, map, onApply, scroll } = renderMap('wall')
     scroll.scrollLeft = 100
@@ -1072,6 +1162,18 @@ describe('ConstructionMap pan and zoom', () => {
       pointerType: 'mouse',
     })
     expect(onApply).toHaveBeenCalledOnce()
+  })
+
+  it('reserves stationary Space for line drafts while Enter places a workstation', () => {
+    const { map, onApply } = renderMap('solar-array')
+
+    fireEvent.keyDown(map, { code: 'Space', key: ' ' })
+    fireEvent.keyUp(map, { code: 'Space', key: ' ' })
+    expect(onApply).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(map, { key: 'Enter' })
+    expect(onApply).toHaveBeenCalledOnce()
+    expect(onApply.mock.calls[0][1]).toBe('Solar array')
   })
 
   it('keeps the pan surface larger than the grid so margins also accept camera drags', () => {
