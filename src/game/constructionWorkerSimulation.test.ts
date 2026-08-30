@@ -6,6 +6,7 @@ import {
 } from './construction'
 import {
   deriveConstructionOrders,
+  returnedConstructionMaterials,
   type ConstructionOrder,
 } from './constructionJobs'
 import {
@@ -146,7 +147,7 @@ describe('spatial construction worker simulation', () => {
     expect(first.orders[0]).toMatchObject({
       assignedCrewId: 'builder',
       travelPhase: 'to_site' as const,
-      status: 'building',
+      status: 'hauling',
       materials: {
         delivered: 0,
         reserved: 0,
@@ -309,6 +310,115 @@ describe('spatial construction worker simulation', () => {
       assignedCrewId: 'beta',
       travelPhase: 'to_site',
       materials: { delivered: 1, carried: 0 },
+    })
+  })
+
+  it('moves a large material order in capacity-limited trips before handing it to a builder', () => {
+    const order: ConstructionOrder = {
+      ...wallOrder(),
+      materials: {
+        required: 3,
+        reserved: 3,
+        delivered: 0,
+        recoverable: 0,
+      },
+    }
+    const workers = [
+      {
+        id: 'hauler',
+        canConstruct: false,
+        canHaul: true,
+        carryCapacity: 1,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+      {
+        id: 'builder',
+        canConstruct: true,
+        canHaul: false,
+        carryCapacity: 1,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+    ]
+    const baseInput: ConstructionWorkerSimulationInput = {
+      layout: createConstructionLayout(),
+      orders: [order],
+      constructionStock: 3,
+      stockpile: { x: 1, y: 1 },
+      crewPositions: [
+        { crewId: 'hauler', cell: { x: 1, y: 1 }, moveCredit: 0 },
+        { crewId: 'builder', cell: { x: 0, y: 2 }, moveCredit: 0 },
+      ],
+      workers,
+      elapsed: 0,
+    }
+
+    let state = advanceConstructionWorkerSimulation(baseInput)
+    expect(state.orders[0]).toMatchObject({
+      assignedCrewId: 'hauler',
+      travelPhase: 'to_site',
+      materials: { reserved: 2, delivered: 0, carried: 1, carriedByCrewId: 'hauler' },
+    })
+    expect(state.constructionStock).toBe(2)
+
+    state = advanceConstructionWorkerSimulation({
+      ...baseInput,
+      orders: state.orders,
+      constructionStock: state.constructionStock,
+      crewPositions: state.crewPositions,
+      elapsed: 1.5,
+    })
+    expect(state.orders[0]).toMatchObject({
+      assignedCrewId: null,
+      travelPhase: 'idle',
+      materials: { reserved: 2, delivered: 1, carried: 0, carriedByCrewId: null },
+    })
+
+    state = advanceConstructionWorkerSimulation({
+      ...baseInput,
+      orders: state.orders,
+      constructionStock: state.constructionStock,
+      crewPositions: state.crewPositions,
+      elapsed: 1.5,
+    })
+    expect(state.orders[0]).toMatchObject({
+      assignedCrewId: 'hauler',
+      travelPhase: 'to_site',
+      materials: { reserved: 1, delivered: 1, carried: 1, carriedByCrewId: 'hauler' },
+    })
+    expect(state.constructionStock).toBe(1)
+    expect(state.constructionStock + returnedConstructionMaterials(state.orders)).toBe(3)
+
+    for (let trip = 0; trip < 3; trip += 1) {
+      state = advanceConstructionWorkerSimulation({
+        ...baseInput,
+        orders: state.orders,
+        constructionStock: state.constructionStock,
+        crewPositions: state.crewPositions,
+        elapsed: 1.5,
+      })
+    }
+    expect(state.orders[0]).toMatchObject({
+      assignedCrewId: null,
+      travelPhase: 'idle',
+      materials: { reserved: 0, delivered: 3, carried: 0, carriedByCrewId: null },
+      work: { completed: 0 },
+    })
+
+    const handedOff = advanceConstructionWorkerSimulation({
+      ...baseInput,
+      orders: state.orders,
+      constructionStock: state.constructionStock,
+      crewPositions: state.crewPositions,
+      elapsed: 0,
+    })
+    expect(handedOff.orders[0]).toMatchObject({
+      assignedCrewId: 'builder',
+      travelPhase: 'to_site',
+      materials: { delivered: 3, carried: 0 },
     })
   })
 
@@ -726,7 +836,8 @@ describe('spatial construction worker simulation', () => {
 
     expect(delivered.orders[0]).toMatchObject({
       forcedCrewId: 'beta',
-      assignedCrewId: 'alpha',
+      assignedCrewId: null,
+      travelPhase: 'idle',
       materials: {
         delivered: 1,
         carried: 0,
@@ -903,7 +1014,7 @@ describe('spatial construction worker simulation', () => {
     })
   })
 
-  it('retries a no-route job when a blocking blueprint is canceled', () => {
+  it('routes through an unfinished blueprint ghost in a chokepoint', () => {
     const barrier = Array.from({ length: 24 }, (_, x): BoundaryCell => ({
       x,
       y: 2,
@@ -946,27 +1057,17 @@ describe('spatial construction worker simulation', () => {
       orders: [waiting, blockingBlueprint],
       crewPositions: [{ crewId: 'builder', cell: { x: 1, y: 1 }, moveCredit: 0 }],
     })
-    const blocked = first.orders.find((order) => order.id === waiting.id)!
-    expect(blocked.block).toMatchObject({ kind: 'no_path' })
-    expect(first.orders.find((order) => order.id === blockingBlueprint.id)?.assignedCrewId)
-      .toBeNull()
-
-    const retried = advanceConstructionWorkerSimulation({
-      ...inputFor(blocked, 0),
-      layout: first.layout,
-      orders: [blocked],
-      constructionStock: first.constructionStock,
-      crewPositions: first.crewPositions,
-    })
-
-    expect(retried.noPathOrderIds).toEqual([])
-    expect(retried.orders[0]).toMatchObject({
+    const routed = first.orders.find((order) => order.id === waiting.id)!
+    expect(first.noPathOrderIds).toEqual([])
+    expect(routed).toMatchObject({
       block: null,
       assignedCrewId: 'builder',
     })
+    expect(first.orders.find((order) => order.id === blockingBlueprint.id)?.assignedCrewId)
+      .toBeNull()
   })
 
-  it('retries a no-route job after an evacuating builder reaches its side of a chokepoint', () => {
+  it('does not let an unsupplied chokepoint ghost block a supplied job', () => {
     const barrier = Array.from({ length: 24 }, (_, x): BoundaryCell => ({
       x,
       y: 2,
@@ -1034,25 +1135,12 @@ describe('spatial construction worker simulation', () => {
       workers,
       elapsed: 1,
     })
-    const blocked = first.orders.find((order) => order.id === waiting.id)!
-    expect(blocked.block).toMatchObject({ kind: 'no_path' })
-    expect(first.crewPositions.find((position) => position.crewId === 'alpha')?.cell)
-      .toEqual({ x: 1, y: 3 })
-
-    const retried = advanceConstructionWorkerSimulation({
-      layout: first.layout,
-      orders: first.orders,
-      constructionStock: first.constructionStock,
-      stockpile: first.stockpile,
-      crewPositions: first.crewPositions,
-      workers,
-      elapsed: 0,
-    })
-
-    expect(retried.noPathOrderIds).toEqual([])
-    expect(retried.orders.find((order) => order.id === waiting.id)).toMatchObject({
+    expect(first.noPathOrderIds).toEqual([])
+    expect(first.orders.find((order) => order.id === waiting.id)).toMatchObject({
       block: null,
       assignedCrewId: 'alpha',
     })
+    expect(first.orders.find((order) => order.id === blockingBlueprint.id)?.assignedCrewId)
+      .toBeNull()
   })
 })

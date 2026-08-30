@@ -1,7 +1,14 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { paintBoundaryCell, type GridPoint } from '../game/construction'
+import {
+  paintBoundaryCell,
+  paintBoundaryLine,
+  placeWorkstation,
+  type ConstructionLayout,
+  type ConstructionResult,
+  type GridPoint,
+} from '../game/construction'
 import type { ConstructionOrder, ConstructionTravelPhase } from '../game/constructionJobs'
 import { useColonyStore } from '../game/store'
 import { SettlementBuilder } from './SettlementBuilder'
@@ -54,6 +61,23 @@ const inspectCell = (point: GridPoint) => {
     pointerId: 81,
     pointerType: 'mouse',
   })
+}
+
+const layoutFrom = (result: ConstructionResult) => {
+  if (!result.ok) throw new Error(`${result.code}: ${result.error}`)
+  return result.layout
+}
+
+const addSharedDoorExpansion = (source: ConstructionLayout) => {
+  let layout = layoutFrom(
+    paintBoundaryLine(source, { x: 7, y: 7 }, { x: 10, y: 7 }, 'wall'),
+  )
+  layout = layoutFrom(
+    paintBoundaryLine(layout, { x: 10, y: 7 }, { x: 10, y: 11 }, 'wall'),
+  )
+  return layoutFrom(
+    paintBoundaryLine(layout, { x: 10, y: 11 }, { x: 7, y: 11 }, 'wall'),
+  )
 }
 
 beforeEach(() => {
@@ -205,5 +229,84 @@ describe('SettlementBuilder inspection selection', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('group', {
       name: /freeform construction grid/i,
     })))
+  })
+
+  it('explains an unreachable blueprint and offers exterior-door recovery', () => {
+    const initial = useColonyStore.getState()
+    const layout = addSharedDoorExpansion(initial.settlement.layout)
+    useColonyStore.setState({
+      settlement: {
+        ...initial.settlement,
+        layout,
+        constructionStockpile: { x: 12, y: 9 },
+        constructionCrew: initial.settlement.constructionCrew.map((position) => {
+          if (position.crewId === 'crew-amina-okafor') {
+            return { ...position, cell: { x: 12, y: 8 } }
+          }
+          if (position.crewId === 'crew-mateo-alvarez') {
+            return { ...position, cell: { x: 12, y: 10 } }
+          }
+          return position
+        }),
+      },
+    })
+
+    const placement = placeWorkstation(layout, {
+      id: 'blocked-life-support',
+      type: 'life-support',
+      label: 'Blocked life support',
+      origin: { x: 8, y: 8 },
+      size: { width: 2, height: 2 },
+      rotation: 0,
+    })
+    const queued = useColonyStore.getState().queueConstruction(placement)
+    expect(queued.ok).toBe(true)
+    const orderId = queued.orderIds[0]
+    const blocker = 'No walkable route from an available builder to this construction site.'
+    useColonyStore.setState((state) => ({
+      settlement: {
+        ...state.settlement,
+        constructionOrders: state.settlement.constructionOrders.map((order) => (
+          order.id === orderId
+            ? {
+                ...order,
+                status: 'blocked' as const,
+                block: { kind: 'no_path' as const, message: blocker },
+                assignedCrewId: null,
+              }
+            : order
+        )),
+      },
+    }))
+
+    render(<SettlementBuilder />)
+    inspectCell({ x: 8, y: 8 })
+
+    const inspector = screen.getByRole('region', {
+      name: 'Blocked life support blueprint inspector',
+    })
+    expect(within(inspector).getByText(blocker)).toBeVisible()
+    expect(within(inspector).getByRole('button', {
+      name: `Builder assignment unavailable. ${blocker}`,
+    })).toBeDisabled()
+    const recovery = within(inspector).getByRole('button', {
+      name: 'Activate Door designator to add exterior access',
+    })
+    expect(recovery).toHaveTextContent('Add exterior door')
+
+    fireEvent.click(recovery)
+
+    expect(screen.queryByRole('region', {
+      name: 'Blocked life support blueprint inspector',
+    })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Return to Select mode from Door' })).toBeVisible()
+    expect(document.querySelector('.construction-cursor')).toHaveStyle({
+      gridColumn: '11',
+      gridRow: '11',
+    })
+    expect(screen.getByText(/cursor is on a safe exterior wall that opens onto clear floor/i))
+      .toBeVisible()
+    expect(useColonyStore.getState().settlement.constructionOrders)
+      .toContainEqual(expect.objectContaining({ id: orderId, block: expect.objectContaining({ kind: 'no_path' }) }))
   })
 })

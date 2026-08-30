@@ -37,6 +37,19 @@ const addSecondRoom = (source: ConstructionLayout) => layoutFrom(
   paintBoundaryCell(addSecondShell(source), { x: 10, y: 2 }, 'door'),
 )
 
+const addSharedDoorExpansion = (source: ConstructionLayout) => {
+  let layout = layoutFrom(
+    paintBoundaryLine(source, { x: 7, y: 7 }, { x: 10, y: 7 }, 'wall'),
+  )
+  layout = layoutFrom(
+    paintBoundaryLine(layout, { x: 10, y: 7 }, { x: 10, y: 11 }, 'wall'),
+  )
+  layout = layoutFrom(
+    paintBoundaryLine(layout, { x: 10, y: 11 }, { x: 7, y: 11 }, 'wall'),
+  )
+  return layout
+}
+
 const installLayout = (layout: ConstructionLayout) => {
   useColonyStore.setState((state) => ({
     settlement: { ...state.settlement, layout, constructionOrders: [] },
@@ -122,6 +135,44 @@ describe('SettlementBuilder first-shift guide', () => {
     expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(0)
   })
 
+  it('asks for exterior access when a shared door leaves the expansion unreachable', () => {
+    const state = useColonyStore.getState()
+    const layout = addSharedDoorExpansion(state.settlement.layout)
+    useColonyStore.setState({
+      settlement: {
+        ...state.settlement,
+        layout,
+        constructionOrders: [],
+        constructionStockpile: { x: 12, y: 9 },
+        constructionCrew: state.settlement.constructionCrew.map((position) => {
+          if (position.crewId === 'crew-amina-okafor') {
+            return { ...position, cell: { x: 12, y: 8 } }
+          }
+          if (position.crewId === 'crew-mateo-alvarez') {
+            return { ...position, cell: { x: 12, y: 10 } }
+          }
+          return position
+        }),
+      },
+    })
+    render(<SettlementBuilder />)
+
+    expect(screen.queryByRole('button', {
+      name: 'Place Life support inside an enclosed room',
+    })).not.toBeInTheDocument()
+    const guide = screen.getByRole('button', {
+      name: 'Add an exterior door for colonist access',
+    })
+    expect(guide).toHaveTextContent('First shift · Add exterior door')
+    expect(guide).toHaveTextContent('colonists and material can reach')
+
+    fireEvent.click(guide)
+
+    expect(screen.getByRole('button', { name: 'Return to Select mode from Door' })).toBeVisible()
+    expect(constructionMap()).toHaveClass('tool-active')
+    expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(0)
+  })
+
   it('switches from Wall to Door when a closed shell only needs an entrance', () => {
     installLayout(addSecondShell(useColonyStore.getState().settlement.layout))
     render(<SettlementBuilder />)
@@ -163,7 +214,7 @@ describe('SettlementBuilder first-shift guide', () => {
       id: 'guide-life-support',
       type: 'life-support',
       label: 'Life support',
-      origin: { x: 10, y: 3 },
+      origin: { x: 12, y: 3 },
       size: { width: 2, height: 2 },
       rotation: 0,
     }))

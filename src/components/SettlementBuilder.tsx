@@ -10,8 +10,11 @@ import {
   detectRooms,
   eraseAt,
   getWorkstationCells,
+  isInConstructionBounds,
   removeWorkstation,
+  type ConstructionLayout,
   type ConstructionResult,
+  type DetectedRoom,
   type GridPoint,
   type WorkstationRotation,
 } from '../game/construction'
@@ -33,6 +36,7 @@ import {
   previewConstructionWorkerRoute,
   type RoutableConstructionOrder,
 } from '../game/constructionWorkerRouting'
+import { findConstructionPath } from '../game/constructionPathfinding'
 import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
 import type { Priority } from '../game/types'
@@ -161,6 +165,72 @@ interface ArchitectSelection {
 }
 
 const pointKey = ({ x, y }: GridPoint) => `${x}:${y}`
+
+const cardinalOffsets: readonly GridPoint[] = [
+  { x: 0, y: -1 },
+  { x: 1, y: 0 },
+  { x: 0, y: 1 },
+  { x: -1, y: 0 },
+]
+
+const distanceBetween = (left: GridPoint, right: GridPoint) =>
+  Math.abs(left.x - right.x) + Math.abs(left.y - right.y)
+
+const preferredExteriorDoorCell = ({
+  layout,
+  orders,
+  room,
+  stockpile,
+  targetCells = [],
+}: {
+  layout: ConstructionLayout
+  orders: readonly ConstructionOrder[]
+  room: DetectedRoom | null
+  stockpile: GridPoint
+  targetCells?: readonly GridPoint[]
+}): GridPoint | null => {
+  if (!room) return null
+  const roomCells = new Set(room.cells.map(pointKey))
+  const everyRoomCell = new Set(detectRooms(layout).flatMap((candidate) => (
+    candidate.cells.map(pointKey)
+  )))
+  const occupiedInterior = new Set([
+    ...layout.workstations.flatMap((workstation) => getWorkstationCells(workstation).map(pointKey)),
+    ...orders.flatMap((order) => (
+      order.status !== 'complete' && order.target.construct
+        ? order.target.cells.map(pointKey)
+        : []
+    )),
+  ])
+
+  const candidates = layout.boundaries.flatMap((boundary) => {
+    if (boundary.kind !== 'wall') return []
+    return cardinalOffsets.flatMap((offset) => {
+      const interior = { x: boundary.x + offset.x, y: boundary.y + offset.y }
+      if (!roomCells.has(pointKey(interior)) || occupiedInterior.has(pointKey(interior))) return []
+      const exterior = { x: boundary.x - offset.x, y: boundary.y - offset.y }
+      if (
+        !isInConstructionBounds(exterior, layout)
+        || everyRoomCell.has(pointKey(exterior))
+        || !findConstructionPath(layout, stockpile, [exterior])
+      ) return []
+      return [{ cell: { x: boundary.x, y: boundary.y }, interior }]
+    })
+  })
+
+  return candidates
+    .sort((left, right) => {
+      const leftDistance = targetCells.length > 0
+        ? Math.min(...targetCells.map((cell) => distanceBetween(left.interior, cell)))
+        : 0
+      const rightDistance = targetCells.length > 0
+        ? Math.min(...targetCells.map((cell) => distanceBetween(right.interior, cell)))
+        : 0
+      return leftDistance - rightDistance
+        || left.cell.y - right.cell.y
+        || left.cell.x - right.cell.x
+    })[0]?.cell ?? null
+}
 
 const materialAmount = (value: number) => {
   const rounded = Math.round(value * 10) / 10
@@ -316,40 +386,6 @@ export function SettlementBuilder({
       return !current
     })
   }, [])
-  const rooms = useMemo(() => detectRooms(layout), [layout])
-  const readyForShift = canBeginOperations(colony)
-  const wallCanBecomeRoomDoor = useMemo(() => {
-    if (rooms.length >= 2) return false
-    return layout.boundaries.some((boundary, boundaryIndex) => {
-      if (boundary.kind !== 'wall') return false
-      const candidate = {
-        ...layout,
-        boundaries: layout.boundaries.map((cell, index) => (
-          index === boundaryIndex ? { ...cell, kind: 'door' as const } : cell
-        )),
-      }
-      return detectRooms(candidate).length > rooms.length
-    })
-  }, [layout, rooms.length])
-  const hasEnclosedLifeSupport = useMemo(() => layout.workstations.some((workstation) => {
-    if (workstation.type !== 'life-support') return false
-    const cells = getWorkstationCells(workstation)
-    return rooms.some((room) => {
-      const roomCells = new Set(room.cells.map(pointKey))
-      return cells.every((cell) => roomCells.has(pointKey(cell)))
-    })
-  }), [layout.workstations, rooms])
-  const firstShiftStep = colony.settlement.phase === 'operations'
-    ? null
-    : openOrders.length > 0
-      ? 'building'
-      : rooms.length < 2
-        ? wallCanBecomeRoomDoor ? 'door' : 'room'
-        : !hasEnclosedLifeSupport
-          ? 'life-support'
-          : readyForShift
-            ? 'ready'
-            : 'building'
   const visibleCrew = useMemo(
     () => colony.settlement.phase === 'landing' ? colony.crew.slice(0, 2) : colony.crew,
     [colony.crew, colony.settlement.phase],
@@ -365,6 +401,81 @@ export function SettlementBuilder({
     },
     [colony.settlement.constructionCrew, visibleCrew],
   )
+  const rooms = useMemo(() => detectRooms(layout), [layout])
+  const reachableRoomIds = useMemo(() => {
+    const stockpile = colony.settlement.constructionStockpile
+    const crewCanReachStockpile = [...crewCells.values()].some((cell) => (
+      findConstructionPath(layout, cell, [stockpile]) !== null
+    ))
+    if (!crewCanReachStockpile) return new Set<string>()
+    return new Set(rooms
+      .filter((room) => findConstructionPath(layout, stockpile, room.cells) !== null)
+      .map((room) => room.id))
+  }, [colony.settlement.constructionStockpile, crewCells, layout, rooms])
+  const roomIdByCell = useMemo(() => new Map(
+    rooms.flatMap((room) => room.cells.map((cell) => [pointKey(cell), room.id] as const)),
+  ), [rooms])
+  const starterRoomId = useMemo(() => {
+    const starterWorkstationCells = new Set(layout.workstations
+      .filter((workstation) => workstation.id.startsWith('starter-bunk-'))
+      .flatMap((workstation) => getWorkstationCells(workstation).map(pointKey)))
+    return rooms.find((room) => (
+      room.cells.some((cell) => starterWorkstationCells.has(pointKey(cell)))
+    ))?.id ?? roomIdByCell.get('5:9') ?? null
+  }, [layout.workstations, roomIdByCell, rooms])
+  const inaccessibleExpansionRoom = rooms.find((room) => (
+    room.id !== starterRoomId && !reachableRoomIds.has(room.id)
+  )) ?? null
+  const guideAccessDoorCell = useMemo(() => preferredExteriorDoorCell({
+    layout,
+    orders: constructionOrders,
+    room: inaccessibleExpansionRoom,
+    stockpile: colony.settlement.constructionStockpile,
+  }), [
+    colony.settlement.constructionStockpile,
+    constructionOrders,
+    inaccessibleExpansionRoom,
+    layout,
+  ])
+  const hasReachableExpansionRoom = rooms.some((room) => (
+    room.id !== starterRoomId && reachableRoomIds.has(room.id)
+  ))
+  const readyForShift = canBeginOperations(colony)
+  const wallCanBecomeRoomDoor = useMemo(() => {
+    if (rooms.length >= 2) return false
+    return layout.boundaries.some((boundary, boundaryIndex) => {
+      if (boundary.kind !== 'wall') return false
+      const candidate = {
+        ...layout,
+        boundaries: layout.boundaries.map((cell, index) => (
+          index === boundaryIndex ? { ...cell, kind: 'door' as const } : cell
+        )),
+      }
+      return detectRooms(candidate).length > rooms.length
+    })
+  }, [layout, rooms.length])
+  const hasReachableEnclosedLifeSupport = useMemo(() => layout.workstations.some((workstation) => {
+    if (workstation.type !== 'life-support') return false
+    const cells = getWorkstationCells(workstation)
+    return rooms.some((room) => {
+      if (!reachableRoomIds.has(room.id)) return false
+      const roomCells = new Set(room.cells.map(pointKey))
+      return cells.every((cell) => roomCells.has(pointKey(cell)))
+    })
+  }), [layout.workstations, reachableRoomIds, rooms])
+  const firstShiftStep = colony.settlement.phase === 'operations'
+    ? null
+    : openOrders.length > 0
+      ? 'building'
+      : rooms.length < 2
+        ? wallCanBecomeRoomDoor ? 'door' : 'room'
+        : !hasReachableExpansionRoom
+          ? 'access-door'
+          : !hasReachableEnclosedLifeSupport
+            ? 'life-support'
+            : readyForShift
+              ? 'ready'
+              : 'building'
   const inspectionByCell = useMemo(() => buildMapInspection({
     width: layout.width,
     height: layout.height,
@@ -422,17 +533,61 @@ export function SettlementBuilder({
   const selectedItem = directlySelectedItem ?? (completedSelectionKey
     ? selectedTile?.contents.find((item) => item.key === completedSelectionKey) ?? null
     : null)
-  const selectedItemStats = selectedItem ? compactInspectionStats(selectedItem) : []
-  const selectedItemContext = selectedItem && (
-    selectedItem.kind === 'equipment'
-    || selectedItem.kind === 'work'
-    || selectedItem.kind === 'stockpile'
-    || selectedItem.kind === 'workstation'
-  ) ? selectedItem.detail : null
   const selectedBlueprint = selectedItem?.kind === 'blueprint'
     ? constructionOrders.find((order) => order.id === selectedItem.id) ?? null
     : null
-  const builderPickerOrder = builderPickerOrderId && selectedBlueprint?.id === builderPickerOrderId
+  const selectedItemStats = selectedItem ? compactInspectionStats(selectedItem) : []
+  const selectedItemContext = selectedBlueprint?.block
+    ? selectedItem?.detail ?? selectedBlueprint.block.message
+    : selectedItem && (
+      selectedItem.kind === 'equipment'
+      || selectedItem.kind === 'work'
+      || selectedItem.kind === 'stockpile'
+      || selectedItem.kind === 'workstation'
+    ) ? selectedItem.detail : null
+  const selectedBlueprintAssignmentBlocked = Boolean(
+    selectedBlueprint && (
+      selectedBlueprint.block?.kind === 'no_path'
+      || selectedBlueprint.block?.kind === 'target_changed'
+      || selectedBlueprint.block?.kind === 'carrier_unavailable'
+    ),
+  )
+  const selectedBlueprintAssignmentBlockLabel = selectedBlueprint?.block?.kind === 'no_path'
+    ? 'No route to this blueprint'
+    : selectedBlueprint?.block?.kind === 'target_changed'
+      ? 'Blueprint target changed'
+      : selectedBlueprint?.block?.kind === 'carrier_unavailable'
+        ? 'Material carrier unavailable'
+        : null
+  const selectedBlueprintInaccessibleRoomId = useMemo(() => {
+    if (selectedBlueprint?.block?.kind !== 'no_path') return null
+    const targetRoomIds = new Set(selectedBlueprint.target.cells
+      .map((cell) => roomIdByCell.get(pointKey(cell)))
+      .filter((roomId): roomId is string => Boolean(roomId)))
+    return targetRoomIds.size === 1
+      && selectedBlueprint.target.cells.every((cell) => roomIdByCell.has(pointKey(cell)))
+      && !reachableRoomIds.has([...targetRoomIds][0])
+      ? [...targetRoomIds][0]
+      : null
+  }, [reachableRoomIds, roomIdByCell, selectedBlueprint])
+  const selectedBlueprintNeedsAccessDoor = Boolean(selectedBlueprintInaccessibleRoomId)
+  const selectedBlueprintAccessDoorCell = useMemo(() => preferredExteriorDoorCell({
+    layout,
+    orders: constructionOrders,
+    room: rooms.find((room) => room.id === selectedBlueprintInaccessibleRoomId) ?? null,
+    stockpile: colony.settlement.constructionStockpile,
+    targetCells: selectedBlueprint?.target.cells,
+  }), [
+    colony.settlement.constructionStockpile,
+    constructionOrders,
+    layout,
+    rooms,
+    selectedBlueprint,
+    selectedBlueprintInaccessibleRoomId,
+  ])
+  const builderPickerOrder = builderPickerOrderId
+    && !selectedBlueprintAssignmentBlocked
+    && selectedBlueprint?.id === builderPickerOrderId
     ? constructionOrders.find((order) => (
         order.id === builderPickerOrderId && order.status !== 'complete'
       )) ?? null
@@ -801,7 +956,7 @@ export function SettlementBuilder({
   }
 
   const openBuilderPicker = (trigger: HTMLElement) => {
-    if (!selectedBlueprint) return
+    if (!selectedBlueprint || selectedBlueprintAssignmentBlocked) return
     setConstructionQueueOpen(false)
     setBuildOpen(false)
     setStackSnapshot(null)
@@ -886,6 +1041,21 @@ export function SettlementBuilder({
     activateTool(tool, selectedTool === tool ? rotation : 0)
   }
 
+  const activateExteriorDoor = (
+    message = 'Door ready. Replace an exterior wall beside open floor so colonists can reach the room.',
+    preferredCell: GridPoint | null = null,
+  ) => {
+    setCategory('structure')
+    activateTool('door', 0, message)
+    if (preferredCell) {
+      mapFocusRequestIdRef.current += 1
+      setMapFocusTarget({
+        cell: { ...preferredCell },
+        requestId: mapFocusRequestIdRef.current,
+      })
+    }
+  }
+
   const chooseCategory = (nextCategory: BuildCategory) => {
     setConstructionQueueOpen(false)
     setSelection(null)
@@ -966,6 +1136,15 @@ export function SettlementBuilder({
         'door',
         0,
         'Door ready. Replace one wall tile in the closed shell.',
+      )
+      return
+    }
+    if (firstShiftStep === 'access-door') {
+      activateExteriorDoor(
+        guideAccessDoorCell
+          ? 'Door ready. The cursor is on a clear exterior wall; press Enter or choose another wall beside open floor.'
+          : 'Door ready. Replace an exterior wall beside open floor so colonists and construction material can reach the expansion.',
+        guideAccessDoorCell,
       )
       return
     }
@@ -1073,14 +1252,22 @@ export function SettlementBuilder({
           icon: 'door' as const,
           title: 'First shift · Add a door',
         }
-    : firstShiftStep === 'life-support'
-      ? {
-          ariaLabel: 'Place Life support inside an enclosed room',
-          compactTitle: 'Life support',
-          detail: 'Next: Production → Life support inside an enclosed room.',
-          icon: 'lifeSupport' as const,
-          title: 'First shift · Add Life Support',
-        }
+      : firstShiftStep === 'access-door'
+        ? {
+            ariaLabel: 'Add an exterior door for colonist access',
+            compactTitle: 'Access · Door',
+            detail: 'Next: add an exterior door beside open floor so colonists and material can reach the expansion.',
+            icon: 'door' as const,
+            title: 'First shift · Add exterior door',
+          }
+        : firstShiftStep === 'life-support'
+          ? {
+              ariaLabel: 'Place Life support inside an enclosed room',
+              compactTitle: 'Life support',
+              detail: 'Next: Production → Life support inside an enclosed room.',
+              icon: 'lifeSupport' as const,
+              title: 'First shift · Add Life Support',
+            }
       : firstShiftStep === 'building'
         ? {
             ariaLabel: constructionQueue.length > 0
@@ -1383,6 +1570,24 @@ export function SettlementBuilder({
               </p>
             )}
 
+            {selectedBlueprintNeedsAccessDoor && (
+              <div className="construction-inspector-actions construction-inspector-single-action">
+                <button
+                  aria-label="Activate Door designator to add exterior access"
+                  className="construction-copy-action"
+                  onClick={() => activateExteriorDoor(
+                    selectedBlueprintAccessDoorCell
+                      ? 'Door ready. The cursor is on a safe exterior wall that opens onto clear floor; press Enter to place it.'
+                      : 'Door ready. Choose an exterior wall beside open floor, not directly behind this blueprint.',
+                    selectedBlueprintAccessDoorCell,
+                  )}
+                  type="button"
+                >
+                  <GameIcon name="door" /><span>Add exterior door</span>
+                </button>
+              </div>
+            )}
+
             {selectedBlueprint && (
               <div className="construction-builder-row">
                 <button
@@ -1397,26 +1602,36 @@ export function SettlementBuilder({
                   <span><GameIcon name="crew" /></span>
                   <span>
                     <small>Builder</small>
-                    <strong>{selectedBuilder?.name ?? 'Automatic'}</strong>
-                    <em>{selectedBlueprint.forcedCrewId
+                    <strong>{selectedBuilder?.name ?? (selectedBlueprintAssignmentBlocked ? 'Unavailable' : 'Automatic')}</strong>
+                    <em>{selectedBlueprintAssignmentBlockLabel ?? (selectedBlueprint.forcedCrewId
                       ? selectedBlueprint.assignedCrewId === selectedBlueprint.forcedCrewId
                         ? 'Assigned manually · active'
                         : 'Assigned manually · waiting'
                       : selectedBlueprint.assignedCrewId
                         ? 'Automatic · currently working'
-                        : 'Automatic · waiting for builder'}</em>
+                        : 'Automatic · waiting for builder')}</em>
                   </span>
                 </button>
                 <button
-                  aria-expanded={builderPickerOrder?.id === selectedBlueprint.id}
-                  aria-haspopup="dialog"
-                  aria-label={`${selectedBlueprint.forcedCrewId ? 'Change' : 'Assign'} builder for ${selectedItem?.label ?? 'blueprint'}`}
+                  aria-expanded={selectedBlueprintAssignmentBlocked
+                    ? undefined
+                    : builderPickerOrder?.id === selectedBlueprint.id}
+                  aria-haspopup={selectedBlueprintAssignmentBlocked ? undefined : 'dialog'}
+                  aria-label={selectedBlueprintAssignmentBlocked
+                    ? `Builder assignment unavailable. ${selectedBlueprint.block?.message ?? 'Resolve this blueprint blocker first.'}`
+                    : `${selectedBlueprint.forcedCrewId ? 'Change' : 'Assign'} builder for ${selectedItem?.label ?? 'blueprint'}`}
                   className="construction-builder-trigger"
+                  disabled={selectedBlueprintAssignmentBlocked}
                   onClick={(event) => openBuilderPicker(event.currentTarget)}
+                  title={selectedBlueprintAssignmentBlocked
+                    ? selectedBlueprint.block?.message
+                    : undefined}
                   type="button"
                 >
                   <GameIcon name={selectedBlueprint.forcedCrewId ? 'crew' : 'plus'} />
-                  <span>{selectedBlueprint.forcedCrewId ? 'Change' : 'Assign'}</span>
+                  <span>{selectedBlueprintAssignmentBlocked
+                    ? 'Blocked'
+                    : selectedBlueprint.forcedCrewId ? 'Change' : 'Assign'}</span>
                   <GameIcon name="chevron" />
                 </button>
               </div>

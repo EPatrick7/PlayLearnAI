@@ -306,7 +306,7 @@ describe('tiny-start settlement construction', () => {
     )
     const migratedV8 = await migrate!(legacyV8, 8) as MoonbaseState
     expect(migratedV8.settlement.constructionOrders[0]).toMatchObject({
-      status: 'building',
+      status: 'hauling',
       assignedCrewId: 'crew-amina-okafor',
       travelPhase: 'to_site',
       materials: {
@@ -517,6 +517,36 @@ describe('tiny-start settlement construction', () => {
     expect(state.settlement.constructionCrew.find(
       (position) => position.crewId === 'crew-mateo-alvarez',
     )?.cell).not.toEqual(target)
+    useColonyStore.getState().resetColony()
+  })
+
+  it('dispatches available non-builders as haulers beyond the automatic builder limit', () => {
+    useColonyStore.getState().resetColony()
+    const initial = useColonyStore.getState()
+    useColonyStore.setState({
+      settlement: { ...initial.settlement, phase: 'operations' },
+    })
+
+    ;[{ x: 12, y: 9 }, { x: 13, y: 9 }, { x: 14, y: 9 }].forEach((target) => {
+      const state = useColonyStore.getState()
+      const projection = projectConstructionOrders(
+        state.settlement.layout,
+        state.settlement.constructionOrders,
+      ).layout
+      expect(state.queueConstruction(paintBoundaryCell(projection, target, 'wall')).ok)
+        .toBe(true)
+    })
+
+    useColonyStore.getState().advanceConstruction(0)
+    const assignedCrewIds = useColonyStore.getState().settlement.constructionOrders
+      .map((order) => order.assignedCrewId)
+      .filter((crewId): crewId is string => Boolean(crewId))
+
+    expect(new Set(assignedCrewIds).size).toBe(3)
+    expect(assignedCrewIds.some((crewId) => ![
+      'crew-mateo-alvarez',
+      'crew-soo-jin-park',
+    ].includes(crewId))).toBe(true)
     useColonyStore.getState().resetColony()
   })
 

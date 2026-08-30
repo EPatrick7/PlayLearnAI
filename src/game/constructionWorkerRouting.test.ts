@@ -254,7 +254,7 @@ describe('construction worker routing', () => {
     })
   })
 
-  it('evacuates across contiguous blueprints when they are the only exit', () => {
+  it('allows a pawn to remain on contiguous unsupplied blueprint ghosts', () => {
     const first = wallOrder('first', { x: 1, y: 1 }, {
       status: 'blocked',
       block: { kind: 'prerequisite', message: 'Waiting.' },
@@ -281,11 +281,11 @@ describe('construction worker routing', () => {
       elapsed: 1,
     })
 
-    expect(result.crewPositions[0].cell).toEqual({ x: 3, y: 1 })
+    expect(result.crewPositions[0].cell).toEqual({ x: 1, y: 1 })
     expect(result.orders.every((order) => order.assignedCrewId === null)).toBe(true)
   })
 
-  it('evacuates a pawn before pending walls isolate its open tile', () => {
+  it('does not let an unsupplied ring of blueprint ghosts isolate a pawn', () => {
     const targets = [
       { x: 5, y: 4 },
       { x: 6, y: 5 },
@@ -307,7 +307,7 @@ describe('construction worker routing', () => {
       elapsed: 1,
     })
 
-    expect(result.crewPositions[0].cell).toEqual({ x: 5, y: 3 })
+    expect(result.crewPositions[0].cell).toEqual({ x: 5, y: 5 })
     expect(result.orders.every((order) => order.assignedCrewId === null)).toBe(true)
   })
 
@@ -358,6 +358,8 @@ describe('construction worker routing', () => {
         assignedCrewId: 'expert',
         travelPhase: 'to_site',
         priority: 1,
+        status: 'building',
+        materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
       }),
       forcedCrewId: 'alpha',
     }
@@ -389,7 +391,10 @@ describe('construction worker routing', () => {
 
   it('keeps an unavailable forced worker pending instead of falling back', () => {
     const forced = {
-      ...wallOrder('forced', { x: 5, y: 1 }),
+      ...wallOrder('forced', { x: 5, y: 1 }, {
+        status: 'building',
+        materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
+      }),
       forcedCrewId: 'beta',
     }
     const positions = [
@@ -431,6 +436,80 @@ describe('construction worker routing', () => {
       forcedCrewId: 'beta',
       assignedCrewId: 'beta',
     })
+  })
+
+  it('lets a hauler supply forced work but reserves construction for the forced builder', () => {
+    const forced = {
+      ...wallOrder('forced', { x: 5, y: 1 }),
+      forcedCrewId: 'builder',
+    }
+    const workers = [
+      { id: 'hauler', canConstruct: false, canHaul: true, dispatchPriority: 5 },
+      { id: 'builder', canConstruct: true, canHaul: false, dispatchPriority: 1 },
+    ]
+    const crewPositions = [
+      { crewId: 'hauler', cell: { x: 0, y: 1 }, moveCredit: 0 },
+      { crewId: 'builder', cell: { x: 0, y: 2 }, moveCredit: 0 },
+    ]
+
+    const hauling = advanceConstructionWorkerRouting({
+      layout: createConstructionLayout(),
+      orders: [forced],
+      crewPositions,
+      workers,
+      stockpile: { x: 1, y: 1 },
+      elapsed: 0,
+    })
+    expect(hauling.orders[0]).toMatchObject({
+      forcedCrewId: 'builder',
+      assignedCrewId: 'hauler',
+      travelPhase: 'to_stockpile',
+    })
+
+    const supplied = {
+      ...hauling.orders[0],
+      status: 'building' as const,
+      assignedCrewId: null,
+      travelPhase: 'idle' as const,
+      materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
+    }
+    const building = advanceConstructionWorkerRouting({
+      layout: createConstructionLayout(),
+      orders: [supplied],
+      crewPositions: hauling.crewPositions,
+      workers,
+      stockpile: { x: 1, y: 1 },
+      elapsed: 0,
+    })
+    expect(building.orders[0]).toMatchObject({
+      forcedCrewId: 'builder',
+      assignedCrewId: 'builder',
+      travelPhase: 'to_site',
+    })
+  })
+
+  it('gives the only available hauler to the highest-priority material job', () => {
+    const routine = wallOrder('routine', { x: 5, y: 1 }, { priority: 1 })
+    const urgent = wallOrder('urgent', { x: 7, y: 1 }, { priority: 5, sequence: 2 })
+    const result = advanceConstructionWorkerRouting({
+      layout: createConstructionLayout(),
+      orders: [routine, urgent],
+      crewPositions: [
+        { crewId: 'hauler', cell: { x: 0, y: 1 }, moveCredit: 0 },
+        { crewId: 'builder', cell: { x: 0, y: 2 }, moveCredit: 0 },
+      ],
+      workers: [
+        { id: 'hauler', canConstruct: false, canHaul: true },
+        { id: 'builder', canConstruct: true, canHaul: false },
+      ],
+      stockpile: { x: 1, y: 1 },
+      elapsed: 0,
+    })
+
+    expect(result.orders.find((order) => order.id === 'urgent')?.assignedCrewId)
+      .toBe('hauler')
+    expect(result.orders.find((order) => order.id === 'routine')?.assignedCrewId)
+      .toBeNull()
   })
 
   it('dispatches the best construction worker before alphabetical crew order', () => {

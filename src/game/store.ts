@@ -204,6 +204,11 @@ const eligibleConstructionWorkers = (state: MoonbaseState) =>
     }))
 
 const spatialConstructionWorkers = (state: MoonbaseState) => {
+  const availableCrewIds = new Set(
+    visibleConstructionCrew(state)
+      .filter((member) => !constructionCrewUnavailableReason(state, member.id))
+      .map((member) => member.id),
+  )
   const eligibleById = new Map(
     eligibleConstructionWorkers(state).map((worker, index) => [
       worker.id,
@@ -222,10 +227,12 @@ const spatialConstructionWorkers = (state: MoonbaseState) => {
     return {
       id: member.id,
       canConstruct: Boolean(eligible || manuallyEligible),
+      canHaul: availableCrewIds.has(member.id),
       dispatchPriority: eligible?.dispatchPriority ?? 0,
       engineeringRate: eligible?.engineeringRate ??
         0.32 + member.skills.engineering * 0.035,
       haulingRate: eligible?.haulingRate ?? 0.75,
+      carryCapacity: 1 + Math.floor(member.skills.operations / 5),
       movementRate: 1.8 + member.skills.operations * 0.04,
     }
   })

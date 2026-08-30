@@ -242,7 +242,7 @@ const startOperations = () => {
     id: 'life-support-1',
     type: 'life-support',
     label: 'Life support',
-    origin: { x: 10, y: 3 },
+    origin: { x: 12, y: 3 },
     size: { width: 2, height: 2 },
     rotation: 0,
   }))
@@ -750,6 +750,188 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('button', { name: 'Undo last construction order' })).toBeVisible()
   })
 
+  it('keeps a landing wall visible through assignment, hauling, building, and completion', () => {
+    vi.useFakeTimers()
+    try {
+      renderFreshApp()
+      const target = { x: 16, y: 9 }
+      const initialCrewCells = new Map(
+        useColonyStore.getState().settlement.constructionCrew.map((position) => [
+          position.crewId,
+          { ...position.cell },
+        ]),
+      )
+
+      selectTool('Structure', /^Wall/i)
+      clickConstructionCell(target)
+
+      const orderId = useColonyStore.getState().settlement.constructionOrders.at(-1)?.id
+      if (!orderId) throw new Error('The landing wall did not create a construction order.')
+      const currentOrder = () => useColonyStore.getState().settlement.constructionOrders.find(
+        (order) => order.id === orderId,
+      )
+      const currentWorker = (crewId: string) => useColonyStore.getState()
+        .settlement.constructionCrew.find((position) => position.crewId === crewId)
+      const advanceUntil = (
+        label: string,
+        predicate: (order: NonNullable<ReturnType<typeof currentOrder>>) => boolean,
+      ) => {
+        for (let tick = 0; tick < 240; tick += 1) {
+          const order = currentOrder()
+          if (order && predicate(order)) return order
+          act(() => vi.advanceTimersByTime(180))
+        }
+        throw new Error(`Construction did not reach ${label}.`)
+      }
+      const blueprint = () => constructionMap().querySelector<HTMLElement>(
+        `[data-construction-order-id="${orderId}"]`,
+      )
+
+      expect(useColonyStore.getState().settlement.phase).toBe('landing')
+      expect(useColonyStore.getState().settlement.layout.boundaries)
+        .not.toContainEqual({ ...target, kind: 'wall' })
+      expect(blueprint()).toBeVisible()
+      expect(blueprint()).toHaveAccessibleName(/Wall blueprint, Paused, 0 percent/i)
+
+      cancelConstructionToolWithSecondaryClick(94)
+      clickConstructionCell(target, 95)
+      const blueprintInspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })
+      expect(blueprintInspector).toHaveTextContent('Blueprint · Paused · P3')
+      expect(blueprintInspector).toHaveTextContent('Progress0%')
+      expect(blueprintInspector).toHaveTextContent(
+        '0 / 1 supplied · 1 reserved at pallet',
+      )
+      expect(blueprintInspector).toHaveTextContent('BuilderAutomatic')
+      expect(blueprintInspector).toHaveTextContent('Automatic · waiting for builder')
+
+      fireEvent.click(screen.getByRole('button', { name: '1 times construction speed' }))
+      const collectingOrder = advanceUntil(
+        'worker assignment',
+        (order) => Boolean(order.assignedCrewId) && order.travelPhase === 'to_stockpile',
+      )
+      const builderId = collectingOrder.assignedCrewId!
+      const builderName = useColonyStore.getState().crew.find(
+        (member) => member.id === builderId,
+      )?.name
+      if (!builderName) throw new Error('The assigned construction worker was not found.')
+
+      let worker = constructionMap().querySelector<HTMLElement>(
+        `[data-crew-id="${builderId}"]`,
+      )
+      expect(worker).toBeVisible()
+      expect(worker).toHaveAttribute('data-order-id', orderId)
+      expect(worker).toHaveAttribute('data-construction-worker-state', 'collecting-material')
+      expect(worker).toHaveAccessibleName(
+        new RegExp(`${builderName}, Collecting material, Wall`, 'i'),
+      )
+      expect(worker?.querySelector('.construction-worker-task')).toBeVisible()
+      expect(blueprint()).toHaveAccessibleName(/Wall blueprint, Collecting material/i)
+      expect(blueprintInspector).toHaveTextContent('Blueprint · Collecting material · P3')
+      expect(blueprintInspector).toHaveTextContent(`Builder${builderName}`)
+      expect(blueprintInspector).toHaveTextContent('Automatic · currently working')
+
+      const initialBuilderCell = initialCrewCells.get(builderId)
+      if (!initialBuilderCell) throw new Error('The assigned worker had no initial map position.')
+      const carryingOrder = advanceUntil('visible material carry', (order) => {
+        if (order.travelPhase !== 'to_site' || (order.materials.carried ?? 0) <= 0) return false
+        const position = currentWorker(builderId)
+        return Boolean(position && (
+          position.cell.x !== initialBuilderCell.x || position.cell.y !== initialBuilderCell.y
+        ))
+      })
+      const carryingCell = currentWorker(builderId)?.cell
+      if (!carryingCell) throw new Error('The carrying worker had no map position.')
+
+      worker = constructionMap().querySelector<HTMLElement>(`[data-crew-id="${builderId}"]`)
+      expect(worker).toHaveAttribute('data-construction-worker-state', 'walking-to-site')
+      expect(worker).toHaveClass('worker-carrying')
+      expect(worker).toHaveAttribute('data-grid-x', `${carryingCell.x}`)
+      expect(worker).toHaveAttribute('data-grid-y', `${carryingCell.y}`)
+      expect(worker).toHaveAccessibleName(/Walking to site.*carrying 1 material/i)
+      expect(worker?.querySelector('.construction-worker-cargo')).toHaveTextContent('1')
+      expect(carryingOrder.materials).toMatchObject({
+        carried: 1,
+        carriedByCrewId: builderId,
+        delivered: 0,
+      })
+      expect(blueprint()).toHaveAccessibleName(/Wall blueprint, Walking to site, 35 percent/i)
+      expect(blueprintInspector).toHaveTextContent('Blueprint · Walking to site · P3')
+      expect(blueprintInspector).toHaveTextContent('Progress35%')
+      expect(useColonyStore.getState().settlement.layout.boundaries)
+        .not.toContainEqual({ ...target, kind: 'wall' })
+
+      const buildingOrder = advanceUntil(
+        'timed building work',
+        (order) => order.status === 'building' &&
+          order.work.completed > 0 && order.work.completed < order.work.required,
+      )
+      worker = constructionMap().querySelector<HTMLElement>(`[data-crew-id="${builderId}"]`)
+      const buildingX = Number(worker?.dataset.gridX)
+      const buildingY = Number(worker?.dataset.gridY)
+      expect(worker).toHaveAttribute('data-construction-worker-state', 'building')
+      expect(worker).not.toHaveClass('worker-carrying')
+      expect(worker?.querySelector('.construction-worker-cargo')).not.toBeInTheDocument()
+      expect(Math.abs(buildingX - target.x) + Math.abs(buildingY - target.y)).toBe(1)
+      expect(blueprint()).toHaveAccessibleName(/Wall blueprint, Building/i)
+      expect(useColonyStore.getState().settlement.layout.boundaries)
+        .not.toContainEqual({ ...target, kind: 'wall' })
+      expect(buildingOrder.materials).toMatchObject({ delivered: 1, carried: 0 })
+
+      const progressValue = blueprintInspector.querySelector<HTMLElement>(
+        '[data-stat-label="Progress"] strong',
+      )
+      const visibleProgress = Number(progressValue?.textContent?.replace('%', ''))
+      expect(visibleProgress).toBeGreaterThan(35)
+      expect(visibleProgress).toBeLessThan(100)
+      expect(blueprint()).toHaveAccessibleName(
+        new RegExp(`Wall blueprint, Building, ${visibleProgress} percent`, 'i'),
+      )
+      expect(blueprint()?.querySelector('.construction-job-progress > i'))
+        .toHaveStyle({ width: `${visibleProgress}%` })
+      expect(blueprintInspector).toHaveTextContent('Blueprint · Building · P3')
+
+      const completedOrder = advanceUntil('completion', (order) => order.status === 'complete')
+      expect(completedOrder).toMatchObject({
+        assignedCrewId: null,
+        status: 'complete',
+        travelPhase: 'idle',
+        materials: { delivered: 1, carried: 0, carriedByCrewId: null },
+        work: { completed: 1 },
+      })
+      expect(blueprint()).not.toBeInTheDocument()
+      expect(constructionMap().querySelector(
+        `[data-tile-kind="wall"][data-grid-x="${target.x}"][data-grid-y="${target.y}"]`,
+      )).toBeVisible()
+      expect(screen.queryByRole('region', { name: 'Wall blueprint inspector' }))
+        .not.toBeInTheDocument()
+      const completedInspector = screen.getByRole('region', {
+        name: 'Composite wall inspector',
+      })
+      expect(completedInspector).toHaveTextContent('Structure · Isolated')
+      expect(completedInspector).toHaveTextContent('ConnectionIsolated')
+      expect(document.querySelector('.construction-selection-cell')).toHaveAttribute(
+        'data-grid-x',
+        `${target.x}`,
+      )
+      expect(document.querySelector('.construction-selection-cell')).toHaveAttribute(
+        'data-grid-y',
+        `${target.y}`,
+      )
+
+      worker = constructionMap().querySelector<HTMLElement>(`[data-crew-id="${builderId}"]`)
+      expect(worker).not.toHaveAttribute('data-order-id')
+      expect(worker).not.toHaveAttribute('data-construction-worker-state')
+      expect(worker?.querySelector('.construction-worker-task')).not.toBeInTheDocument()
+      expect(worker?.querySelector('.construction-worker-cargo')).not.toBeInTheDocument()
+      expect(useColonyStore.getState().reserves.constructionStock).toBe(13)
+      expect(document.querySelector('.construction-toast')).toHaveTextContent(
+        `1 wall completed by ${builderName}.`,
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 15000)
+
   it('opens the current tile inspector from the keyboard in select mode', () => {
     renderFreshApp()
     const map = constructionMap()
@@ -1113,7 +1295,7 @@ describe('freeform settlement builder', () => {
       id: 'life-support-1',
       type: 'life-support',
       label: 'Life support',
-      origin: { x: 10, y: 3 },
+      origin: { x: 12, y: 3 },
       size: { width: 2, height: 2 },
       rotation: 0,
     }))
@@ -1159,7 +1341,7 @@ describe('freeform settlement builder', () => {
       height: 6,
     })
     expect(operations.modules.find((module) => module.id === 'module-life-support')?.position).toEqual({
-      x: 10,
+      x: 12,
       y: 3,
       width: 2,
       height: 2,
@@ -1570,7 +1752,7 @@ describe('freeform settlement builder', () => {
   it('indexes every covered workstation cell and supports roving tile focus', () => {
     const map = startOperations()
     const workstationCell = map.querySelector<HTMLButtonElement>(
-      '[data-map-cell][data-grid-x="10"][data-grid-y="4"]',
+      '[data-map-cell][data-grid-x="12"][data-grid-y="4"]',
     )
     if (!workstationCell) throw new Error('Missing a covered life-support tile.')
     expect(workstationCell).toHaveAccessibleName(/Life support/i)

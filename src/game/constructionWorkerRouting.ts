@@ -27,9 +27,13 @@ export interface ConstructionCrewPosition {
 export interface ConstructionRoutingWorker {
   id: string
   canConstruct?: boolean
+  /** Defaults to the legacy construction eligibility when omitted. */
+  canHaul?: boolean
   movementRate?: number
   /** Higher values receive newly available jobs first. */
   dispatchPriority?: number
+  /** Optional hauling-specific override for dispatch ordering. */
+  haulingPriority?: number
 }
 
 export type RoutableConstructionOrder = ConstructionOrder & {
@@ -79,6 +83,21 @@ const compareOrders = (left: ConstructionOrder, right: ConstructionOrder) =>
 
 const finiteNonnegative = (value: number) =>
   Number.isFinite(value) ? Math.max(0, value) : 0
+
+const workerCanConstruct = (worker: ConstructionRoutingWorker) =>
+  worker.canConstruct !== false
+
+const workerCanHaul = (worker: ConstructionRoutingWorker) =>
+  worker.canHaul ?? workerCanConstruct(worker)
+
+const workerDispatchPriority = (
+  worker: ConstructionRoutingWorker,
+  phase: ConstructionTravelPhase,
+) => finiteNonnegative(
+  phase === 'to_stockpile'
+    ? worker.haulingPriority ?? worker.dispatchPriority ?? 0
+    : worker.dispatchPriority ?? 0,
+)
 
 const cloneOrder = (order: RoutableConstructionOrder): RoutableConstructionOrder => ({
   ...order,
@@ -381,10 +400,37 @@ const initialTravelPhase = (order: ConstructionOrder): ConstructionTravelPhase =
     ? 'to_site'
     : 'to_stockpile'
 
+const workerEligibleForPhase = (
+  worker: ConstructionRoutingWorker,
+  order: ConstructionOrder,
+  phase: ConstructionTravelPhase,
+) => {
+  if (carriedConstructionMaterial(order) > MOVEMENT_EPSILON) return workerCanHaul(worker)
+  if (phase === 'to_stockpile') return workerCanHaul(worker)
+  return workerCanConstruct(worker) && (
+    !order.forcedCrewId || order.forcedCrewId === worker.id
+  )
+}
+
 const unfinishedConstructCells = (
   orders: readonly RoutableConstructionOrder[],
 ) => orders
   .filter((order) => order.status !== 'complete' && Boolean(order.target.construct))
+  .flatMap((order) => order.target.cells.map(clonePoint))
+
+const solidifyingConstructCells = (
+  orders: readonly RoutableConstructionOrder[],
+) => orders
+  .filter((order) => {
+    const becomesSolid = order.target.kind === 'workstation'
+      ? Boolean(order.target.construct)
+      : order.target.construct?.kind === 'wall'
+    return (
+      order.status !== 'complete' &&
+      becomesSolid &&
+      order.materials.delivered + MOVEMENT_EPSILON >= order.materials.required
+    )
+  })
   .flatMap((order) => order.target.cells.map(clonePoint))
 
 const workerMovementRate = (worker: ConstructionRoutingWorker) => {
@@ -450,22 +496,26 @@ export const previewConstructionWorkerRoute = ({
   stockpile: GridPoint
   crewCell: GridPoint
 }): ConstructionWorkerRoutePreview => {
-  const transientBlockedCells = unfinishedConstructCells(orders)
+  const pendingConstructCells = unfinishedConstructCells(orders)
+  const routeBlockedCells = solidifyingConstructCells(orders)
   const normalizedStockpile = normalizeConstructionStockpile(
     layout,
     stockpile,
     undefined,
-    transientBlockedCells,
+    pendingConstructCells,
   )
   const phase = carriedConstructionMaterial(order) > MOVEMENT_EPSILON
     ? order.travelPhase === 'at_site' ? 'at_site' : 'to_site'
     : initialTravelPhase(order)
-  const routeOptions = { transientBlockedCells }
+  // Unsupplied ghosts stay walkable. Once a solid target is fully staged it
+  // becomes a routing obstacle while the existing occupancy guard prevents
+  // completion beneath a colonist who still needs to step clear.
+  const routeOptions = { transientBlockedCells: routeBlockedCells }
   if (phase === 'at_site' && routeStillAtSite(
     layout,
     crewCell,
     order,
-    transientBlockedCells,
+    routeBlockedCells,
   )) {
     return { reachable: true, phase, steps: 0, path: [clonePoint(crewCell)] }
   }
@@ -532,25 +582,23 @@ export const advanceConstructionWorkerRouting = (
 ): ConstructionRoutingResult => {
   const elapsed = finiteNonnegative(input.elapsed)
   const orders = input.orders.map(cloneOrder)
-  const transientBlockedCells = unfinishedConstructCells(orders)
+  const pendingConstructCells = unfinishedConstructCells(orders)
+  const routeBlockedCells = solidifyingConstructCells(orders)
   const stockpile = input.stockpileIsNormalized
     ? clonePoint(input.stockpile)
     : normalizeConstructionStockpile(
         input.layout,
         input.stockpile,
         undefined,
-        transientBlockedCells,
+        pendingConstructCells,
       )
   const workers = [...input.workers]
     .filter((worker, index, source) =>
       Boolean(worker.id.trim()) && source.findIndex((candidate) => candidate.id === worker.id) === index,
     )
     .sort((left, right) => compareIds(left.id, right.id))
-  const eligibleWorkerIds = new Set(
-    workers.filter((worker) => worker.canConstruct !== false).map((worker) => worker.id),
-  )
   const statusByOrderId = new Map(orders.map((order) => [order.id, order.status]))
-  const routeOptions = { transientBlockedCells }
+  const routeOptions = { transientBlockedCells: routeBlockedCells }
   const crewPositions = normalizeConstructionCrewPositions(
     input.layout,
     workers,
@@ -571,11 +619,10 @@ export const advanceConstructionWorkerRouting = (
     })
   const forcedWorkerIds = new Set(forcedOrderByCrewId.keys())
 
-  // Any pawn caught inside reserved footprints exits before normal dispatch.
-  // The emergency route may cross other still-passable blueprints, but its
-  // destination is always outside every pending footprint. Occupancy checks in
-  // the simulation keep those traversed targets from solidifying underneath it.
-  const topology = constructionRoutingTopology(input.layout, transientBlockedCells)
+  // Ghosts remain walkable until their material is staged. A pawn inside a
+  // supplied solid footprint exits before normal dispatch, and the simulation's
+  // occupancy check remains the final guard against solidifying beneath it.
+  const topology = constructionRoutingTopology(input.layout, solidifyingConstructCells(orders))
   const stableCells = topology.stableCells
   const stableCellKeys = topology.stableCellKeys
   const evacuatingCrewIds = new Set<string>()
@@ -607,7 +654,8 @@ export const advanceConstructionWorkerRouting = (
   })
 
   // Invalid, duplicate, ineligible, or stranded assignments are released first.
-  // A released job can then be offered to another builder with a valid route.
+  // Hauling and construction are separate capabilities; cargo nevertheless
+  // remains physically bound to its current carrier until it is unloaded.
   const claimedCrewIds = new Set<string>()
   orders
     .sort((left, right) => left.sequence - right.sequence || compareIds(left.id, right.id))
@@ -618,6 +666,7 @@ export const advanceConstructionWorkerRouting = (
         : null
       const crewId = carrierId ?? order.assignedCrewId
       const position = crewId ? positionByCrewId.get(crewId) : undefined
+      const worker = crewId ? workerById.get(crewId) : undefined
       const phase = carrierId
         ? order.travelPhase === 'at_site' ? 'at_site' : 'to_site'
         : order.travelPhase === 'idle'
@@ -633,13 +682,14 @@ export const advanceConstructionWorkerRouting = (
             input.layout,
             position.cell,
             order,
-            transientBlockedCells,
+            routeBlockedCells,
           ),
         )
         if (
           claimedCrewIds.has(carrierId) ||
           !position ||
-          (!eligibleWorkerIds.has(carrierId) && !canUnloadAtSite)
+          !worker ||
+          (!workerCanHaul(worker) && !canUnloadAtSite)
         ) {
           order.status = 'blocked'
           order.block = {
@@ -657,7 +707,10 @@ export const advanceConstructionWorkerRouting = (
           statusByOrderId.set(order.id, order.status)
           return
         }
-        order.status = 'building'
+        order.status = order.materials.delivered + MOVEMENT_EPSILON >=
+          order.materials.required
+            ? 'building'
+            : 'hauling'
         order.block = null
         statusByOrderId.set(order.id, order.status)
         if (!workerCanReachOrder(
@@ -666,7 +719,7 @@ export const advanceConstructionWorkerRouting = (
           position.cell,
           order,
           phase,
-          transientBlockedCells,
+          routeBlockedCells,
         )) {
           noPathOrderIds.push(order.id)
         }
@@ -675,10 +728,9 @@ export const advanceConstructionWorkerRouting = (
       const forcedOrder = crewId ? forcedOrderByCrewId.get(crewId) : null
       if (
         !crewId ||
-        (order.forcedCrewId !== null && order.forcedCrewId !== undefined &&
-          order.forcedCrewId !== crewId) ||
         (forcedOrder && forcedOrder.id !== order.id) ||
-        !eligibleWorkerIds.has(crewId) ||
+        !worker ||
+        !workerEligibleForPhase(worker, order, phase) ||
         claimedCrewIds.has(crewId) ||
         !orderCanRoute(order, statusByOrderId) ||
         !position ||
@@ -688,7 +740,7 @@ export const advanceConstructionWorkerRouting = (
           position.cell,
           order,
           phase,
-          transientBlockedCells,
+          routeBlockedCells,
         )
       ) {
         order.assignedCrewId = null
@@ -699,49 +751,72 @@ export const advanceConstructionWorkerRouting = (
       order.travelPhase = phase
     })
 
-  const availableWorkers = [...workers]
+  const sortedCandidates = (
+    order: RoutableConstructionOrder,
+    phase: ConstructionTravelPhase,
+    include: (worker: ConstructionRoutingWorker) => boolean,
+  ) => workers
     .filter((worker) => (
-      eligibleWorkerIds.has(worker.id) &&
+      include(worker) &&
       !claimedCrewIds.has(worker.id) &&
-      !forcedWorkerIds.has(worker.id) &&
-      !evacuatingCrewIds.has(worker.id)
+      !evacuatingCrewIds.has(worker.id) &&
+      workerEligibleForPhase(worker, order, phase)
     ))
     .sort((left, right) =>
-      finiteNonnegative(right.dispatchPriority ?? 0) -
-        finiteNonnegative(left.dispatchPriority ?? 0) ||
+      workerDispatchPriority(right, phase) - workerDispatchPriority(left, phase) ||
       compareIds(left.id, right.id),
     )
 
-  // A player-prioritized pawn is reserved for exactly that blueprint. The
-  // durable forcedCrewId survives temporary ineligibility and route failures;
-  // no automatic worker silently substitutes for the requested colonist.
-  ;[...forcedOrderByCrewId.values()]
-    .filter((order) => !order.assignedCrewId && orderCanRoute(order, statusByOrderId))
-    .sort(compareOrders)
-    .forEach((order) => {
-      const crewId = order.forcedCrewId!
-      if (
-        !eligibleWorkerIds.has(crewId) ||
-        claimedCrewIds.has(crewId) ||
-        evacuatingCrewIds.has(crewId)
-      ) return
-      const position = positionByCrewId.get(crewId)
-      if (!position) return
-      const phase = initialTravelPhase(order)
-      if (!workerCanReachOrder(
+  const claimReachableWorker = (
+    order: RoutableConstructionOrder,
+    phase: ConstructionTravelPhase,
+    candidates: readonly ConstructionRoutingWorker[],
+  ) => {
+    const worker = candidates.find((candidate) => {
+      const position = positionByCrewId.get(candidate.id)
+      return Boolean(position && workerCanReachOrder(
         input.layout,
         stockpile,
         position.cell,
         order,
         phase,
-        transientBlockedCells,
-      )) {
-        noPathOrderIds.push(order.id)
-        return
+        routeBlockedCells,
+      ))
+    })
+    if (!worker) {
+      if (candidates.length > 0) noPathOrderIds.push(order.id)
+      return false
+    }
+    order.assignedCrewId = worker.id
+    order.travelPhase = phase
+    claimedCrewIds.add(worker.id)
+    return true
+  }
+
+  // Forced intent controls who performs construction, while any eligible
+  // hauler may stage its material. The forced builder remains reserved from
+  // unrelated automatic jobs and is the fallback carrier when working alone.
+  ;[...forcedOrderByCrewId.values()]
+    .filter((order) => !order.assignedCrewId && orderCanRoute(order, statusByOrderId))
+    .sort(compareOrders)
+    .forEach((order) => {
+      const phase = initialTravelPhase(order)
+      const forcedCrewId = order.forcedCrewId!
+      const candidates = sortedCandidates(
+        order,
+        phase,
+        phase === 'to_stockpile'
+          ? (worker) => !forcedWorkerIds.has(worker.id) || worker.id === forcedCrewId
+          : (worker) => worker.id === forcedCrewId,
+      )
+      if (phase === 'to_stockpile') {
+        candidates.sort((left, right) =>
+          Number(left.id === forcedCrewId) - Number(right.id === forcedCrewId) ||
+          workerDispatchPriority(right, phase) - workerDispatchPriority(left, phase) ||
+          compareIds(left.id, right.id),
+        )
       }
-      order.assignedCrewId = crewId
-      order.travelPhase = phase
-      claimedCrewIds.add(crewId)
+      claimReachableWorker(order, phase, candidates)
     })
 
   orders
@@ -752,27 +827,13 @@ export const advanceConstructionWorkerRouting = (
     ))
     .sort(compareOrders)
     .forEach((order) => {
-      if (availableWorkers.length === 0) return
       const phase = initialTravelPhase(order)
-      const workerIndex = availableWorkers.findIndex((candidate) => {
-        const position = positionByCrewId.get(candidate.id)
-        return Boolean(position && workerCanReachOrder(
-          input.layout,
-          stockpile,
-          position.cell,
-          order,
-          phase,
-          transientBlockedCells,
-        ))
-      })
-      if (workerIndex < 0) {
-        noPathOrderIds.push(order.id)
-        return
-      }
-      const [worker] = availableWorkers.splice(workerIndex, 1)
-      order.assignedCrewId = worker.id
-      order.travelPhase = phase
-      claimedCrewIds.add(worker.id)
+      const candidates = sortedCandidates(
+        order,
+        phase,
+        (worker) => !forcedWorkerIds.has(worker.id),
+      )
+      claimReachableWorker(order, phase, candidates)
     })
 
   const atSiteWorkers: ConstructionAtSiteWorker[] = []
@@ -802,7 +863,7 @@ export const advanceConstructionWorkerRouting = (
           input.layout,
           cell,
           order,
-          transientBlockedCells,
+          routeBlockedCells,
         )) {
           phase = 'to_site'
         }
