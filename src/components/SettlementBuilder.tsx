@@ -18,7 +18,6 @@ import {
 import {
   availableConstructionStock,
   projectConstructionOrders,
-  type ConstructionOrder,
 } from '../game/constructionJobs'
 import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
@@ -119,6 +118,9 @@ const instructionFor = (tool: ConstructionTool | null) => {
 }
 
 interface SettlementBuilderProps {
+  constructionCompletionSummary?: string | null
+  constructionCompletionToast?: string | null
+  onConstructionQueued?: () => void
   onExit?: () => void
 }
 
@@ -132,30 +134,6 @@ const pointKey = ({ x, y }: GridPoint) => `${x}:${y}`
 const materialAmount = (value: number) => {
   const rounded = Math.round(value * 10) / 10
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
-}
-
-const constructionCompletionSubject = (order: ConstructionOrder) => {
-  if (order.target.kind === 'boundary') {
-    const boundary = order.target.construct ?? order.target.deconstruct
-    const subject = boundary?.kind === 'door' ? 'door' : 'wall'
-    return order.operation === 'deconstruct' ? `${subject} removal` : subject
-  }
-  const workstation = order.target.construct ?? order.target.deconstruct
-  const subject = workstation?.label.toLowerCase() ?? 'workstation'
-  return order.operation === 'deconstruct' ? `${subject} removal` : subject
-}
-
-const completedConstructionMessage = (
-  completedOrders: readonly ConstructionOrder[],
-  builderNames: readonly string[],
-) => {
-  const subjects = completedOrders.map(constructionCompletionSubject)
-  const oneSubject = subjects.length > 0 && subjects.every((subject) => subject === subjects[0])
-  const completedLabel = oneSubject
-    ? `${subjects.length} ${subjects[0]}${subjects.length === 1 ? '' : 's'}`
-    : `${subjects.length} ${subjects.length === 1 ? 'blueprint' : 'blueprints'}`
-  const builders = [...new Set(builderNames)]
-  return `${completedLabel} completed${builders.length > 0 ? ` by ${builders.join(' + ')}` : ''}.`
 }
 
 const toolMaterialCost = (tool: ConstructionTool) => {
@@ -220,7 +198,12 @@ const inspectionHeaderLine = (item: MapInspectable) => {
   return [item.subtitle, role].filter(Boolean).join(' · ')
 }
 
-export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
+export function SettlementBuilder({
+  constructionCompletionSummary = null,
+  constructionCompletionToast = null,
+  onConstructionQueued,
+  onExit,
+}: SettlementBuilderProps) {
   const colony = useColonyStore()
   const layout = colony.settlement.layout
   const constructionOrders = colony.settlement.constructionOrders
@@ -258,17 +241,12 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const [rotation, setRotation] = useState<WorkstationRotation>(0)
   const [announcement, setAnnouncement] = useState('Build freely. Rooms are enclosed shapes with at least one door.')
   const [toastVisible, setToastVisible] = useState(false)
-  const [lastCompletionSummary, setLastCompletionSummary] = useState<string | null>(null)
   const simulationSpeed = colony.settlement.constructionSpeed
   const [undoCount, setUndoCount] = useState(0)
   const [selection, setSelection] = useState<ArchitectSelection | null>(null)
   const [stackSnapshot, setStackSnapshot] = useState<MapTileInspection | null>(null)
   const [stackTrigger, setStackTrigger] = useState<HTMLElement | null>(null)
   const undoStack = useRef<string[]>([])
-  const completionReceipt = useRef(new Map<string, {
-    order: ConstructionOrder
-    builderName: string | null
-  }>())
   const rooms = useMemo(() => detectRooms(layout), [layout])
   const readyForShift = canBeginOperations(colony)
   const visibleCrew = useMemo(
@@ -441,8 +419,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
       return
     }
     if (queued.commandId && queued.orderIds.length > 0) {
-      completionReceipt.current.clear()
-      setLastCompletionSummary(null)
+      onConstructionQueued?.()
       undoStack.current = [...undoStack.current.slice(-19), queued.commandId]
       setUndoCount(undoStack.current.length)
       const blockedCount = queued.blockedOrderIds?.length ?? 0
@@ -575,6 +552,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const resetSettlement = () => {
     if (!window.confirm('Start over with the tiny landing habitat?')) return
     colony.resetColony()
+    onConstructionQueued?.()
     undoStack.current = []
     setUndoCount(0)
     setBuildOpen(false)
@@ -589,41 +567,6 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     const result = colony.beginOperations()
     if (!result.ok) announce(result.error ?? 'The settlement is not ready yet.')
   }
-
-  useEffect(() => {
-    if (simulationSpeed === 0 || openOrders.length === 0) return
-    const interval = window.setInterval(() => {
-      const state = useColonyStore.getState()
-      const speed = state.settlement.constructionSpeed
-      if (speed === 0) return
-      const orderContext = new Map(state.settlement.constructionOrders.map((order) => [
-        order.id,
-        {
-          order,
-          builderName: order.assignedCrewId
-            ? state.crew.find((member) => member.id === order.assignedCrewId)?.name ?? null
-            : null,
-        },
-      ]))
-      const advanced = state.advanceConstruction(speed * 0.135)
-      if (advanced.completedOrderIds.length === 0) return
-      advanced.completedOrderIds.forEach((orderId) => {
-        const context = orderContext.get(orderId)
-        if (context) completionReceipt.current.set(orderId, context)
-      })
-      const completedContexts = [...completionReceipt.current.values()]
-      if (completedContexts.length === 0) return
-      const completedOrders = completedContexts.map((context) => context.order)
-      const builderNames = completedContexts.flatMap((context) => (
-        context.builderName ? [context.builderName] : []
-      ))
-      const message = completedConstructionMessage(completedOrders, builderNames)
-      setLastCompletionSummary(message)
-      setAnnouncement(message)
-      setToastVisible(true)
-    }, 180)
-    return () => window.clearInterval(interval)
-  }, [openOrders.length, simulationSpeed])
 
   useEffect(() => {
     const keyboardShortcuts = (event: KeyboardEvent) => {
@@ -740,7 +683,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
             <span>
               <strong>{openOrders.length > 0
                 ? `${openOrders.length} queued`
-                : lastCompletionSummary
+                : constructionCompletionSummary
                   ? 'Construction complete'
                   : 'No blueprints'}</strong>
               <small>{openOrders.length > 0
@@ -757,7 +700,7 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
                       : assignedBuilders > 0
                         ? activeConstructionSummary
                         : 'Waiting for a builder'
-                : lastCompletionSummary ?? toolInstruction}</small>
+                : constructionCompletionSummary ?? toolInstruction}</small>
             </span>
           </span>
           <span className="construction-material-summary" title={`${materialAmount(colony.reserves.constructionStock)} material physically in storage`}>
@@ -1037,8 +980,8 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
           )}
         </div>
 
-        <div aria-atomic="true" aria-live="polite" className={`construction-toast ${toastVisible ? 'visible' : ''}`}>
-          {announcement}
+        <div aria-atomic="true" aria-live="polite" className={`construction-toast ${toastVisible || constructionCompletionToast ? 'visible' : ''}`}>
+          {constructionCompletionToast ?? announcement}
         </div>
 
         {stackSnapshot && (

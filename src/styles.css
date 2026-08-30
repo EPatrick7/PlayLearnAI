@@ -3003,6 +3003,92 @@ button:disabled {
   opacity: 1;
 }
 
+/* Live construction in the operations map. The completed layout stays solid;
+   unfinished orders remain cyan/red designations until a colonist finishes them. */
+.moonbase-map .operations-blueprint {
+  z-index: 12;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px rgba(126, 220, 230, 0.38));
+}
+
+.moonbase-map .operations-blueprint.blueprint-deconstruct {
+  filter: drop-shadow(0 0 3px rgba(235, 121, 106, 0.38));
+}
+
+.operations-construction-worker .pawn-sprite__art {
+  filter: drop-shadow(0 0 3px rgba(146, 218, 225, 0.62)) drop-shadow(0 3px 2px rgba(7, 11, 10, 0.48));
+}
+
+.operations-construction-worker:not(.worker-paused):not(.worker-no-route):not(.worker-carrier-unavailable) .pawn-sprite__art {
+  animation: operations-worker-bob 520ms steps(2, end) infinite;
+}
+
+.operations-construction-worker.worker-no-route .pawn-sprite__art,
+.operations-construction-worker.worker-carrier-unavailable .pawn-sprite__art {
+  filter: drop-shadow(0 0 3px rgba(226, 116, 99, 0.86)) drop-shadow(0 3px 2px rgba(7, 11, 10, 0.52));
+}
+
+.crew-marker .operations-worker-task,
+.crew-marker .operations-worker-cargo {
+  position: absolute;
+  z-index: 5;
+  margin: 0;
+  pointer-events: none;
+}
+
+.crew-marker .operations-worker-task {
+  right: -5px;
+  top: -3px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(227, 216, 188, 0.6);
+  border-radius: 50%;
+  color: #ecd184;
+  background: rgba(28, 33, 30, 0.96);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.crew-marker .operations-worker-task .game-icon {
+  width: 9px;
+  height: 9px;
+}
+
+.operations-construction-worker.worker-no-route .operations-worker-task,
+.operations-construction-worker.worker-carrier-unavailable .operations-worker-task {
+  color: #f0a79b;
+  border-color: rgba(226, 116, 99, 0.72);
+}
+
+.crew-marker .operations-worker-cargo {
+  left: -10px;
+  bottom: 1px;
+  min-width: 23px;
+  height: 16px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1px solid #9a7b42;
+  border-radius: 2px;
+  color: #f0d58e;
+  background: linear-gradient(135deg, rgba(255, 239, 190, 0.14), transparent 48%), #4a3d28;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.42);
+  font: 850 7px/1 ui-monospace, monospace;
+}
+
+.crew-marker .operations-worker-cargo .game-icon {
+  width: 9px;
+  height: 9px;
+}
+
+@keyframes operations-worker-bob {
+  from { transform: translateY(0); }
+  to { transform: translateY(-1px); }
+}
+
 .equipment-marker,
 .map-equipment {
   width: 34px;

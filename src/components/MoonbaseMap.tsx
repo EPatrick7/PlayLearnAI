@@ -7,6 +7,7 @@ import {
 import {
   detectRooms,
   getWorkstationFootprintSize,
+  isInConstructionBounds,
   type ConstructionLayout,
   type GridPoint,
 } from '../game/construction'
@@ -14,6 +15,12 @@ import {
   WORKSTATION_SPECS,
   type WorkstationKind,
 } from '../game/constructionCatalog'
+import {
+  carriedConstructionMaterial,
+  projectConstructionOrders,
+  type ConstructionOrder,
+} from '../game/constructionJobs'
+import type { ConstructionCrewPosition } from '../game/constructionWorkerRouting'
 import {
   BOUNDARY_CONNECTION_BITS,
   getBoundaryConnection,
@@ -31,6 +38,8 @@ import type {
 import { GameIcon, type GameIconName } from './GameIcon'
 import {
   buildMapInspection,
+  constructionOrderActivity,
+  constructionOrderProgress,
   describeMapTile,
   withFocusedMapItem,
   type MapInspectable,
@@ -71,6 +80,12 @@ export interface MoonbaseMapProps {
   previewSiteId?: string | null
   onChooseBuildSite?: (siteId: string) => void
   constructionLayout?: ConstructionLayout | null
+  /** Unfinished worker-built designations shown over the completed layout. */
+  constructionOrders?: readonly ConstructionOrder[]
+  /** Physical colonist positions from the construction simulation. */
+  constructionCrew?: readonly ConstructionCrewPosition[]
+  /** Keeps worker and blueprint activity labels honest while time is stopped. */
+  constructionPaused?: boolean
 }
 
 interface ModulePresentation {
@@ -126,6 +141,104 @@ const initials = (name: string) => name
   .join('')
   .slice(0, 2)
   .toUpperCase()
+
+const materialAmount = (value: number) => {
+  const rounded = Math.round(value * 10) / 10
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+}
+
+const constructionActivityIcon = (order: ConstructionOrder) => {
+  if (order.block) return 'warning' as const
+  if (order.travelPhase === 'to_stockpile') return 'storage' as const
+  if (order.travelPhase === 'to_site') return 'map' as const
+  return 'work' as const
+}
+
+const constructionOrderLabel = (order: ConstructionOrder) => {
+  if (order.target.kind === 'boundary') {
+    const boundary = order.target.construct ?? order.target.deconstruct
+    const subject = boundary?.kind === 'door' ? 'Door' : 'Wall'
+    return order.operation === 'deconstruct' ? `Deconstruct ${subject.toLowerCase()}` : subject
+  }
+  const workstation = order.target.construct ?? order.target.deconstruct
+  return order.operation === 'deconstruct'
+    ? `Deconstruct ${workstation?.label ?? 'workstation'}`
+    : workstation?.label ?? 'Workstation'
+}
+
+function OperationsConstructionLayer({
+  completedLayout,
+  planningLayout,
+  orders,
+  paused,
+}: {
+  completedLayout: ConstructionLayout
+  planningLayout: ConstructionLayout
+  orders: readonly ConstructionOrder[]
+  paused: boolean
+}) {
+  return orders.filter((order) => order.status !== 'complete').map((order) => {
+    const progress = constructionOrderProgress(order)
+    const activity = constructionOrderActivity(order, paused)
+
+    if (order.target.kind === 'boundary') {
+      const cell = order.target.cells[0]
+      const boundary = order.target.construct ?? order.target.deconstruct
+      if (!boundary) return null
+      const connectionLayout = order.target.construct ? planningLayout : completedLayout
+      const connection = getBoundaryConnection(connectionLayout, cell)
+      return (
+        <span
+          aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
+          className={`operations-blueprint construction-blueprint construction-blueprint-boundary construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+          data-boundary-connection={connection.name}
+          data-boundary-mask={connection.mask}
+          data-construction-order-id={order.id}
+          data-construction-order-status={order.status}
+          data-grid-x={cell.x}
+          data-grid-y={cell.y}
+          data-inspect-item-key={`blueprint:${order.id}`}
+          key={order.id}
+          role="img"
+          style={{ gridColumn: `${cell.x + 1}`, gridRow: `${cell.y + 1}` }}
+        >
+          <i />
+          <b className="construction-job-progress"><i style={{ width: `${progress}%` }} /></b>
+        </span>
+      )
+    }
+
+    const workstation = order.target.construct ?? order.target.deconstruct
+    if (!workstation) return null
+    const kind = workstation.type as WorkstationKind
+    const spec = WORKSTATION_SPECS[kind]
+    const footprint = getWorkstationFootprintSize(workstation)
+    return (
+      <span
+        aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
+        className={`operations-blueprint construction-blueprint construction-blueprint-workstation blueprint-${order.operation} status-${order.status}`}
+        data-construction-order-id={order.id}
+        data-construction-order-status={order.status}
+        data-grid-height={footprint.height}
+        data-grid-width={footprint.width}
+        data-grid-x={workstation.origin.x}
+        data-grid-y={workstation.origin.y}
+        data-inspect-item-key={`blueprint:${order.id}`}
+        key={order.id}
+        role="img"
+        style={{
+          gridColumn: `${workstation.origin.x + 1} / span ${footprint.width}`,
+          gridRow: `${workstation.origin.y + 1} / span ${footprint.height}`,
+        }}
+      >
+        <span className="blueprint-workstation-art"><GameIcon name={spec?.icon ?? 'work'} /></span>
+        <strong>{order.operation === 'deconstruct' ? 'Remove' : spec?.shortLabel ?? workstation.label}</strong>
+        <small>{activity}</small>
+        <b className="construction-job-progress"><i style={{ width: `${progress}%` }} /></b>
+      </span>
+    )
+  })
+}
 
 function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
   const rooms = detectRooms(layout)
@@ -368,6 +481,9 @@ export function MoonbaseMap({
   previewSiteId = null,
   onChooseBuildSite,
   constructionLayout = null,
+  constructionOrders = [],
+  constructionCrew = [],
+  constructionPaused = false,
 }: MoonbaseMapProps) {
   const [rovingCellKey, setRovingCellKey] = useState('0:0')
   const [selectedCellKey, setSelectedCellKey] = useState<string | null>(null)
@@ -393,9 +509,30 @@ export function MoonbaseMap({
   const moduleAt = (location: LocationId) =>
     modules.find((candidate) => candidate.location === location) ?? modules[0]
 
+  const openConstructionOrders = constructionOrders.filter((order) => order.status !== 'complete')
+  const constructionAssignmentByCrewId = new Map<string, ConstructionOrder>()
+  openConstructionOrders.forEach((order) => {
+    if (order.assignedCrewId && !constructionAssignmentByCrewId.has(order.assignedCrewId)) {
+      constructionAssignmentByCrewId.set(order.assignedCrewId, order)
+    }
+  })
+  const liveConstructionCrewCells = new Map<string, GridPoint>()
+  if (constructionLayout) {
+    constructionCrew.forEach((position) => {
+      if (
+        constructionAssignmentByCrewId.has(position.crewId)
+        && isInConstructionBounds(position.cell, constructionLayout)
+      ) {
+        liveConstructionCrewCells.set(position.crewId, { ...position.cell })
+      }
+    })
+  }
+
   const customMarkerCells = new Map<string, GridPoint>()
   if (constructionLayout) {
-    const occupied = new Set<string>()
+    const occupied = new Set(
+      [...liveConstructionCrewCells.values()].map((cell) => `${cell.x}:${cell.y}`),
+    )
     const boundaryCells = new Set(
       constructionLayout.boundaries.map((boundary) => `${boundary.x}:${boundary.y}`),
     )
@@ -433,7 +570,11 @@ export function MoonbaseMap({
       customMarkerCells.set(key, cell)
     }
 
-    crew.forEach((member, index) => allocateMarker(`crew:${member.id}`, member.location, index))
+    crew.forEach((member, index) => {
+      const liveCell = liveConstructionCrewCells.get(member.id)
+      if (liveCell) customMarkerCells.set(`crew:${member.id}`, liveCell)
+      else allocateMarker(`crew:${member.id}`, member.location, index)
+    })
     equipment.forEach((item, index) => allocateMarker(
       `equipment:${item.id}`,
       item.location,
@@ -475,7 +616,8 @@ export function MoonbaseMap({
 
   const crewCells = new Map(crew.map((member, index) => [
     member.id,
-    markerCell(`crew:${member.id}`, member.location, locationOrdinal(crew, index)),
+    liveConstructionCrewCells.get(member.id)
+      ?? markerCell(`crew:${member.id}`, member.location, locationOrdinal(crew, index)),
   ]))
   const equipmentCells = new Map(equipment.map((item, index) => [
     item.id,
@@ -509,6 +651,9 @@ export function MoonbaseMap({
       work: workCells,
     },
     constructionLayout,
+    constructionOrders,
+    constructionPaused,
+    constructionCrewNames: new Map(crew.map((member) => [member.id, member.name])),
   })
 
   const routesById = new Map<string, MapRoute>()
@@ -583,16 +728,28 @@ export function MoonbaseMap({
     powerPriority: 1,
     breached: false,
   } : null
+  const constructionPlanningLayout = constructionLayout
+    ? projectConstructionOrders(constructionLayout, constructionOrders).layout
+    : null
   const placementSummary = buildingLabel
     ? ` ${compatibleBuildSites.length} compatible build sockets.`
     : ''
   const customRoomCount = constructionLayout ? detectRooms(constructionLayout).length : null
-  const accessibleSummary = `${customRoomCount === null ? `${inspectableModules.length} base areas` : `${customRoomCount} player-built rooms`}, ${crew.length} crew, ${equipment.length} equipment items, and ${workOrders.length} work orders.${placementSummary}${dustActive ? ' Dust front active.' : ''}`
+  const constructionSummary = openConstructionOrders.length > 0
+    ? ` ${openConstructionOrders.length} active construction ${openConstructionOrders.length === 1 ? 'blueprint' : 'blueprints'}.`
+    : ''
+  const accessibleSummary = `${customRoomCount === null ? `${inspectableModules.length} base areas` : `${customRoomCount} player-built rooms`}, ${crew.length} crew, ${equipment.length} equipment items, and ${workOrders.length} work orders.${constructionSummary}${placementSummary}${dustActive ? ' Dust front active.' : ''}`
 
   const dispatchInspectable = (tile: MapTileInspection, item: MapInspectable) => {
     setSelectedCellKey(tile.key)
     setRovingCellKey(tile.key)
-    if (item.kind === 'crew' && onSelectCrew) {
+    if (
+      item.kind === 'crew'
+      && constructionAssignmentByCrewId.has(item.id)
+      && onInspectTile
+    ) {
+      onInspectTile(withFocusedMapItem(tile, item))
+    } else if (item.kind === 'crew' && onSelectCrew) {
       onSelectCrew(item.id)
     } else if (item.kind === 'equipment' && onSelectEquipment) {
       onSelectEquipment(item.id)
@@ -657,6 +814,14 @@ export function MoonbaseMap({
       <MapTerrain dustActive={dustActive} height={height} width={width} />
       <div className="map-grid" aria-hidden="true" />
       {constructionLayout && <FreeformOperationsLayer layout={constructionLayout} />}
+      {constructionLayout && constructionPlanningLayout && openConstructionOrders.length > 0 && (
+        <OperationsConstructionLayer
+          completedLayout={constructionLayout}
+          orders={openConstructionOrders}
+          paused={constructionPaused}
+          planningLayout={constructionPlanningLayout}
+        />
+      )}
       <MapRoutes height={height} modules={modules} routes={routes} width={width} />
 
       {vacantBuildSites.flatMap((site) => {
@@ -920,20 +1085,41 @@ export function MoonbaseMap({
         const ordinal = locationOrdinal(crew, index)
         const selected = selectedCrewId === member.id
         const module = moduleAt(member.location)
+        const constructionOrder = constructionAssignmentByCrewId.get(member.id)
+        const constructionActivity = constructionOrder
+          ? constructionOrderActivity(constructionOrder, constructionPaused)
+          : null
+        const constructionActivityClass = constructionActivity
+          ?.toLowerCase()
+          .replaceAll(' ', '-') ?? null
+        const carriedMaterial = constructionOrder?.materials.carriedByCrewId === member.id
+          ? carriedConstructionMaterial(constructionOrder)
+          : 0
+        const activelyConstructing = Boolean(
+          constructionOrder && !constructionPaused && !constructionOrder.block,
+        )
         return (
           <button
-            aria-label={`Select ${member.name}, ${member.role}. ${words(member.status)} in ${module.name}. Health ${member.health} percent, fatigue ${member.fatigue} percent.`}
+            aria-label={constructionOrder
+              ? `Select ${member.name}, ${member.role}. ${constructionActivity}, ${constructionOrderLabel(constructionOrder)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} construction material` : ''}. Health ${member.health} percent, fatigue ${member.fatigue} percent.`
+              : `Select ${member.name}, ${member.role}. ${words(member.status)} in ${module.name}. Health ${member.health} percent, fatigue ${member.fatigue} percent.`}
             aria-pressed={selectedCrewId == null ? undefined : selected}
             className={[
               'crew-marker',
               'crew-pawn',
               'map-token',
               member.status,
+              constructionOrder ? 'operations-construction-worker' : '',
+              constructionActivityClass ? `worker-${constructionActivityClass}` : '',
+              carriedMaterial > 0 ? 'worker-carrying' : '',
               selected ? 'selected' : '',
             ].filter(Boolean).join(' ')}
             key={member.id}
+            data-construction-worker-id={constructionOrder ? member.id : undefined}
+            data-construction-worker-state={constructionActivityClass ?? undefined}
             data-grid-x={crewCells.get(member.id)?.x}
             data-grid-y={crewCells.get(member.id)?.y}
+            data-order-id={constructionOrder?.id}
             onClick={(event) => {
               event.stopPropagation()
               const cell = crewCells.get(member.id)
@@ -945,16 +1131,26 @@ export function MoonbaseMap({
               else onSelectCrew?.(member.id)
             }}
             style={markerPosition(crewCells.get(member.id) ?? markerCell(`crew:${member.id}`, member.location, ordinal))}
-            title={`${member.name} — ${words(member.status)}`}
+            title={`${member.name} — ${constructionActivity ?? words(member.status)}`}
             type="button"
           >
             <PawnSprite
               accent={pawnAccents[index % pawnAccents.length]}
               initials={initials(member.name)}
               showStatusDot
-              status={member.status}
+              status={activelyConstructing ? 'working' : member.status}
               variant={pawnVariants[index % pawnVariants.length]}
             />
+            {constructionOrder && (
+              <span aria-hidden="true" className="operations-worker-task">
+                <GameIcon name={constructionActivityIcon(constructionOrder)} />
+              </span>
+            )}
+            {carriedMaterial > 0 && (
+              <span aria-hidden="true" className="operations-worker-cargo">
+                <GameIcon name="storage" /><b>{materialAmount(carriedMaterial)}</b>
+              </span>
+            )}
             <span className="map-token-label crew-label">{member.name.split(' ')[0]}</span>
           </button>
         )

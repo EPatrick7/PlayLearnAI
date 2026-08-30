@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { GameIcon, type GameIconName } from './components/GameIcon'
 import { MoonbaseMap } from './components/MoonbaseMap'
 import type { MapTileInspection } from './components/mapInspection'
 import { PawnSprite, type PawnSpriteVariant } from './components/PawnSprite'
 import { SettlementBuilder } from './components/SettlementBuilder'
+import type { ConstructionOrder } from './game/constructionJobs'
 import { useColonyStore } from './game/store'
 import type {
   Equipment,
@@ -88,14 +89,44 @@ const dockItems: Array<{ id: DockTab; label: string; icon: GameIconName }> = [
 const pawnVariants: PawnSpriteVariant[] = ['umber', 'gold', 'olive', 'rose', 'copper', 'slate']
 const pawnAccents = ['#a75b4c', '#527b7d', '#68805f', '#8a6378', '#9a7046', '#596f7c']
 
+const constructionCompletionSubject = (order: ConstructionOrder) => {
+  if (order.target.kind === 'boundary') {
+    const boundary = order.target.construct ?? order.target.deconstruct
+    const subject = boundary?.kind === 'door' ? 'door' : 'wall'
+    return order.operation === 'deconstruct' ? `${subject} removal` : subject
+  }
+  const workstation = order.target.construct ?? order.target.deconstruct
+  const subject = workstation?.label.toLowerCase() ?? 'workstation'
+  return order.operation === 'deconstruct' ? `${subject} removal` : subject
+}
+
+const completedConstructionMessage = (
+  completedOrders: readonly ConstructionOrder[],
+  builderNames: readonly string[],
+) => {
+  const subjects = completedOrders.map(constructionCompletionSubject)
+  const oneSubject = subjects.length > 0 && subjects.every((subject) => subject === subjects[0])
+  const completedLabel = oneSubject
+    ? `${subjects.length} ${subjects[0]}${subjects.length === 1 ? '' : 's'}`
+    : `${subjects.length} ${subjects.length === 1 ? 'blueprint' : 'blueprints'}`
+  const builders = [...new Set(builderNames)]
+  return `${completedLabel} completed${builders.length > 0 ? ` by ${builders.join(' + ')}` : ''}.`
+}
+
 function App() {
   const colony = useColonyStore()
   const webMcpStatus = useWebMcpTools()
   const [activeTab, setActiveTab] = useState<DockTab>('work')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [architectOpen, setArchitectOpen] = useState(false)
+  const [constructionCompletionSummary, setConstructionCompletionSummary] = useState<string | null>(null)
+  const [constructionCompletionToast, setConstructionCompletionToast] = useState<string | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState<WorkOrderId>('work-seal-lab')
   const [selection, setSelection] = useState<Selection | null>(null)
+  const constructionCompletionReceipt = useRef(new Map<string, {
+    order: ConstructionOrder
+    builderName: string | null
+  }>())
   const plan = colony.operationsPlan
   const validation = colony.validatePlan()
   const isDraft = plan.status === 'draft'
@@ -128,6 +159,56 @@ function App() {
     colony.reserves.minimumOxygenHours >= plan.constraints.oxygenFloorHours,
   ]
   const objectiveProgress = objectiveChecks.filter(Boolean).length
+  const constructionSpeed = colony.settlement.constructionSpeed
+  const unfinishedConstructionCount = colony.settlement.constructionOrders.filter(
+    (order) => order.status !== 'complete',
+  ).length
+
+  const clearConstructionCompletion = () => {
+    constructionCompletionReceipt.current.clear()
+    setConstructionCompletionSummary(null)
+    setConstructionCompletionToast(null)
+  }
+
+  useEffect(() => {
+    if (constructionSpeed === 0 || unfinishedConstructionCount === 0) return
+    const interval = window.setInterval(() => {
+      const state = useColonyStore.getState()
+      const speed = state.settlement.constructionSpeed
+      if (speed === 0) return
+      const orderContext = new Map(state.settlement.constructionOrders.map((order) => [
+        order.id,
+        {
+          order,
+          builderName: order.assignedCrewId
+            ? state.crew.find((member) => member.id === order.assignedCrewId)?.name ?? null
+            : null,
+        },
+      ]))
+      const advanced = state.advanceConstruction(speed * 0.135)
+      if (advanced.completedOrderIds.length === 0) return
+      advanced.completedOrderIds.forEach((orderId) => {
+        const context = orderContext.get(orderId)
+        if (context) constructionCompletionReceipt.current.set(orderId, context)
+      })
+      const completedContexts = [...constructionCompletionReceipt.current.values()]
+      if (completedContexts.length === 0) return
+      const completedOrders = completedContexts.map((context) => context.order)
+      const builderNames = completedContexts.flatMap((context) => (
+        context.builderName ? [context.builderName] : []
+      ))
+      const message = completedConstructionMessage(completedOrders, builderNames)
+      setConstructionCompletionSummary(message)
+      setConstructionCompletionToast(message)
+    }, 180)
+    return () => window.clearInterval(interval)
+  }, [constructionSpeed, unfinishedConstructionCount])
+
+  useEffect(() => {
+    if (!constructionCompletionToast) return
+    const timeout = window.setTimeout(() => setConstructionCompletionToast(null), 3200)
+    return () => window.clearTimeout(timeout)
+  }, [constructionCompletionToast])
 
   useEffect(() => {
     const closeDrawer = (event: KeyboardEvent) => {
@@ -155,11 +236,24 @@ function App() {
   }, [colony.settlement.phase])
 
   if (colony.settlement.phase !== 'operations') {
-    return <SettlementBuilder />
+    return (
+      <SettlementBuilder
+        constructionCompletionSummary={constructionCompletionSummary}
+        constructionCompletionToast={constructionCompletionToast}
+        onConstructionQueued={clearConstructionCompletion}
+      />
+    )
   }
 
   if (architectOpen) {
-    return <SettlementBuilder onExit={() => setArchitectOpen(false)} />
+    return (
+      <SettlementBuilder
+        constructionCompletionSummary={constructionCompletionSummary}
+        constructionCompletionToast={constructionCompletionToast}
+        onConstructionQueued={clearConstructionCompletion}
+        onExit={() => setArchitectOpen(false)}
+      />
+    )
   }
 
   const openTab = (tab: DockTab) => {
@@ -324,7 +418,17 @@ function App() {
       ? 'Structure'
       : selectedTileItem?.kind === 'workstation'
         ? 'Workstation'
-        : 'Tile'
+        : selectedTileItem?.kind === 'blueprint'
+          ? 'Blueprint'
+          : selectedTileItem?.kind === 'crew'
+            ? 'Colonist'
+            : selectedTileItem?.kind === 'equipment'
+              ? 'Equipment'
+              : selectedTileItem?.kind === 'work'
+                ? 'Work order'
+                : selectedTileItem?.kind === 'stockpile'
+                  ? 'Stockpile'
+                  : 'Tile'
     : selection?.kind ?? ''
   const selectionIcon: GameIconName = selection?.kind === 'crew'
     ? 'crew'
@@ -374,7 +478,10 @@ function App() {
 
       <main className="world-stage">
         <MoonbaseMap
+          constructionCrew={colony.settlement.constructionCrew}
           constructionLayout={colony.settlement.layout}
+          constructionOrders={colony.settlement.constructionOrders}
+          constructionPaused={colony.settlement.constructionSpeed === 0}
           crew={colony.crew}
           dustActive={colony.dust.active}
           equipment={colony.equipment}
@@ -755,10 +862,16 @@ function App() {
               setDrawerOpen(false)
               setArchitectOpen(true)
             }}
+            title={constructionCompletionSummary
+              ? `Construction complete: ${constructionCompletionSummary}`
+              : 'Open Architect'}
             type="button"
           >
             <GameIcon name="habitat" />
             <span>Build</span>
+            {constructionCompletionSummary && unfinishedConstructionCount === 0 && (
+              <b aria-hidden="true" className="construction-complete-badge">✓</b>
+            )}
           </button>
           {dockItems.map((item) => (
             <button aria-expanded={drawerOpen && activeTab === item.id} className={`${activeTab === item.id && drawerOpen ? 'active' : ''}`} key={item.id} onClick={() => openTab(item.id)} type="button">

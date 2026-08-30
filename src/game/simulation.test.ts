@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import {
+  getWorkstationCells,
+  paintBoundaryCell,
+  placeWorkstation,
+} from './construction'
+import { deriveConstructionOrders } from './constructionJobs'
+import { isConstructionCellWalkable } from './constructionPathfinding'
 import { createInitialState, MOONBASE_SEED } from './seed'
 import {
   advanceSimulation,
@@ -42,6 +49,26 @@ const makePlan = (includeDustMitigation = true) => {
   let state = createInitialState()
   state = setPlanBrief(state, brief, 'agent')[0]
   return stage(state, includeDustMitigation ? [...coreActions, ...dustActions] : coreActions)
+}
+
+const assignActiveConstruction = (source: MoonbaseState, crewId: string) => {
+  const [order] = deriveConstructionOrders(
+    source.settlement.layout,
+    paintBoundaryCell(source.settlement.layout, { x: 12, y: 9 }, 'wall'),
+    { commandId: 'active-wall', sequenceStart: source.settlement.constructionSequence },
+  )
+  return {
+    ...source,
+    settlement: {
+      ...source.settlement,
+      constructionOrders: [{
+        ...order,
+        status: 'building' as const,
+        assignedCrewId: crewId,
+        travelPhase: 'to_site' as const,
+      }],
+    },
+  }
 }
 
 describe('Moonbase domain seed', () => {
@@ -120,6 +147,47 @@ describe('Operations Plan staging and validation', () => {
     })
     expect(validation.preview.projectedOxygenHours).toBeGreaterThanOrEqual(12)
     expect(validation.preview.projectedBatteryKwh).toBeGreaterThan(0)
+  })
+
+  it('rejects incident assignment of a colonist already claimed by active construction', () => {
+    const planned = makePlan()
+    expect(validateOperationsPlan(planned).valid).toBe(true)
+
+    const conflicted = assignActiveConstruction(planned, 'crew-mateo-alvarez')
+    const validation = validateOperationsPlan(conflicted)
+    const conflict = validation.issues.find((candidate) => (
+      candidate.code === 'crew_conflict' && candidate.targetId === 'crew-mateo-alvarez'
+    ))
+
+    expect(validation.valid).toBe(false)
+    expect(conflict).toMatchObject({
+      severity: 'error',
+      message: 'Mateo Alvarez is already assigned to wall blueprint at tile 13, 10. Finish or cancel that construction order before assigning incident work.',
+    })
+  })
+
+  it('atomically refuses commit when construction claims a staged colonist', () => {
+    const planned = makePlan()
+    const conflicted = assignActiveConstruction(planned, 'crew-mateo-alvarez')
+    const sourceSnapshot = structuredClone(conflicted)
+    const [unchanged, result] = commitOperationsPlan(
+      conflicted,
+      conflicted.worldRevision,
+      conflicted.operationsPlan.revision,
+      'agent',
+    )
+
+    expect(result).toMatchObject({ ok: false, code: 'invalid_plan' })
+    expect(result.validation.issues).toContainEqual(expect.objectContaining({
+      code: 'crew_conflict',
+      targetId: 'crew-mateo-alvarez',
+    }))
+    expect(unchanged.operationsPlan.status).toBe('draft')
+    expect(unchanged.workOrders.find((order) => order.id === 'work-seal-lab')?.assignedCrewIds)
+      .toEqual([])
+    expect(unchanged.settlement.constructionOrders[0].assignedCrewId)
+      .toBe('crew-mateo-alvarez')
+    expect(conflicted).toEqual(sourceSnapshot)
   })
 
   it('fails stale world and plan revision commits cleanly', () => {
@@ -282,5 +350,86 @@ describe('Moonbase Zustand store', () => {
     expect(advance).toMatchObject({ advancedHours: 10, stopReason: 'objective_complete' })
     expect(verification.status).toBe('success')
     expect(useColonyStore.getState().learning.completedLoops).toBe(1)
+  })
+
+  it('never dispatches a resting colonist to a construction order', () => {
+    const initial = useColonyStore.getState()
+    useColonyStore.setState({
+      crew: initial.crew.map((member) => member.id === 'crew-mateo-alvarez'
+        ? { ...member, status: 'resting' as const }
+        : member),
+    })
+    const queued = useColonyStore.getState().queueConstruction(
+      paintBoundaryCell(initial.settlement.layout, { x: 12, y: 9 }, 'wall'),
+    )
+
+    expect(queued.ok).toBe(true)
+    useColonyStore.getState().advanceConstruction(0.25)
+    expect(useColonyStore.getState().settlement.constructionOrders[0].assignedCrewId)
+      .toBe('crew-amina-okafor')
+  })
+
+  it('keeps crew assigned to a non-complete work order out of construction dispatch', () => {
+    const initial = useColonyStore.getState()
+    useColonyStore.setState({
+      crew: initial.crew.map((member) => member.id === 'crew-mateo-alvarez'
+        ? { ...member, status: 'idle' as const, taskId: null }
+        : member),
+      workOrders: initial.workOrders.map((order) => order.id === 'work-seal-lab'
+        ? { ...order, assignedCrewIds: ['crew-mateo-alvarez'] }
+        : order),
+    })
+    const queued = useColonyStore.getState().queueConstruction(
+      paintBoundaryCell(initial.settlement.layout, { x: 12, y: 9 }, 'wall'),
+    )
+
+    expect(queued.ok).toBe(true)
+    useColonyStore.getState().advanceConstruction(0.25)
+    expect(useColonyStore.getState().settlement.constructionOrders[0].assignedCrewId)
+      .toBe('crew-amina-okafor')
+  })
+
+  it('moves the material pallet when completed construction covers its tile', () => {
+    const initial = useColonyStore.getState()
+    const originalStockpile = { ...initial.settlement.constructionStockpile }
+    const lifeSupport = placeWorkstation(initial.settlement.layout, {
+      id: 'stockpile-overlap-life-support',
+      type: 'life-support',
+      label: 'Stockpile overlap life support',
+      origin: originalStockpile,
+      size: { width: 2, height: 2 },
+      rotation: 0,
+    })
+
+    expect(lifeSupport.ok).toBe(true)
+    expect(useColonyStore.getState().queueConstruction(lifeSupport).ok).toBe(true)
+    for (let tick = 0; tick < 120 && useColonyStore.getState().settlement.constructionOrders.some(
+      (order) => order.status !== 'complete',
+    ); tick += 1) {
+      useColonyStore.getState().advanceConstruction(1)
+    }
+
+    const completed = useColonyStore.getState()
+    const workstation = completed.settlement.layout.workstations.find(
+      (candidate) => candidate.id === 'stockpile-overlap-life-support',
+    )
+    expect(workstation).toBeDefined()
+    expect(workstation && getWorkstationCells(workstation)).not.toContainEqual(
+      completed.settlement.constructionStockpile,
+    )
+    expect(completed.settlement.constructionStockpile).not.toEqual(originalStockpile)
+    expect(isConstructionCellWalkable(
+      completed.settlement.layout,
+      completed.settlement.constructionStockpile,
+    )).toBe(true)
+
+    expect(completed.queueConstruction(
+      paintBoundaryCell(completed.settlement.layout, { x: 12, y: 9 }, 'wall'),
+    ).ok).toBe(true)
+    completed.advanceConstruction(0.25)
+    expect(useColonyStore.getState().settlement.constructionOrders.at(-1)).toMatchObject({
+      assignedCrewId: expect.any(String),
+      block: null,
+    })
   })
 })

@@ -258,6 +258,24 @@ export const clearOperationsPlan = (
 const getOrder = (state: MoonbaseState, id: WorkOrderId) =>
   state.workOrders.find((order) => order.id === id)
 
+const activeConstructionOrderForCrew = (state: MoonbaseState, crewId: string) =>
+  state.settlement.constructionOrders.find((order) => (
+    order.status !== 'complete' && order.assignedCrewId === crewId
+  ))
+
+const constructionOrderDescription = (
+  order: MoonbaseState['settlement']['constructionOrders'][number],
+) => {
+  if (order.target.kind === 'workstation') {
+    const workstation = order.target.construct ?? order.target.deconstruct
+    return workstation?.label ?? 'a workstation blueprint'
+  }
+  const cell = order.target.cells[0]
+  const boundary = order.target.construct ?? order.target.deconstruct
+  const label = boundary?.kind === 'door' ? 'door' : 'wall'
+  return `${label} blueprint at tile ${cell.x + 1}, ${cell.y + 1}`
+}
+
 const crewForOrder = (state: MoonbaseState, plan: OperationsPlan, id: WorkOrderId) => {
   const existing = getOrder(state, id)?.assignedCrewIds ?? []
   const staged = plan.actions.flatMap((action) =>
@@ -484,6 +502,16 @@ export const validateOperationsPlan = (state: MoonbaseState): PlanValidation => 
         continue
       }
       crewAssignments.set(member.id, [...(crewAssignments.get(member.id) ?? []), order.id])
+      const constructionOrder = activeConstructionOrderForCrew(state, member.id)
+      if (constructionOrder) {
+        issue({
+          code: 'crew_conflict',
+          severity: 'error',
+          message: `${member.name} is already assigned to ${constructionOrderDescription(constructionOrder)}. Finish or cancel that construction order before assigning incident work.`,
+          actionId: action.id,
+          targetId: member.id,
+        })
+      }
       if (member.taskId && member.taskId !== order.id) {
         issue({
           code: 'crew_conflict',

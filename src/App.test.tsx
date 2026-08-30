@@ -836,6 +836,94 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('navigation', { name: 'Colony commands' })).toBeVisible()
   })
 
+  it('keeps one construction clock running after returning to the colony and preserves its receipt', () => {
+    vi.useFakeTimers()
+    let advanceSpy: ReturnType<typeof vi.spyOn> | null = null
+    try {
+      startOperations()
+      fireEvent.click(within(
+        screen.getByRole('navigation', { name: 'Colony commands' }),
+      ).getByRole('button', { name: 'Build' }))
+
+      const target = { x: 16, y: 9 }
+      selectTool('Structure', /^Wall/i)
+      clickConstructionCell(target)
+
+      const queued = useColonyStore.getState().settlement.constructionOrders.at(-1)
+      if (!queued) throw new Error('The operations wall did not create a construction order.')
+      expect(queued.status).not.toBe('complete')
+      expect(useColonyStore.getState().settlement.layout.boundaries)
+        .not.toContainEqual({ ...target, kind: 'wall' })
+
+      advanceSpy = vi.spyOn(useColonyStore.getState(), 'advanceConstruction')
+      fireEvent.click(screen.getByRole('button', { name: '3 times construction speed' }))
+
+      act(() => vi.advanceTimersByTime(180))
+
+      expect(advanceSpy).toHaveBeenCalledTimes(1)
+      let current = useColonyStore.getState().settlement.constructionOrders.find(
+        (order) => order.id === queued.id,
+      )!
+      expect(current.assignedCrewId).toBeTruthy()
+      expect(current.status).not.toBe('complete')
+      advanceSpy.mockClear()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Return to colony' }))
+
+      expect(screen.getByRole('main')).toHaveClass('world-stage')
+      expect(screen.queryByRole('group', { name: 'Construction speed' })).not.toBeInTheDocument()
+      expect(document.querySelector(
+        `[data-construction-order-id="${queued.id}"]`,
+      )).toHaveClass('operations-blueprint')
+      const liveBuilder = document.querySelector<HTMLElement>(
+        `[data-construction-worker-id="${current.assignedCrewId}"]`,
+      )
+      expect(liveBuilder).toBeVisible()
+      fireEvent.click(liveBuilder!)
+      expect(screen.getByRole('region', { name: /inspector/i })).toHaveTextContent(
+        /Colonist selected.*TaskWall blueprint/i,
+      )
+
+      act(() => vi.advanceTimersByTime(180))
+
+      expect(advanceSpy).toHaveBeenCalledTimes(1)
+      current = useColonyStore.getState().settlement.constructionOrders.find(
+        (order) => order.id === queued.id,
+      )!
+      expect(current.status).not.toBe('complete')
+
+      for (let tick = 0; tick < 100 && current.status !== 'complete'; tick += 1) {
+        act(() => vi.advanceTimersByTime(180))
+        current = useColonyStore.getState().settlement.constructionOrders.find(
+          (order) => order.id === queued.id,
+        )!
+      }
+
+      expect(current.status).toBe('complete')
+      expect(useColonyStore.getState().settlement.layout.boundaries)
+        .toContainEqual({ ...target, kind: 'wall' })
+
+      const buildCommand = within(
+        screen.getByRole('navigation', { name: 'Colony commands' }),
+      ).getByRole('button', { name: 'Build' })
+      expect(buildCommand).toHaveAttribute('title', expect.stringMatching(
+        /^Construction complete: 1 wall completed by .+\.$/,
+      ))
+      expect(buildCommand.querySelector('.construction-complete-badge')).toHaveTextContent('✓')
+
+      fireEvent.click(buildCommand)
+      expect(screen.getByRole('region', { name: 'Construction status' })).toHaveTextContent(
+        /Construction complete1 wall completed by .+\./,
+      )
+      expect(document.querySelector('.construction-toast')).toHaveTextContent(
+        /1 wall completed by .+\./,
+      )
+    } finally {
+      advanceSpy?.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('routes, supplies, and builds an operations blueprint on the live Architect clock', () => {
     vi.useFakeTimers()
     try {

@@ -127,26 +127,75 @@ const allWalkableCells = (layout: ConstructionLayout) => {
   })).filter((cell) => !blocked.has(pointKey(cell)))
 }
 
+const walkableComponentSizes = (
+  layout: ConstructionLayout,
+  cells: readonly GridPoint[],
+) => {
+  const walkable = new Set(cells.map(pointKey))
+  const sizeByCell = new Map<string, number>()
+  const visited = new Set<string>()
+
+  cells.forEach((start) => {
+    const startKey = pointKey(start)
+    if (visited.has(startKey)) return
+    const component: GridPoint[] = []
+    const queue = [start]
+    visited.add(startKey)
+    for (let index = 0; index < queue.length; index += 1) {
+      const cell = queue[index]
+      component.push(cell)
+      const neighbors = [
+        { x: cell.x - 1, y: cell.y },
+        { x: cell.x + 1, y: cell.y },
+        { x: cell.x, y: cell.y - 1 },
+        { x: cell.x, y: cell.y + 1 },
+      ]
+      neighbors.forEach((neighbor) => {
+        if (!isInConstructionBounds(neighbor, layout)) return
+        const neighborKey = pointKey(neighbor)
+        if (!walkable.has(neighborKey) || visited.has(neighborKey)) return
+        visited.add(neighborKey)
+        queue.push(neighbor)
+      })
+    }
+    component.forEach((cell) => sizeByCell.set(pointKey(cell), component.length))
+  })
+
+  return sizeByCell
+}
+
 /** Keeps the material pickup cell usable after loading an old or edited map. */
 export const normalizeConstructionStockpile = (
   layout: ConstructionLayout,
   requested: GridPoint | null | undefined,
   fallback: GridPoint = { x: 8, y: 9 },
 ): GridPoint => {
-  if (requested && isConstructionCellWalkable(layout, requested)) {
+  if (
+    requested &&
+    isConstructionCellWalkable(layout, requested)
+  ) {
     return clonePoint(requested)
   }
-  if (requested && isInConstructionBounds(requested, layout)) {
-    return allWalkableCells(layout).sort((left, right) =>
-      manhattanDistance(left, requested) - manhattanDistance(right, requested) ||
-      comparePoints(left, right),
-    )[0] ?? clonePoint(requested)
+  if (
+    !requested &&
+    isConstructionCellWalkable(layout, fallback)
+  ) {
+    return clonePoint(fallback)
   }
-  if (isConstructionCellWalkable(layout, fallback)) return clonePoint(fallback)
-  return allWalkableCells(layout).sort((left, right) =>
-    manhattanDistance(left, fallback) - manhattanDistance(right, fallback) ||
-    comparePoints(left, right),
-  )[0] ?? { x: 0, y: 0 }
+  const walkableCells = allWalkableCells(layout)
+  const componentSizes = walkableComponentSizes(layout, walkableCells)
+  const largestComponent = Math.max(0, ...componentSizes.values())
+  const inLargestComponent = (cell: GridPoint) =>
+    componentSizes.get(pointKey(cell)) === largestComponent
+  const anchor = requested && isInConstructionBounds(requested, layout)
+    ? requested
+    : fallback
+  return walkableCells
+    .filter(inLargestComponent)
+    .sort((left, right) =>
+      manhattanDistance(left, anchor) - manhattanDistance(right, anchor) ||
+      comparePoints(left, right),
+    )[0] ?? clonePoint(anchor)
 }
 
 const manhattanDistance = (left: GridPoint, right: GridPoint) =>

@@ -81,6 +81,21 @@ describe('construction worker routing', () => {
       .toEqual({ x: 1, y: 0 })
   })
 
+  it('moves an obstructed pallet past a nearer sealed pocket into the connected work area', () => {
+    const layout = layoutWith([
+      { x: 5, y: 5, kind: 'wall' },
+      { x: 5, y: 4, kind: 'wall' },
+      { x: 5, y: 6, kind: 'wall' },
+      { x: 6, y: 5, kind: 'wall' },
+      { x: 3, y: 5, kind: 'wall' },
+      { x: 4, y: 4, kind: 'wall' },
+      { x: 4, y: 6, kind: 'wall' },
+    ])
+
+    expect(normalizeConstructionStockpile(layout, { x: 5, y: 5 }))
+      .toEqual({ x: 5, y: 3 })
+  })
+
   it('repairs missing and blocked persisted positions deterministically', () => {
     const layout = layoutWith([{ x: 1, y: 1, kind: 'wall' }])
     const source = [{ crewId: 'b', cell: { x: 1, y: 1 }, moveCredit: 5 }]

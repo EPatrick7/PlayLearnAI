@@ -174,7 +174,14 @@ const reallocateUncollectedConstructionReservations = (
 
 const eligibleConstructionWorkers = (state: MoonbaseState) =>
   (state.settlement.phase === 'landing' ? state.crew.slice(0, 2) : state.crew)
-    .filter((member) => member.health > 0 && member.taskId === null)
+    .filter((member) => (
+      member.health > 0 &&
+      member.status !== 'resting' &&
+      member.taskId === null &&
+      !state.workOrders.some((order) => (
+        order.status !== 'complete' && order.assignedCrewIds.includes(member.id)
+      ))
+    ))
     .sort((left, right) =>
       right.skills.engineering - left.skills.engineering || left.id.localeCompare(right.id),
     )
@@ -227,7 +234,10 @@ const advanceConstructionInState = (
     layout: advanced.layout,
     constructionOrders: advanced.orders,
     constructionCrew: advanced.crewPositions,
-    constructionStockpile: advanced.stockpile,
+    constructionStockpile: normalizeConstructionStockpile(
+      advanced.layout,
+      advanced.stockpile,
+    ),
   }
   state.reserves = {
     ...state.reserves,
