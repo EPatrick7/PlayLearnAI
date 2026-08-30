@@ -1538,6 +1538,41 @@ describe('ConstructionMap pan and zoom', () => {
     expect(map).toHaveClass('tool-active')
   })
 
+  it('keeps crew anchored to their map percentage while wheel zooming', () => {
+    const crewCell = { x: 6, y: 7 }
+    const { map } = renderMap(null, {
+      crew: [builder],
+      crewCells: new Map([[builder.id, crewCell]]),
+    })
+    vi.spyOn(map, 'getBoundingClientRect').mockReturnValue({
+      bottom: 350,
+      height: 300,
+      left: 100,
+      right: 500,
+      top: 50,
+      width: 400,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    })
+    const pawn = map.querySelector<HTMLElement>(`[data-crew-id="${builder.id}"]`)!
+    const expectedLeft = `${((crewCell.x + 0.5) / 24) * 100}%`
+    const expectedTop = `${((crewCell.y + 0.5) / 18) * 100}%`
+
+    expect(pawn).toHaveStyle({ left: expectedLeft, top: expectedTop })
+    fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaY: -80 })
+
+    expect(screen.getByText(/%/)).not.toHaveTextContent('100%')
+    expect(map.querySelector(`[data-crew-id="${builder.id}"]`)).toBe(pawn)
+    expect(pawn).toHaveAttribute('data-grid-x', '6')
+    expect(pawn).toHaveAttribute('data-grid-y', '7')
+    expect(pawn).toHaveStyle({ left: expectedLeft, top: expectedTop })
+
+    fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaY: 80 })
+    expect(map.querySelector(`[data-crew-id="${builder.id}"]`)).toBe(pawn)
+    expect(pawn).toHaveStyle({ left: expectedLeft, top: expectedTop })
+  })
+
   it('normalizes pixel, line, and page wheel units through the same zoom action', () => {
     const { map, scroll } = renderMap()
     scroll.scrollTop = 70

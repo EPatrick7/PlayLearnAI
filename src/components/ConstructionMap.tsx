@@ -1749,9 +1749,9 @@ export function ConstructionMap({
               key={member.id}
               role="img"
               style={{
-                left: `calc(${cell.x + 0.5} * var(--construction-cell-size))`,
+                left: `${((cell.x + 0.5) / layout.width) * 100}%`,
                 position: 'absolute',
-                top: `calc(${cell.y + 0.5} * var(--construction-cell-size))`,
+                top: `${((cell.y + 0.5) / layout.height) * 100}%`,
               }}
             >
               <PawnSprite
