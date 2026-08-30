@@ -1278,6 +1278,27 @@
   white-space: nowrap;
 }
 
+.construction-job-summary.first-shift-room > .game-icon,
+.construction-job-summary.first-shift-door > .game-icon,
+.construction-job-summary.first-shift-life-support > .game-icon {
+  color: var(--construction-amber);
+}
+
+.construction-job-summary.first-shift-ready > .game-icon {
+  color: #a8cba1;
+}
+
+.construction-job-summary.first-shift-ready {
+  background: rgba(106, 153, 99, 0.08);
+}
+
+.construction-job-summary.first-shift-room .construction-queue-chevron,
+.construction-job-summary.first-shift-door .construction-queue-chevron,
+.construction-job-summary.first-shift-life-support .construction-queue-chevron,
+.construction-job-summary.first-shift-ready .construction-queue-chevron {
+  transform: none;
+}
+
 .construction-queue-trigger:not([aria-disabled="true"]):hover,
 .construction-queue-trigger:not([aria-disabled="true"]):focus-visible,
 .construction-queue-trigger[aria-expanded="true"] {
@@ -2317,6 +2338,7 @@
   font: 850 10px/1 ui-monospace, monospace;
 }
 
+.construction-copy-action,
 .construction-destructive-action {
   min-height: 36px;
   padding: 0 11px;
@@ -2331,6 +2353,19 @@
   font: 750 9px/1 system-ui, sans-serif;
 }
 
+.construction-copy-action {
+  border-color: rgba(117, 190, 197, 0.34);
+  color: #b3d8d9;
+  background: rgba(48, 108, 114, 0.14);
+}
+
+.construction-copy-action:hover,
+.construction-copy-action:focus-visible {
+  border-color: rgba(137, 215, 220, 0.64);
+  color: #d4eeee;
+  background: rgba(57, 130, 137, 0.24);
+}
+
 .construction-destructive-action:hover:not(:disabled),
 .construction-destructive-action:focus-visible {
   border-color: rgba(231, 134, 121, 0.62);
@@ -2339,6 +2374,7 @@
 }
 
 .construction-destructive-action:disabled { opacity: 0.5; cursor: default; }
+.construction-copy-action .game-icon,
 .construction-destructive-action .game-icon { width: 14px; height: 14px; }
 .construction-inspector-single-action { justify-content: flex-end; }
 
@@ -2440,6 +2476,7 @@
   .construction-priority-label-compact { display: inline; }
   .construction-priority-stepper > span { grid-template-columns: 40px 42px 40px; }
   .construction-priority-stepper button { width: 40px; height: 34px; }
+  .construction-copy-action,
   .construction-destructive-action { min-height: 40px; }
 }
 
@@ -2489,6 +2526,12 @@
 
   .construction-queue-label-full { display: none; }
   .construction-queue-label-compact { display: inline; }
+
+  .construction-job-summary.first-shift-room small,
+  .construction-job-summary.first-shift-door small,
+  .construction-job-summary.first-shift-life-support small,
+  .construction-job-summary.first-shift-building small,
+  .construction-job-summary.first-shift-ready small { display: none; }
 
   .construction-job-summary small {
     max-width: none;
@@ -2695,6 +2738,7 @@
     height: 44px;
   }
 
+  .construction-copy-action,
   .construction-destructive-action { min-height: 44px; }
 
   .construction-top-actions .construction-reset-action,

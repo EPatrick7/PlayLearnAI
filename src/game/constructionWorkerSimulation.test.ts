@@ -432,7 +432,32 @@ describe('spatial construction worker simulation', () => {
       .not.toEqual({ x: 1, y: 1 })
   })
 
-  it('steps a second builder out before an adjacent wall solidifies beneath them', () => {
+  it('repairs a legacy pallet overlap before a builder collects material', () => {
+    const legacyOrder: ConstructionOrder = {
+      ...wallOrder(),
+      target: {
+        kind: 'boundary',
+        cells: [{ x: 1, y: 1 }],
+        construct: { x: 1, y: 1, kind: 'wall' },
+        deconstruct: null,
+      },
+    }
+    const repaired = advanceConstructionWorkerSimulation({
+      ...inputFor(legacyOrder, 0),
+      stockpile: { x: 1, y: 1 },
+      crewPositions: [{ crewId: 'builder', cell: { x: 0, y: 1 }, moveCredit: 0 }],
+    })
+
+    expect(repaired.stockpile).toEqual({ x: 1, y: 0 })
+    expect(repaired.noPathOrderIds).toEqual([])
+    expect(repaired.orders[0]).toMatchObject({
+      assignedCrewId: 'builder',
+      travelPhase: 'to_stockpile',
+      block: null,
+    })
+  })
+
+  it('reroutes a second builder before an adjacent wall solidifies beneath them', () => {
     const first = wallOrder()
     const second: ConstructionOrder = {
       ...wallOrder(),
@@ -454,6 +479,22 @@ describe('spatial construction worker simulation', () => {
       materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
       work: { required: 1, completed: 0 },
     }))
+    const workers = [
+      {
+        id: 'alpha',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+      {
+        id: 'beta',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+    ]
     const result = advanceConstructionWorkerSimulation({
       layout: createConstructionLayout(),
       orders,
@@ -463,32 +504,36 @@ describe('spatial construction worker simulation', () => {
         { crewId: 'alpha', cell: { x: 4, y: 1 }, moveCredit: 0 },
         { crewId: 'beta', cell: { x: 5, y: 1 }, moveCredit: 0 },
       ],
-      workers: [
-        {
-          id: 'alpha',
-          canConstruct: true,
-          movementRate: 2,
-          engineeringRate: 1,
-          haulingRate: 1,
-        },
-        {
-          id: 'beta',
-          canConstruct: true,
-          movementRate: 2,
-          engineeringRate: 1,
-          haulingRate: 1,
-        },
-      ],
+      workers,
       elapsed: 1,
     })
 
-    expect(result.orders.every((order) => order.status === 'complete')).toBe(true)
-    const wallCells = new Set(result.layout.boundaries.map((cell) => `${cell.x}:${cell.y}`))
-    expect(result.crewPositions.every((position) =>
+    expect(result.orders.map((order) => order.status)).toEqual(['complete', 'building'])
+    const beta = result.crewPositions.find((position) => position.crewId === 'beta')!
+    expect(beta.cell).toEqual({ x: 5, y: 0 })
+    expect(result.layout.boundaries).toContainEqual({ x: 5, y: 1, kind: 'wall' })
+    expect(result.layout.boundaries).not.toContainEqual({ x: 6, y: 1, kind: 'wall' })
+
+    let finished = result
+    for (let tick = 0; tick < 2 && finished.orders.some(
+      (order) => order.status !== 'complete',
+    ); tick += 1) {
+      finished = advanceConstructionWorkerSimulation({
+        layout: finished.layout,
+        orders: finished.orders,
+        constructionStock: finished.constructionStock,
+        stockpile: finished.stockpile,
+        crewPositions: finished.crewPositions,
+        workers,
+        elapsed: 1,
+      })
+    }
+
+    expect(finished.orders.every((order) => order.status === 'complete')).toBe(true)
+    const wallCells = new Set(finished.layout.boundaries.map((cell) => `${cell.x}:${cell.y}`))
+    expect(finished.crewPositions.every((position) =>
       !wallCells.has(`${position.cell.x}:${position.cell.y}`),
     )).toBe(true)
-    const beta = result.crewPositions.find((position) => position.crewId === 'beta')!
-    expect(Math.abs(beta.cell.x - 5) + Math.abs(beta.cell.y - 1)).toBe(1)
   })
 
   it('keeps unreachable cargo bound to its carrier and resumes that carrier when opened', () => {
@@ -704,6 +749,159 @@ describe('spatial construction worker simulation', () => {
     expect(retried.orders[0]).toMatchObject({
       block: null,
       assignedCrewId: 'beta',
+    })
+  })
+
+  it('retries a no-route job when a blocking blueprint is canceled', () => {
+    const barrier = Array.from({ length: 24 }, (_, x): BoundaryCell => ({
+      x,
+      y: 2,
+      kind: 'wall',
+    })).filter((cell) => cell.x !== 1)
+    const waiting: ConstructionOrder = {
+      ...wallOrder(),
+      id: 'waiting-beyond-gap',
+      commandId: 'waiting-beyond-gap',
+      priority: 5,
+      target: {
+        kind: 'boundary',
+        cells: [{ x: 5, y: 4 }],
+        construct: { x: 5, y: 4, kind: 'wall' },
+        deconstruct: null,
+      },
+    }
+    const blockingBlueprint: ConstructionOrder = {
+      ...wallOrder(),
+      id: 'blocking-gap',
+      commandId: 'blocking-gap',
+      sequence: 2,
+      priority: 3,
+      status: 'blocked',
+      block: {
+        kind: 'prerequisite',
+        message: 'Waiting for a prerequisite that is not in this fixture.',
+      },
+      prerequisiteOrderIds: ['missing-prerequisite'],
+      target: {
+        kind: 'boundary',
+        cells: [{ x: 1, y: 2 }],
+        construct: { x: 1, y: 2, kind: 'wall' },
+        deconstruct: null,
+      },
+    }
+    const first = advanceConstructionWorkerSimulation({
+      ...inputFor(waiting, 0),
+      layout: { ...createConstructionLayout(), boundaries: barrier },
+      orders: [waiting, blockingBlueprint],
+      crewPositions: [{ crewId: 'builder', cell: { x: 1, y: 1 }, moveCredit: 0 }],
+    })
+    const blocked = first.orders.find((order) => order.id === waiting.id)!
+    expect(blocked.block).toMatchObject({ kind: 'no_path' })
+    expect(first.orders.find((order) => order.id === blockingBlueprint.id)?.assignedCrewId)
+      .toBeNull()
+
+    const retried = advanceConstructionWorkerSimulation({
+      ...inputFor(blocked, 0),
+      layout: first.layout,
+      orders: [blocked],
+      constructionStock: first.constructionStock,
+      crewPositions: first.crewPositions,
+    })
+
+    expect(retried.noPathOrderIds).toEqual([])
+    expect(retried.orders[0]).toMatchObject({
+      block: null,
+      assignedCrewId: 'builder',
+    })
+  })
+
+  it('retries a no-route job after an evacuating builder reaches its side of a chokepoint', () => {
+    const barrier = Array.from({ length: 24 }, (_, x): BoundaryCell => ({
+      x,
+      y: 2,
+      kind: 'wall',
+    })).filter((cell) => cell.x !== 1)
+    barrier.push({ x: 1, y: 1, kind: 'wall' })
+    const waiting: ConstructionOrder = {
+      ...wallOrder(),
+      id: 'waiting-south',
+      commandId: 'waiting-south',
+      priority: 5,
+      status: 'building',
+      materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
+      target: {
+        kind: 'boundary',
+        cells: [{ x: 5, y: 4 }],
+        construct: { x: 5, y: 4, kind: 'wall' },
+        deconstruct: null,
+      },
+    }
+    const blockingBlueprint: ConstructionOrder = {
+      ...wallOrder(),
+      id: 'blocked-gap',
+      commandId: 'blocked-gap',
+      sequence: 2,
+      priority: 3,
+      status: 'blocked',
+      block: {
+        kind: 'prerequisite',
+        message: 'Waiting for a prerequisite that is not in this fixture.',
+      },
+      prerequisiteOrderIds: ['missing-prerequisite'],
+      target: {
+        kind: 'boundary',
+        cells: [{ x: 1, y: 2 }],
+        construct: { x: 1, y: 2, kind: 'wall' },
+        deconstruct: null,
+      },
+    }
+    const workers = [
+      {
+        id: 'alpha',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+      {
+        id: 'beta',
+        canConstruct: true,
+        movementRate: 2,
+        engineeringRate: 1,
+        haulingRate: 1,
+      },
+    ]
+    const first = advanceConstructionWorkerSimulation({
+      layout: { ...createConstructionLayout(), boundaries: barrier },
+      orders: [waiting, blockingBlueprint],
+      constructionStock: 4,
+      stockpile: { x: 2, y: 1 },
+      crewPositions: [
+        { crewId: 'alpha', cell: { x: 1, y: 2 }, moveCredit: 0 },
+        { crewId: 'beta', cell: { x: 2, y: 1 }, moveCredit: 0 },
+      ],
+      workers,
+      elapsed: 1,
+    })
+    const blocked = first.orders.find((order) => order.id === waiting.id)!
+    expect(blocked.block).toMatchObject({ kind: 'no_path' })
+    expect(first.crewPositions.find((position) => position.crewId === 'alpha')?.cell)
+      .toEqual({ x: 1, y: 3 })
+
+    const retried = advanceConstructionWorkerSimulation({
+      layout: first.layout,
+      orders: first.orders,
+      constructionStock: first.constructionStock,
+      stockpile: first.stockpile,
+      crewPositions: first.crewPositions,
+      workers,
+      elapsed: 0,
+    })
+
+    expect(retried.noPathOrderIds).toEqual([])
+    expect(retried.orders.find((order) => order.id === waiting.id)).toMatchObject({
+      block: null,
+      assignedCrewId: 'alpha',
     })
   })
 })

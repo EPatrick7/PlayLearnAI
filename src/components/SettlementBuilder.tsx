@@ -9,6 +9,7 @@ import {
 import {
   detectRooms,
   eraseAt,
+  getWorkstationCells,
   removeWorkstation,
   type ConstructionResult,
   type GridPoint,
@@ -163,6 +164,12 @@ const toolMaterialCost = (tool: ConstructionTool) => {
   return WORKSTATION_SPECS[tool].materialCost
 }
 
+const categoryForTool = (tool: ConstructionTool): BuildCategory => {
+  if (tool === 'wall' || tool === 'door') return 'structure'
+  if (tool === 'erase') return 'orders'
+  return WORKSTATION_SPECS[tool].category
+}
+
 const tileSurfaceIcon = (surfaceKind: string): GameIconName => {
   if (surfaceKind === 'wall') return 'wall'
   if (surfaceKind === 'door') return 'door'
@@ -296,6 +303,38 @@ export function SettlementBuilder({
   }, [])
   const rooms = useMemo(() => detectRooms(layout), [layout])
   const readyForShift = canBeginOperations(colony)
+  const wallCanBecomeRoomDoor = useMemo(() => {
+    if (rooms.length >= 2) return false
+    return layout.boundaries.some((boundary, boundaryIndex) => {
+      if (boundary.kind !== 'wall') return false
+      const candidate = {
+        ...layout,
+        boundaries: layout.boundaries.map((cell, index) => (
+          index === boundaryIndex ? { ...cell, kind: 'door' as const } : cell
+        )),
+      }
+      return detectRooms(candidate).length > rooms.length
+    })
+  }, [layout, rooms.length])
+  const hasEnclosedLifeSupport = useMemo(() => layout.workstations.some((workstation) => {
+    if (workstation.type !== 'life-support') return false
+    const cells = getWorkstationCells(workstation)
+    return rooms.some((room) => {
+      const roomCells = new Set(room.cells.map(pointKey))
+      return cells.every((cell) => roomCells.has(pointKey(cell)))
+    })
+  }), [layout.workstations, rooms])
+  const firstShiftStep = colony.settlement.phase === 'operations'
+    ? null
+    : openOrders.length > 0
+      ? 'building'
+      : rooms.length < 2
+        ? wallCanBecomeRoomDoor ? 'door' : 'room'
+        : !hasEnclosedLifeSupport
+          ? 'life-support'
+          : readyForShift
+            ? 'ready'
+            : 'building'
   const visibleCrew = useMemo(
     () => colony.settlement.phase === 'landing' ? colony.crew.slice(0, 2) : colony.crew,
     [colony.crew, colony.settlement.phase],
@@ -613,20 +652,29 @@ export function SettlementBuilder({
     setToastVisible(true)
   }, [selectedTool])
 
-  const chooseTool = (tool: ConstructionTool) => {
+  const activateTool = (
+    tool: ConstructionTool,
+    nextRotation: WorkstationRotation = 0,
+    closeCatalog = shouldCollapseCatalogAfterToolChoice(),
+    message?: string,
+  ) => {
     setConstructionQueueOpen(false)
     setSelection(null)
     setStackSnapshot(null)
     setStackTrigger(null)
+    setToolActivationId((current) => current + 1)
+    setSelectedTool(tool)
+    setRotation(nextRotation)
+    if (closeCatalog) setBuildOpen(false)
+    announce(message ?? `${toolName(tool)} ready. ${tool === 'wall' || tool === 'erase' ? 'Drag to draw.' : 'Tap to place.'}`)
+  }
+
+  const chooseTool = (tool: ConstructionTool) => {
     if (selectedTool === tool) {
       cancelTool()
       return
     }
-    setToolActivationId((current) => current + 1)
-    setSelectedTool(tool)
-    setRotation(0)
-    if (shouldCollapseCatalogAfterToolChoice()) setBuildOpen(false)
-    announce(`${toolName(tool)} ready. ${tool === 'wall' || tool === 'erase' ? 'Drag to draw.' : 'Tap to place.'}`)
+    activateTool(tool)
   }
 
   const chooseCategory = (nextCategory: BuildCategory) => {
@@ -660,6 +708,75 @@ export function SettlementBuilder({
   const startFirstShift = () => {
     const result = colony.beginOperations()
     if (!result.ok) announce(result.error ?? 'The settlement is not ready yet.')
+  }
+
+  const copySelectedItem = () => {
+    if (!selectedTile || !selectedItem) return
+
+    let copiedTool: ConstructionTool | null = null
+    let copiedRotation: WorkstationRotation = 0
+    if (selectedItem.kind === 'boundary') {
+      copiedTool = layout.boundaries.find(
+        (boundary) => boundary.x === selectedTile.cell.x && boundary.y === selectedTile.cell.y,
+      )?.kind ?? null
+    } else if (selectedItem.kind === 'workstation') {
+      const workstation = layout.workstations.find((candidate) => candidate.id === selectedItem.id)
+      const workstationTool = workstation?.type as ConstructionTool | undefined
+      if (workstation && workstationTool && isWorkstationTool(workstationTool)) {
+        copiedTool = workstationTool
+        copiedRotation = workstation.rotation
+      }
+    }
+
+    if (!copiedTool) return
+    setCategory(categoryForTool(copiedTool))
+    activateTool(
+      copiedTool,
+      copiedRotation,
+      true,
+      `${toolName(copiedTool)} copied. ${copiedTool === 'wall' ? 'Drag to draw.' : 'Tap to place.'}`,
+    )
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.construction-map')?.focus()
+    })
+  }
+
+  const runFirstShiftStep = () => {
+    if (constructionQueue.length > 0) {
+      toggleConstructionQueue()
+      return
+    }
+    if (firstShiftStep === 'room') {
+      setCategory('structure')
+      activateTool(
+        'wall',
+        0,
+        true,
+        'Wall ready. Enclose a second room, then replace one wall tile with a door.',
+      )
+      return
+    }
+    if (firstShiftStep === 'door') {
+      setCategory('structure')
+      activateTool(
+        'door',
+        0,
+        true,
+        'Door ready. Replace one wall tile in the closed shell.',
+      )
+      return
+    }
+    if (firstShiftStep === 'life-support') {
+      setCategory('production')
+      activateTool(
+        'life-support',
+        0,
+        true,
+        'Life support ready. Place it inside an enclosed room.',
+      )
+      return
+    }
+    if (firstShiftStep === 'ready') startFirstShift()
   }
 
   useEffect(() => {
@@ -724,6 +841,51 @@ export function SettlementBuilder({
       : readyForShift
         ? 'Your first expansion is habitable. Begin the first shift when you are ready.'
       : instructionFor(null)
+  const firstShiftGuide = firstShiftStep === 'room'
+    ? {
+        ariaLabel: 'First shift: build second enclosed room with Wall designator',
+        compactTitle: 'Next · Wall',
+        detail: 'Next: Structure → Wall. Enclose a second room with one door.',
+        icon: 'wall' as const,
+        title: `First shift · ${Math.min(rooms.length, 2)}/2 rooms`,
+      }
+    : firstShiftStep === 'door'
+      ? {
+          ariaLabel: 'Finish the second room with a Door designator',
+          compactTitle: 'Next · Door',
+          detail: 'Next: Structure → Door. Replace one wall tile in the closed shell.',
+          icon: 'door' as const,
+          title: 'First shift · Add a door',
+        }
+    : firstShiftStep === 'life-support'
+      ? {
+          ariaLabel: 'Place Life support inside an enclosed room',
+          compactTitle: 'Life support',
+          detail: 'Next: Production → Life support inside an enclosed room.',
+          icon: 'lifeSupport' as const,
+          title: 'First shift · Add Life Support',
+        }
+      : firstShiftStep === 'building'
+        ? {
+            ariaLabel: constructionQueue.length > 0
+              ? `${constructionQueueOpen ? 'Close' : 'Open'} construction queue, ${constructionQueue.length} ${constructionQueue.length === 1 ? 'placement' : 'placements'}, ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
+              : 'Construction work must finish before the first shift',
+            compactTitle: `Queue · ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`,
+            detail: openOrders.length > 0
+              ? `Workers finish ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'} · ${strongestQueueStatus?.activity ?? 'waiting for a builder'}.`
+              : 'Finish or cancel all construction before beginning the first shift.',
+            icon: 'work' as const,
+            title: `First shift · ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'} open`,
+          }
+        : firstShiftStep === 'ready'
+          ? {
+              ariaLabel: 'Begin first shift',
+              compactTitle: 'Begin shift',
+              detail: 'Expansion habitable · begin the first shift.',
+              icon: 'play' as const,
+              title: 'First shift ready',
+            }
+          : null
 
   return (
     <div className="game-shell construction-shell">
@@ -740,11 +902,6 @@ export function SettlementBuilder({
         </div>
 
         <div className="construction-top-actions">
-          {readyForShift && (
-            <button aria-label="Begin first shift" onClick={startFirstShift} title="Open colony operations" type="button">
-              <GameIcon name="play" /><span>Begin shift</span>
-            </button>
-          )}
           {onExit && (
             <button aria-label="Return to colony" className="construction-exit-action" onClick={onExit} title="Return to colony" type="button">
               <GameIcon name="chevron" /><span>Colony</span>
@@ -774,36 +931,44 @@ export function SettlementBuilder({
         >
           <button
             aria-controls={constructionQueue.length > 0 ? 'construction-queue' : undefined}
-            aria-disabled={constructionQueue.length === 0}
-            aria-expanded={constructionQueueOpen}
+            aria-disabled={constructionQueue.length === 0 && !firstShiftGuide}
+            aria-expanded={constructionQueue.length > 0 ? constructionQueueOpen : undefined}
             aria-haspopup={constructionQueue.length > 0 ? 'dialog' : undefined}
-            aria-label={constructionQueue.length > 0
+            aria-label={firstShiftGuide?.ariaLabel ?? (constructionQueue.length > 0
               ? `${constructionQueueOpen ? 'Close' : 'Open'} construction queue, ${constructionQueue.length} ${constructionQueue.length === 1 ? 'placement' : 'placements'}, ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
-              : 'No construction jobs queued'}
-            className="construction-job-summary construction-queue-trigger"
-            onClick={toggleConstructionQueue}
+              : 'No construction jobs queued')}
+            className={`construction-job-summary construction-queue-trigger ${firstShiftStep ? `first-shift-${firstShiftStep}` : ''}`}
+            onClick={firstShiftGuide ? runFirstShiftStep : toggleConstructionQueue}
             ref={constructionQueueTriggerRef}
             type="button"
           >
-            <GameIcon name={openOrders.length > 0 ? 'work' : 'check'} />
+            <GameIcon name={firstShiftGuide?.icon ?? (openOrders.length > 0 ? 'work' : 'check')} />
             <span>
               <strong>
-                <span className="construction-queue-label-full">{openOrders.length > 0
+                <span className="construction-queue-label-full">{firstShiftGuide?.title ?? (openOrders.length > 0
                   ? `${constructionQueue.length} ${constructionQueue.length === 1 ? 'placement' : 'placements'} · ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
                   : constructionCompletionSummary
                     ? 'Construction complete'
-                    : 'No blueprints'}</span>
-                <span aria-hidden="true" className="construction-queue-label-compact">{openOrders.length > 0
+                    : 'No blueprints')}</span>
+                <span aria-hidden="true" className="construction-queue-label-compact">{firstShiftGuide?.compactTitle ?? (openOrders.length > 0
                   ? `Queue · ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
                   : constructionCompletionSummary
                     ? 'Queue · Complete'
-                    : 'Queue · Empty'}</span>
+                    : 'Queue · Empty')}</span>
               </strong>
-              <small>{openOrders.length > 0
+              <small>{firstShiftGuide?.detail ?? (openOrders.length > 0
                 ? strongestQueueStatus?.activity ?? 'Waiting for a builder'
-                : constructionCompletionSummary ?? toolInstruction}</small>
+                : constructionCompletionSummary ?? toolInstruction)}</small>
+              {firstShiftGuide && openOrders.length === 0 && (
+                <span className="sr-only">No blueprints.</span>
+              )}
+              {firstShiftGuide && constructionCompletionSummary && (
+                <span className="sr-only">
+                  Construction complete<span aria-hidden="true">Queue · Complete</span>{constructionCompletionSummary}
+                </span>
+              )}
             </span>
-            {constructionQueue.length > 0 && (
+            {(constructionQueue.length > 0 || firstShiftGuide) && (
               <GameIcon className="construction-queue-chevron" name="chevron" />
             )}
           </button>
@@ -1011,6 +1176,9 @@ export function SettlementBuilder({
 
             {selectedItem && (selectedItem.kind === 'boundary' || selectedItem.kind === 'workstation') && (
               <div className="construction-inspector-actions construction-inspector-single-action">
+                <button className="construction-copy-action" onClick={copySelectedItem} type="button">
+                  <GameIcon name="copy" /><span>Copy</span>
+                </button>
                 <button
                   className="construction-destructive-action"
                   disabled={selectedRemovalQueued}

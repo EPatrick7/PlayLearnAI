@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  getWorkstationCells,
   paintBoundaryCell,
   placeWorkstation,
 } from './construction'
@@ -410,7 +409,7 @@ describe('Moonbase Zustand store', () => {
       .toBe('crew-amina-okafor')
   })
 
-  it('moves the material pallet when completed construction covers its tile', () => {
+  it('rejects construction over the material pallet instead of teleporting its stock', () => {
     const initial = useColonyStore.getState()
     const originalStockpile = { ...initial.settlement.constructionStockpile }
     const lifeSupport = placeWorkstation(initial.settlement.layout, {
@@ -423,31 +422,29 @@ describe('Moonbase Zustand store', () => {
     })
 
     expect(lifeSupport.ok).toBe(true)
-    expect(useColonyStore.getState().queueConstruction(lifeSupport).ok).toBe(true)
-    for (let tick = 0; tick < 120 && useColonyStore.getState().settlement.constructionOrders.some(
-      (order) => order.status !== 'complete',
-    ); tick += 1) {
-      useColonyStore.getState().advanceConstruction(1)
-    }
+    const queued = useColonyStore.getState().queueConstruction(lifeSupport)
+    expect(queued).toMatchObject({
+      ok: false,
+      orderIds: [],
+      error: expect.stringContaining('construction pallet'),
+    })
 
-    const completed = useColonyStore.getState()
-    const workstation = completed.settlement.layout.workstations.find(
+    const rejected = useColonyStore.getState()
+    const workstation = rejected.settlement.layout.workstations.find(
       (candidate) => candidate.id === 'stockpile-overlap-life-support',
     )
-    expect(workstation).toBeDefined()
-    expect(workstation && getWorkstationCells(workstation)).not.toContainEqual(
-      completed.settlement.constructionStockpile,
-    )
-    expect(completed.settlement.constructionStockpile).not.toEqual(originalStockpile)
+    expect(workstation).toBeUndefined()
+    expect(rejected.settlement.constructionOrders).toEqual([])
+    expect(rejected.settlement.constructionStockpile).toEqual(originalStockpile)
     expect(isConstructionCellWalkable(
-      completed.settlement.layout,
-      completed.settlement.constructionStockpile,
+      rejected.settlement.layout,
+      rejected.settlement.constructionStockpile,
     )).toBe(true)
 
-    expect(completed.queueConstruction(
-      paintBoundaryCell(completed.settlement.layout, { x: 12, y: 9 }, 'wall'),
+    expect(rejected.queueConstruction(
+      paintBoundaryCell(rejected.settlement.layout, { x: 12, y: 9 }, 'wall'),
     ).ok).toBe(true)
-    completed.advanceConstruction(0.25)
+    rejected.advanceConstruction(0.25)
     expect(useColonyStore.getState().settlement.constructionOrders.at(-1)).toMatchObject({
       assignedCrewId: expect.any(String),
       block: null,

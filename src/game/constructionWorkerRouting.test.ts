@@ -81,6 +81,34 @@ describe('construction worker routing', () => {
       .toEqual({ x: 1, y: 0 })
   })
 
+  it('relocates a pallet away from an unfinished construction footprint', () => {
+    const layout = createConstructionLayout()
+
+    expect(normalizeConstructionStockpile(
+      layout,
+      { x: 1, y: 1 },
+      { x: 8, y: 9 },
+      [{ x: 1, y: 1 }],
+    )).toEqual({ x: 1, y: 0 })
+  })
+
+  it('relocates a pallet before pending walls isolate its walkable tile', () => {
+    const layout = createConstructionLayout()
+    const pendingRing = [
+      { x: 5, y: 4 },
+      { x: 6, y: 5 },
+      { x: 5, y: 6 },
+      { x: 4, y: 5 },
+    ]
+
+    expect(normalizeConstructionStockpile(
+      layout,
+      { x: 5, y: 5 },
+      { x: 8, y: 9 },
+      pendingRing,
+    )).toEqual({ x: 5, y: 3 })
+  })
+
   it('moves an obstructed pallet past a nearer sealed pocket into the connected work area', () => {
     const layout = layoutWith([
       { x: 5, y: 5, kind: 'wall' },
@@ -184,6 +212,103 @@ describe('construction worker routing', () => {
     expect(result.crewPositions[0].cell).not.toEqual({ x: 3, y: 3 })
     expect(result.crewPositions[0].cell).not.toEqual({ x: 4, y: 3 })
     expect(result.crewPositions[0].cell.y).toBeGreaterThanOrEqual(3)
+  })
+
+  it('never uses another unfinished wall footprint as a work position', () => {
+    const first = wallOrder('first', { x: 5, y: 1 }, {
+      status: 'building',
+      assignedCrewId: 'alpha',
+      travelPhase: 'at_site',
+      materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
+    })
+    const second = wallOrder('second', { x: 6, y: 1 }, {
+      sequence: 2,
+      status: 'building',
+      assignedCrewId: 'beta',
+      travelPhase: 'at_site',
+      materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
+    })
+    const result = advanceConstructionWorkerRouting({
+      layout: createConstructionLayout(),
+      orders: [first, second],
+      crewPositions: [
+        { crewId: 'alpha', cell: { x: 4, y: 1 }, moveCredit: 0 },
+        { crewId: 'beta', cell: { x: 5, y: 1 }, moveCredit: 0 },
+      ],
+      workers: [
+        { id: 'alpha', movementRate: 2 },
+        { id: 'beta', movementRate: 2 },
+      ],
+      stockpile: { x: 1, y: 1 },
+      elapsed: 1,
+    })
+
+    expect(result.crewPositions.find((position) => position.crewId === 'alpha')?.cell)
+      .toEqual({ x: 4, y: 1 })
+    expect(result.crewPositions.find((position) => position.crewId === 'beta')?.cell)
+      .toEqual({ x: 5, y: 0 })
+    expect(result.atSiteWorkers.map((arrival) => arrival.crewId)).toEqual(['alpha'])
+    expect(result.orders.find((order) => order.id === 'second')).toMatchObject({
+      assignedCrewId: 'beta',
+      travelPhase: 'to_site',
+    })
+  })
+
+  it('evacuates across contiguous blueprints when they are the only exit', () => {
+    const first = wallOrder('first', { x: 1, y: 1 }, {
+      status: 'blocked',
+      block: { kind: 'prerequisite', message: 'Waiting.' },
+      prerequisiteOrderIds: ['missing'],
+    })
+    const second = wallOrder('second', { x: 2, y: 1 }, {
+      sequence: 2,
+      status: 'blocked',
+      block: { kind: 'prerequisite', message: 'Waiting.' },
+      prerequisiteOrderIds: ['missing'],
+    })
+    const result = advanceConstructionWorkerRouting({
+      layout: layoutWith([
+        { x: 0, y: 1, kind: 'wall' },
+        { x: 1, y: 0, kind: 'wall' },
+        { x: 2, y: 0, kind: 'wall' },
+        { x: 1, y: 2, kind: 'wall' },
+        { x: 2, y: 2, kind: 'wall' },
+      ]),
+      orders: [first, second],
+      crewPositions: [{ crewId: 'idle', cell: { x: 1, y: 1 }, moveCredit: 0 }],
+      workers: [{ id: 'idle', movementRate: 2 }],
+      stockpile: { x: 5, y: 5 },
+      elapsed: 1,
+    })
+
+    expect(result.crewPositions[0].cell).toEqual({ x: 3, y: 1 })
+    expect(result.orders.every((order) => order.assignedCrewId === null)).toBe(true)
+  })
+
+  it('evacuates a pawn before pending walls isolate its open tile', () => {
+    const targets = [
+      { x: 5, y: 4 },
+      { x: 6, y: 5 },
+      { x: 5, y: 6 },
+      { x: 4, y: 5 },
+    ]
+    const orders = targets.map((target, index) => wallOrder(`ring-${index}`, target, {
+      sequence: index + 1,
+      status: 'blocked',
+      block: { kind: 'prerequisite', message: 'Waiting.' },
+      prerequisiteOrderIds: ['missing'],
+    }))
+    const result = advanceConstructionWorkerRouting({
+      layout: createConstructionLayout(),
+      orders,
+      crewPositions: [{ crewId: 'idle', cell: { x: 5, y: 5 }, moveCredit: 0 }],
+      workers: [{ id: 'idle', movementRate: 2 }],
+      stockpile: { x: 5, y: 5 },
+      elapsed: 1,
+    })
+
+    expect(result.crewPositions[0].cell).toEqual({ x: 5, y: 3 })
+    expect(result.orders.every((order) => order.assignedCrewId === null)).toBe(true)
   })
 
   it('sends deconstruction directly to the site without a stockpile detour', () => {

@@ -220,10 +220,7 @@ const advanceConstructionInState = (
     layout: advanced.layout,
     constructionOrders: advanced.orders,
     constructionCrew: advanced.crewPositions,
-    constructionStockpile: normalizeConstructionStockpile(
-      advanced.layout,
-      advanced.stockpile,
-    ),
+    constructionStockpile: advanced.stockpile,
   }
   state.reserves = {
     ...state.reserves,
@@ -363,6 +360,19 @@ export const useColonyStore = create<MoonbaseStore>()(
         })
         if (derived.length === 0) {
           return { ok: false, orderIds: [], error: 'Nothing changed on those tiles.' }
+        }
+        const stockpile = state.settlement.constructionStockpile
+        const coversStockpile = derived.some((order) => (
+          order.status !== 'complete' &&
+          Boolean(order.target.construct) &&
+          order.target.cells.some((cell) => cell.x === stockpile.x && cell.y === stockpile.y)
+        ))
+        if (coversStockpile) {
+          return {
+            ok: false,
+            orderIds: [],
+            error: 'The construction pallet occupies that footprint. Build beside it so colonists can collect materials.',
+          }
         }
 
         const cancelledIds = new Set<string>()

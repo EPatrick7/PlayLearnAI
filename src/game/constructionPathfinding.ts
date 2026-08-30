@@ -20,6 +20,12 @@ export interface ConstructionPathfindingOptions {
    * search can never expand forever even when its destination is unreachable.
    */
   maxVisitedCells?: number
+  /**
+   * Cells reserved by unfinished construction footprints. They behave as
+   * temporary solids while routing, but a pawn already standing on one may
+   * step off it so older saves and simultaneous assignments can recover.
+   */
+  transientBlockedCells?: readonly GridPoint[]
 }
 
 const cardinalDirections: readonly GridPoint[] = [
@@ -66,6 +72,17 @@ const blockedCellKeys = (layout: ConstructionLayout) => {
   return blocked
 }
 
+const routeBlockedCellKeys = (
+  layout: ConstructionLayout,
+  transientBlockedCells: readonly GridPoint[] | undefined,
+) => {
+  const blocked = blockedCellKeys(layout)
+  transientBlockedCells?.forEach((cell) => {
+    if (isInConstructionBounds(cell, layout)) blocked.add(pointKey(cell))
+  })
+  return blocked
+}
+
 const visitLimit = (
   layout: ConstructionLayout,
   requested: number | undefined,
@@ -108,10 +125,11 @@ export const isConstructionCellWalkable = (
 export const getConstructionApproachCells = (
   layout: ConstructionLayout,
   targetCells: readonly GridPoint[],
+  options: ConstructionPathfindingOptions = {},
 ): GridPoint[] => {
   const normalizedTargets = uniqueSortedInBoundsPoints(layout, targetCells)
   const targetKeys = new Set(normalizedTargets.map(pointKey))
-  const blocked = blockedCellKeys(layout)
+  const blocked = routeBlockedCellKeys(layout, options.transientBlockedCells)
   const approaches = new Map<string, GridPoint>()
 
   normalizedTargets.forEach((target) => {
@@ -145,7 +163,8 @@ export const findConstructionPath = (
   destinations: readonly GridPoint[],
   options: ConstructionPathfindingOptions = {},
 ): ConstructionRoute | null => {
-  const blocked = blockedCellKeys(layout)
+  const physicallyBlocked = blockedCellKeys(layout)
+  const blocked = routeBlockedCellKeys(layout, options.transientBlockedCells)
   const startKey = pointKey(start)
   const destinationKeys = new Set(
     uniqueSortedInBoundsPoints(layout, destinations)
@@ -157,7 +176,7 @@ export const findConstructionPath = (
   if (
     limit === 0 ||
     !isInConstructionBounds(start, layout) ||
-    blocked.has(startKey) ||
+    physicallyBlocked.has(startKey) ||
     destinationKeys.size === 0
   ) return null
 
@@ -207,7 +226,7 @@ export const findConstructionApproachPath = (
 ) => findConstructionPath(
   layout,
   start,
-  getConstructionApproachCells(layout, targetCells),
+  getConstructionApproachCells(layout, targetCells, options),
   options,
 )
 

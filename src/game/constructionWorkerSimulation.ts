@@ -18,6 +18,10 @@ import {
   type ConstructionRoutingWorker,
   type RoutableConstructionOrder,
 } from './constructionWorkerRouting'
+import {
+  getConstructionApproachCells,
+  isConstructionCellWalkable,
+} from './constructionPathfinding'
 
 export interface SpatialConstructionWorker extends ConstructionWorker, ConstructionRoutingWorker {
   canConstruct: boolean
@@ -103,10 +107,40 @@ const mergeOrder = (
   ? routableOrder(updated)
   : order)
 
+const pointKey = ({ x, y }: GridPoint) => `${x}:${y}`
+
+const unfinishedConstructCells = (
+  orders: readonly RoutableConstructionOrder[],
+) => orders
+  .filter((order) => order.status !== 'complete' && Boolean(order.target.construct))
+  .flatMap((order) => order.target.cells.map((cell) => ({ ...cell })))
+
+const constructTargetBecomesSolid = (order: RoutableConstructionOrder) => (
+  order.target.kind === 'workstation'
+    ? Boolean(order.target.construct)
+    : order.target.construct?.kind === 'wall'
+)
+
 const constructionRouteContextKey = (
   input: ConstructionWorkerSimulationInput,
   stockpile: GridPoint,
 ) => {
+  const eligibleWorkerIds = new Set(
+    input.workers.filter((worker) => worker.canConstruct).map((worker) => worker.id),
+  )
+  const busyWorkerIds = new Set(
+    input.orders
+      .filter((order) => order.status !== 'complete')
+      .map((order) => (
+        carriedConstructionMaterial(order) > 0
+          ? order.materials.carriedByCrewId
+          : order.block?.kind !== 'no_path'
+            ? order.assignedCrewId
+            : null
+      ))
+      .filter((crewId): crewId is string => Boolean(crewId)),
+  )
+
   return JSON.stringify({
     boundaries: [...input.layout.boundaries]
       .sort((left, right) => left.y - right.y || left.x - right.x)
@@ -123,21 +157,18 @@ const constructionRouteContextKey = (
         item.rotation,
     ]),
     stockpile: [stockpile.x, stockpile.y],
-    eligibleWorkers: input.workers
-      .filter((worker) => worker.canConstruct)
-      .sort((left, right) => left.id.localeCompare(right.id))
-      .map((worker) => worker.id),
-    busyWorkers: [...new Set(
+    eligibleWorkers: [...eligibleWorkerIds].sort((left, right) => left.localeCompare(right)),
+    busyWorkers: [...busyWorkerIds].sort((left, right) => left.localeCompare(right)),
+    availableWorkerPositions: input.crewPositions
+      .filter((position) => (
+        eligibleWorkerIds.has(position.crewId) && !busyWorkerIds.has(position.crewId)
+      ))
+      .sort((left, right) => left.crewId.localeCompare(right.crewId))
+      .map((position) => [position.crewId, position.cell.x, position.cell.y]),
+    pendingConstructFootprints: [...new Set(
       input.orders
-        .filter((order) => order.status !== 'complete')
-        .map((order) => (
-          carriedConstructionMaterial(order) > 0
-            ? order.materials.carriedByCrewId
-            : order.block?.kind !== 'no_path'
-              ? order.assignedCrewId
-              : null
-        ))
-        .filter((crewId): crewId is string => Boolean(crewId)),
+        .filter((order) => order.status !== 'complete' && Boolean(order.target.construct))
+        .flatMap((order) => order.target.cells.map(pointKey)),
     )].sort((left, right) => left.localeCompare(right)),
   })
 }
@@ -152,7 +183,13 @@ export const advanceConstructionWorkerSimulation = (
   input: ConstructionWorkerSimulationInput,
 ): ConstructionWorkerSimulationResult => {
   const elapsed = Number.isFinite(input.elapsed) ? Math.max(0, input.elapsed) : 0
-  const stockpile = normalizeConstructionStockpile(input.layout, input.stockpile)
+  const initialOrders = input.orders.map(routableOrder)
+  const stockpile = normalizeConstructionStockpile(
+    input.layout,
+    input.stockpile,
+    undefined,
+    unfinishedConstructCells(initialOrders),
+  )
   const routeContextKey = constructionRouteContextKey(input, stockpile)
   let layout = input.layout
   let constructionStock = Number.isFinite(input.constructionStock)
@@ -189,6 +226,7 @@ export const advanceConstructionWorkerSimulation = (
     crewPositions: input.crewPositions,
     workers: input.workers,
     stockpile,
+    stockpileIsNormalized: true,
     elapsed,
   })
   let orders = routing.orders
@@ -241,12 +279,29 @@ export const advanceConstructionWorkerSimulation = (
     order.materials.reserved = 0
   })
   const workerById = new Map(input.workers.map((worker) => [worker.id, worker]))
+  const crewPositionById = new Map(
+    routing.crewPositions.map((position) => [position.crewId, position]),
+  )
 
   routing.atSiteWorkers
     .forEach((arrival) => {
       const order = orders.find((candidate) => candidate.id === arrival.orderId)
       const worker = workerById.get(arrival.crewId)
-      if (!order || !worker || order.status === 'complete') return
+      const crewPosition = crewPositionById.get(arrival.crewId)
+      if (!order || !worker || !crewPosition || order.status === 'complete') return
+
+      // An earlier arrival in this same update may have changed the walkable
+      // perimeter. Revalidate against the live layout instead of allowing work
+      // from a stale route and repairing a trapped pawn afterward.
+      const approachCells = getConstructionApproachCells(
+        layout,
+        order.target.cells,
+        { transientBlockedCells: unfinishedConstructCells(orders) },
+      )
+      if (!approachCells.some((cell) => pointKey(cell) === pointKey(crewPosition.cell))) {
+        order.travelPhase = 'to_site'
+        return
+      }
 
       const carried = carriedConstructionMaterial(order)
       if (carried > 0) {
@@ -262,6 +317,13 @@ export const advanceConstructionWorkerSimulation = (
         order.assignedCrewId = null
         order.travelPhase = 'idle'
         return
+      }
+      if (constructTargetBecomesSolid(order)) {
+        const targetKeys = new Set(order.target.cells.map(pointKey))
+        const occupied = routing.crewPositions.some((position) => (
+          targetKeys.has(pointKey(position.cell))
+        ))
+        if (occupied) return
       }
       if (!worker.canConstruct || arrival.availableWorkTime <= 0) return
 
@@ -301,7 +363,14 @@ export const advanceConstructionWorkerSimulation = (
     ...finalReservation.blockedOrderIds,
     ...routing.noPathOrderIds,
   ])]
-  const finalStockpile = normalizeConstructionStockpile(layout, stockpile)
+  const finalStockpile = isConstructionCellWalkable(layout, stockpile)
+    ? { ...stockpile }
+    : normalizeConstructionStockpile(
+        layout,
+        stockpile,
+        undefined,
+        unfinishedConstructCells(orders),
+      )
   const crewPositions = normalizeConstructionCrewPositions(
     layout,
     input.workers,
@@ -333,7 +402,10 @@ export const advanceConstructionWorkerSimulationFixedStep = (
   input: ConstructionWorkerSimulationInput,
 ): ConstructionWorkerSimulationResult => {
   const elapsed = Number.isFinite(input.elapsed) ? Math.max(0, input.elapsed) : 0
-  if (elapsed <= CONSTRUCTION_SIMULATION_STEP) {
+  if (
+    elapsed <= CONSTRUCTION_SIMULATION_STEP ||
+    input.workers.every((worker) => !worker.canConstruct)
+  ) {
     return advanceConstructionWorkerSimulation({ ...input, elapsed })
   }
 

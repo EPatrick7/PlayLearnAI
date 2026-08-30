@@ -50,6 +50,8 @@ export interface ConstructionRoutingInput {
   crewPositions: readonly ConstructionCrewPosition[]
   workers: readonly ConstructionRoutingWorker[]
   stockpile: GridPoint
+  /** Internal fast path for the simulation, which normalizes the pallet first. */
+  stockpileIsNormalized?: boolean
   elapsed: number
 }
 
@@ -127,41 +129,82 @@ const allWalkableCells = (layout: ConstructionLayout) => {
   })).filter((cell) => !blocked.has(pointKey(cell)))
 }
 
-const walkableComponentSizes = (
+const exteriorConnectedCellKeys = (
   layout: ConstructionLayout,
   cells: readonly GridPoint[],
 ) => {
   const walkable = new Set(cells.map(pointKey))
-  const sizeByCell = new Map<string, number>()
-  const visited = new Set<string>()
+  const connected = new Set<string>()
+  const queue = cells.filter((cell) => (
+    cell.x === 0 ||
+    cell.y === 0 ||
+    cell.x === layout.width - 1 ||
+    cell.y === layout.height - 1
+  ))
+  queue.forEach((cell) => connected.add(pointKey(cell)))
 
-  cells.forEach((start) => {
-    const startKey = pointKey(start)
-    if (visited.has(startKey)) return
-    const component: GridPoint[] = []
-    const queue = [start]
-    visited.add(startKey)
-    for (let index = 0; index < queue.length; index += 1) {
-      const cell = queue[index]
-      component.push(cell)
-      const neighbors = [
-        { x: cell.x - 1, y: cell.y },
-        { x: cell.x + 1, y: cell.y },
-        { x: cell.x, y: cell.y - 1 },
-        { x: cell.x, y: cell.y + 1 },
-      ]
-      neighbors.forEach((neighbor) => {
-        if (!isInConstructionBounds(neighbor, layout)) return
-        const neighborKey = pointKey(neighbor)
-        if (!walkable.has(neighborKey) || visited.has(neighborKey)) return
-        visited.add(neighborKey)
-        queue.push(neighbor)
-      })
-    }
-    component.forEach((cell) => sizeByCell.set(pointKey(cell), component.length))
+  for (let index = 0; index < queue.length; index += 1) {
+    const cell = queue[index]
+    const neighbors = [
+      { x: cell.x - 1, y: cell.y },
+      { x: cell.x + 1, y: cell.y },
+      { x: cell.x, y: cell.y - 1 },
+      { x: cell.x, y: cell.y + 1 },
+    ]
+    neighbors.forEach((neighbor) => {
+      const key = pointKey(neighbor)
+      if (!walkable.has(key) || connected.has(key)) return
+      connected.add(key)
+      queue.push(neighbor)
+    })
+  }
+
+  return connected
+}
+
+interface ConstructionRoutingTopology {
+  key: string
+  stableCells: GridPoint[]
+  stableCellKeys: Set<string>
+}
+
+let cachedRoutingTopology: ConstructionRoutingTopology | null = null
+
+const constructionRoutingTopology = (
+  layout: ConstructionLayout,
+  transientBlockedCells: readonly GridPoint[],
+): ConstructionRoutingTopology => {
+  const occupied = occupiedCellKeys(layout)
+  const transient = new Set(
+    transientBlockedCells
+      .filter((cell) => isInConstructionBounds(cell, layout))
+      .map(pointKey),
+  )
+  const key = [
+    `${layout.width}x${layout.height}`,
+    [...occupied].sort((left, right) => left.localeCompare(right)).join(','),
+    [...transient].sort((left, right) => left.localeCompare(right)).join(','),
+  ].join('|')
+  if (cachedRoutingTopology?.key === key) return cachedRoutingTopology
+
+  const safeCells = Array.from({ length: layout.width * layout.height }, (_, index) => ({
+    x: index % layout.width,
+    y: Math.floor(index / layout.width),
+  })).filter((cell) => {
+    const cellKey = pointKey(cell)
+    return !occupied.has(cellKey) && !transient.has(cellKey)
   })
-
-  return sizeByCell
+  const exteriorConnected = exteriorConnectedCellKeys(layout, safeCells)
+  const stableCells = exteriorConnected.size > 0
+    ? safeCells.filter((cell) => exteriorConnected.has(pointKey(cell)))
+    : safeCells
+  const topology = {
+    key,
+    stableCells,
+    stableCellKeys: new Set(stableCells.map(pointKey)),
+  }
+  cachedRoutingTopology = topology
+  return topology
 }
 
 /** Keeps the material pickup cell usable after loading an old or edited map. */
@@ -169,29 +212,19 @@ export const normalizeConstructionStockpile = (
   layout: ConstructionLayout,
   requested: GridPoint | null | undefined,
   fallback: GridPoint = { x: 8, y: 9 },
+  transientBlockedCells: readonly GridPoint[] = [],
 ): GridPoint => {
-  if (
-    requested &&
-    isConstructionCellWalkable(layout, requested)
-  ) {
+  const topology = constructionRoutingTopology(layout, transientBlockedCells)
+  if (requested && topology.stableCellKeys.has(pointKey(requested))) {
     return clonePoint(requested)
   }
-  if (
-    !requested &&
-    isConstructionCellWalkable(layout, fallback)
-  ) {
+  if (!requested && topology.stableCellKeys.has(pointKey(fallback))) {
     return clonePoint(fallback)
   }
-  const walkableCells = allWalkableCells(layout)
-  const componentSizes = walkableComponentSizes(layout, walkableCells)
-  const largestComponent = Math.max(0, ...componentSizes.values())
-  const inLargestComponent = (cell: GridPoint) =>
-    componentSizes.get(pointKey(cell)) === largestComponent
   const anchor = requested && isInConstructionBounds(requested, layout)
     ? requested
     : fallback
-  return walkableCells
-    .filter(inLargestComponent)
+  return topology.stableCells
     .sort((left, right) =>
       manhattanDistance(left, anchor) - manhattanDistance(right, anchor) ||
       comparePoints(left, right),
@@ -214,7 +247,9 @@ export const normalizeConstructionCrewPositions = (
   stockpile: GridPoint,
   orders: readonly Pick<ConstructionOrder, 'status' | 'target'>[] = [],
 ): ConstructionCrewPosition[] => {
-  const normalizedStockpile = normalizeConstructionStockpile(layout, stockpile)
+  const normalizedStockpile = isConstructionCellWalkable(layout, stockpile)
+    ? clonePoint(stockpile)
+    : normalizeConstructionStockpile(layout, stockpile)
   const workerIds = new Set(
     workers
       .map((worker) => worker.id.trim())
@@ -346,6 +381,12 @@ const initialTravelPhase = (order: ConstructionOrder): ConstructionTravelPhase =
     ? 'to_site'
     : 'to_stockpile'
 
+const unfinishedConstructCells = (
+  orders: readonly RoutableConstructionOrder[],
+) => orders
+  .filter((order) => order.status !== 'complete' && Boolean(order.target.construct))
+  .flatMap((order) => order.target.cells.map(clonePoint))
+
 const workerMovementRate = (worker: ConstructionRoutingWorker) => {
   const requested = worker.movementRate ?? DEFAULT_MOVEMENT_RATE
   return Number.isFinite(requested) && requested > 0
@@ -357,7 +398,8 @@ const routeStillAtSite = (
   layout: ConstructionLayout,
   cell: GridPoint,
   order: RoutableConstructionOrder,
-) => getConstructionApproachCells(layout, order.target.cells)
+  transientBlockedCells: readonly GridPoint[],
+) => getConstructionApproachCells(layout, order.target.cells, { transientBlockedCells })
   .some((candidate) => pointKey(candidate) === pointKey(cell))
 
 const workerCanReachOrder = (
@@ -366,18 +408,25 @@ const workerCanReachOrder = (
   cell: GridPoint,
   order: RoutableConstructionOrder,
   requestedPhase: ConstructionTravelPhase,
+  transientBlockedCells: readonly GridPoint[],
 ) => {
   const phase = requestedPhase === 'idle'
     ? initialTravelPhase(order)
     : requestedPhase
-  if (phase === 'at_site' && routeStillAtSite(layout, cell, order)) return true
+  const routeOptions = { transientBlockedCells }
+  if (phase === 'at_site' && routeStillAtSite(
+    layout,
+    cell,
+    order,
+    transientBlockedCells,
+  )) return true
   if (phase === 'to_stockpile') {
     return Boolean(
-      findConstructionPath(layout, cell, [stockpile]) &&
-      findConstructionOrderApproachPath(layout, stockpile, order),
+      findConstructionPath(layout, cell, [stockpile], routeOptions) &&
+      findConstructionOrderApproachPath(layout, stockpile, order, routeOptions),
     )
   }
-  return Boolean(findConstructionOrderApproachPath(layout, cell, order))
+  return Boolean(findConstructionOrderApproachPath(layout, cell, order, routeOptions))
 }
 
 interface MovementResult {
@@ -408,8 +457,16 @@ export const advanceConstructionWorkerRouting = (
   input: ConstructionRoutingInput,
 ): ConstructionRoutingResult => {
   const elapsed = finiteNonnegative(input.elapsed)
-  const stockpile = normalizeConstructionStockpile(input.layout, input.stockpile)
   const orders = input.orders.map(cloneOrder)
+  const transientBlockedCells = unfinishedConstructCells(orders)
+  const stockpile = input.stockpileIsNormalized
+    ? clonePoint(input.stockpile)
+    : normalizeConstructionStockpile(
+        input.layout,
+        input.stockpile,
+        undefined,
+        transientBlockedCells,
+      )
   const workers = [...input.workers]
     .filter((worker, index, source) =>
       Boolean(worker.id.trim()) && source.findIndex((candidate) => candidate.id === worker.id) === index,
@@ -419,6 +476,7 @@ export const advanceConstructionWorkerRouting = (
     workers.filter((worker) => worker.canConstruct !== false).map((worker) => worker.id),
   )
   const statusByOrderId = new Map(orders.map((order) => [order.id, order.status]))
+  const routeOptions = { transientBlockedCells }
   const crewPositions = normalizeConstructionCrewPositions(
     input.layout,
     workers,
@@ -429,6 +487,41 @@ export const advanceConstructionWorkerRouting = (
   const positionByCrewId = new Map(crewPositions.map((position) => [position.crewId, position]))
   const workerById = new Map(workers.map((worker) => [worker.id, worker]))
   const noPathOrderIds: string[] = []
+
+  // Any pawn caught inside reserved footprints exits before normal dispatch.
+  // The emergency route may cross other still-passable blueprints, but its
+  // destination is always outside every pending footprint. Occupancy checks in
+  // the simulation keep those traversed targets from solidifying underneath it.
+  const topology = constructionRoutingTopology(input.layout, transientBlockedCells)
+  const stableCells = topology.stableCells
+  const stableCellKeys = topology.stableCellKeys
+  const evacuatingCrewIds = new Set<string>()
+  crewPositions.forEach((position) => {
+    if (stableCellKeys.has(pointKey(position.cell))) return
+    const worker = workerById.get(position.crewId)
+    if (!worker) return
+    const escape = findConstructionPath(
+      input.layout,
+      position.cell,
+      stableCells,
+    )
+    if (!escape) return
+    evacuatingCrewIds.add(position.crewId)
+    const movementRate = workerMovementRate(worker)
+    const availableDistance = position.moveCredit + movementRate * elapsed
+    const travelled = travelAlongPath(position.cell, escape.path, availableDistance)
+    position.cell = travelled.cell
+    position.moveCredit = Math.min(1 - MOVEMENT_EPSILON, travelled.remainingDistance)
+  })
+  orders.forEach((order) => {
+    if (
+      order.assignedCrewId &&
+      evacuatingCrewIds.has(order.assignedCrewId) &&
+      order.travelPhase === 'at_site'
+    ) {
+      order.travelPhase = 'to_site'
+    }
+  })
 
   // Invalid, duplicate, ineligible, or stranded assignments are released first.
   // A released job can then be offered to another builder with a valid route.
@@ -453,7 +546,12 @@ export const advanceConstructionWorkerRouting = (
         const canUnloadAtSite = Boolean(
           position &&
           phase === 'at_site' &&
-          routeStillAtSite(input.layout, position.cell, order),
+          routeStillAtSite(
+            input.layout,
+            position.cell,
+            order,
+            transientBlockedCells,
+          ),
         )
         if (
           claimedCrewIds.has(carrierId) ||
@@ -479,7 +577,14 @@ export const advanceConstructionWorkerRouting = (
         order.status = 'building'
         order.block = null
         statusByOrderId.set(order.id, order.status)
-        if (!workerCanReachOrder(input.layout, stockpile, position.cell, order, phase)) {
+        if (!workerCanReachOrder(
+          input.layout,
+          stockpile,
+          position.cell,
+          order,
+          phase,
+          transientBlockedCells,
+        )) {
           noPathOrderIds.push(order.id)
         }
         return
@@ -490,7 +595,14 @@ export const advanceConstructionWorkerRouting = (
         claimedCrewIds.has(crewId) ||
         !orderCanRoute(order, statusByOrderId) ||
         !position ||
-        !workerCanReachOrder(input.layout, stockpile, position.cell, order, phase)
+        !workerCanReachOrder(
+          input.layout,
+          stockpile,
+          position.cell,
+          order,
+          phase,
+          transientBlockedCells,
+        )
       ) {
         order.assignedCrewId = null
         order.travelPhase = 'idle'
@@ -501,7 +613,11 @@ export const advanceConstructionWorkerRouting = (
     })
 
   const availableWorkers = [...workers]
-    .filter((worker) => eligibleWorkerIds.has(worker.id) && !claimedCrewIds.has(worker.id))
+    .filter((worker) => (
+      eligibleWorkerIds.has(worker.id) &&
+      !claimedCrewIds.has(worker.id) &&
+      !evacuatingCrewIds.has(worker.id)
+    ))
     .sort((left, right) =>
       finiteNonnegative(right.dispatchPriority ?? 0) -
         finiteNonnegative(left.dispatchPriority ?? 0) ||
@@ -521,6 +637,7 @@ export const advanceConstructionWorkerRouting = (
           position.cell,
           order,
           phase,
+          transientBlockedCells,
         ))
       })
       if (workerIndex < 0) {
@@ -538,6 +655,7 @@ export const advanceConstructionWorkerRouting = (
   orders
     .filter((order) => (
       order.assignedCrewId &&
+      !evacuatingCrewIds.has(order.assignedCrewId) &&
       (order.status === 'hauling' || order.status === 'building')
     ))
     .sort(compareOrders)
@@ -555,7 +673,12 @@ export const advanceConstructionWorkerRouting = (
 
       // At most two travel legs exist: storage, then the work perimeter.
       for (let transition = 0; transition < 3; transition += 1) {
-        if (phase === 'at_site' && !routeStillAtSite(input.layout, cell, order)) {
+        if (phase === 'at_site' && !routeStillAtSite(
+          input.layout,
+          cell,
+          order,
+          transientBlockedCells,
+        )) {
           phase = 'to_site'
         }
 
@@ -570,8 +693,8 @@ export const advanceConstructionWorkerRouting = (
         }
 
         const route = phase === 'to_stockpile'
-          ? findConstructionPath(input.layout, cell, [stockpile])
-          : findConstructionOrderApproachPath(input.layout, cell, order)
+          ? findConstructionPath(input.layout, cell, [stockpile], routeOptions)
+          : findConstructionOrderApproachPath(input.layout, cell, order, routeOptions)
         if (!route) {
           noPathOrderIds.push(order.id)
           availableDistance = Math.min(1 - MOVEMENT_EPSILON, availableDistance)

@@ -149,6 +149,26 @@ describe('construction pathfinding', () => {
     ).toBe(1)
   })
 
+  it('treats unfinished footprints as temporary solids while allowing a pawn to step out', () => {
+    const layout = createConstructionLayout()
+    const reserved = [{ x: 2, y: 2 }, { x: 3, y: 2 }]
+    const route = findConstructionPath(
+      layout,
+      { x: 2, y: 2 },
+      [{ x: 4, y: 2 }],
+      { transientBlockedCells: reserved },
+    )
+
+    expect(route?.path[0]).toEqual({ x: 2, y: 2 })
+    expect(route?.path.slice(1).map(pointKey)).not.toContain('2:2')
+    expect(route?.path.map(pointKey)).not.toContain('3:2')
+    expect(getConstructionApproachCells(
+      layout,
+      [{ x: 4, y: 2 }],
+      { transientBlockedCells: reserved },
+    )).not.toContainEqual({ x: 3, y: 2 })
+  })
+
   it('can route to the perimeter of an existing workstation for deconstruction', () => {
     const workstation = rack({ x: 8, y: 8 })
     const layout = layoutWith([], [workstation])
