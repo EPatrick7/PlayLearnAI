@@ -12,6 +12,13 @@ const colonist: MapInspectable = {
   subtitle: 'Colonist · Building',
   detail: 'Mission Commander',
   icon: 'crew',
+  portrait: {
+    accent: '#a75b4c',
+    initials: 'AO',
+    showStatusDot: true,
+    status: 'working',
+    variant: 'umber',
+  },
   cell: { x: 20, y: 14 },
   stats: [],
 }
@@ -71,7 +78,7 @@ afterEach(() => {
 })
 
 describe('TileStackPicker', () => {
-  it('reproduces the portal chooser and contains keyboard navigation', async () => {
+  it('renders a compact nonmodal context picker with keyboard navigation', async () => {
     const trigger = triggerForTile()
     const onClose = vi.fn()
     const leakedKeyDown = vi.fn()
@@ -89,27 +96,18 @@ describe('TileStackPicker', () => {
     )
 
     const picker = screen.getByRole('dialog', { name: 'Choose an item' })
-    expect(picker).toHaveAttribute('aria-modal', 'true')
+    expect(picker).not.toHaveAttribute('aria-modal')
     expect(picker).toHaveClass('tile-stack-popover', 'portal-layer', 'anchor-right', 'anchor-bottom')
     expect(picker).toHaveAttribute('data-grid-x', '20')
-    expect(picker).toHaveTextContent('Tile 21 · 15')
-    expect(picker).toHaveTextContent('2 things here')
+    expect(picker).toHaveTextContent('Tile 21, 15')
+    expect(within(picker).getByLabelText('2 overlapping items')).toHaveTextContent('2')
     const choices = [
       within(picker).getByRole('button', { name: /Amina Okafor.*Colonist/i }),
       within(picker).getByRole('button', { name: /Wall blueprint.*Blueprint/i }),
-      within(picker).getByRole('button', { name: /Pressurized floor.*Inspect tile surface/i }),
+      within(picker).getByRole('button', { name: /Surface.*Pressurized floor.*Tile 21, 15/i }),
     ]
+    expect(choices[0].querySelector('.pawn-sprite')).toBeInTheDocument()
     await waitFor(() => expect(document.activeElement).toBe(choices[0]))
-
-    const close = within(picker).getByRole('button', { name: 'Close item picker' })
-    fireEvent.keyDown(picker, { key: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(close)
-    fireEvent.keyDown(picker, { key: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(choices[2])
-    fireEvent.keyDown(picker, { key: 'Tab' })
-    expect(document.activeElement).toBe(close)
-    fireEvent.keyDown(picker, { key: 'Tab' })
-    expect(document.activeElement).toBe(choices[0])
 
     fireEvent.keyDown(picker, { key: 'ArrowDown' })
     expect(document.activeElement).toBe(choices[1])
@@ -146,7 +144,7 @@ describe('TileStackPicker', () => {
     expect(onClose).toHaveBeenCalledOnce()
     await waitFor(() => expect(document.activeElement).toBe(trigger))
 
-    fireEvent.click(within(picker).getByRole('button', { name: /Pressurized floor.*Inspect tile surface/i }))
+    fireEvent.click(within(picker).getByRole('button', { name: /Surface.*Pressurized floor.*Tile 21, 15/i }))
     expect(onSelectSurface).toHaveBeenCalledWith(tile)
     expect(onClose).toHaveBeenCalledTimes(2)
     await waitFor(() => expect(document.activeElement).toBe(trigger))
@@ -223,7 +221,7 @@ describe('TileStackPicker', () => {
     )
 
     const surfaceChoice = within(picker).getByRole('button', {
-      name: /Pressurized floor.*Inspect tile surface/i,
+      name: /Surface.*Pressurized floor.*Tile 21, 15/i,
     })
     await waitFor(() => expect(document.activeElement).toBe(surfaceChoice))
     expect(onClose).not.toHaveBeenCalled()
@@ -273,7 +271,7 @@ describe('TileStackPicker', () => {
     await waitFor(() => expect(document.activeElement).toBe(map))
   })
 
-  it('makes the app background inert while open and restores its prior state', () => {
+  it('keeps the app background interactive and preserves any pre-existing inert state', () => {
     const appRoot = document.createElement('div')
     appRoot.id = 'root'
     document.body.append(appRoot)
@@ -291,7 +289,7 @@ describe('TileStackPicker', () => {
       />,
     )
 
-    expect(appRoot).toHaveAttribute('inert')
+    expect(appRoot).not.toHaveAttribute('inert')
     view.unmount()
     expect(appRoot).not.toHaveAttribute('inert')
 

@@ -4411,8 +4411,8 @@ button:disabled {
 .tile-stack-popover {
   position: relative;
   z-index: 82;
-  width: min(292px, calc(100vw - 24px));
-  max-height: min(390px, calc(100vh - 160px));
+  width: min(260px, calc(100vw - 16px));
+  max-height: min(342px, calc(100vh - 100px));
   align-self: start;
   justify-self: start;
   overflow: hidden;
@@ -4444,17 +4444,16 @@ button:disabled {
   position: fixed;
   z-index: 999;
   inset: 0;
-  background: rgba(5, 8, 7, 0.24);
-  backdrop-filter: blur(0.5px);
+  background: transparent;
 }
 
 .tile-stack-header {
-  min-height: 64px;
-  padding: 9px;
+  min-height: 46px;
+  padding: 6px;
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 34px;
+  grid-template-columns: 30px minmax(0, 1fr) auto 30px;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   border-bottom: 1px solid #111412;
   background: #2b2e29;
   box-shadow: 0 -1px rgba(238, 218, 171, 0.12) inset;
@@ -4472,11 +4471,11 @@ button:disabled {
 }
 
 .tile-stack-heading-icon {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
 }
 
-.tile-stack-heading-icon .game-icon { width: 18px; height: 18px; }
+.tile-stack-heading-icon .game-icon { width: 15px; height: 15px; }
 
 .tile-stack-header > span:nth-child(2) {
   min-width: 0;
@@ -4485,27 +4484,35 @@ button:disabled {
 }
 
 .tile-stack-header small {
-  color: #b8aa88;
-  font: 800 7px/1 ui-monospace, monospace;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  color: #969a91;
+  font: 650 8px/1.15 Inter, sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .tile-stack-header strong {
   color: #f2eee2;
-  font: 700 15px/1.1 Georgia, "Times New Roman", serif;
+  font: 750 12px/1.1 Inter, sans-serif;
 }
 
-.tile-stack-header em {
-  color: #a6aaa1;
-  font: 600 9px/1.1 Inter, sans-serif;
+.tile-stack-header > em {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(229, 204, 145, 0.3);
+  border-radius: 10px;
+  color: #e3ca8e;
+  background: rgba(173, 129, 49, 0.13);
+  font: 800 8px/1 ui-monospace, monospace;
   font-style: normal;
 }
 
 .tile-stack-close,
 .inspector-close {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   display: grid;
   place-items: center;
@@ -4536,10 +4543,10 @@ button:disabled {
 .tile-stack-item,
 .tile-stack-surface {
   width: 100%;
-  min-height: 50px;
-  padding: 6px 8px;
+  min-height: 46px;
+  padding: 5px 7px;
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 15px;
+  grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   border: 0;
@@ -4563,12 +4570,18 @@ button:disabled {
 }
 
 .tile-stack-item-icon {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   color: #c8c4b6;
 }
 
 .tile-stack-item-icon .game-icon { width: 18px; height: 18px; }
+.tile-stack-item-icon.tile-stack-pawn-icon {
+  overflow: visible;
+  border-color: rgba(117, 190, 194, 0.3);
+  background: radial-gradient(circle at 50% 60%, rgba(100, 163, 164, 0.14), transparent 70%);
+}
+.tile-stack-pawn-icon .pawn-sprite { transform: translateY(1px) scale(0.86); }
 .stack-kind-crew .tile-stack-item-icon { color: #98d4d5; border-color: rgba(117, 190, 194, 0.38); }
 .stack-kind-equipment .tile-stack-item-icon { color: #e5c37b; }
 .stack-kind-work .tile-stack-item-icon { color: #efa874; border-color: rgba(222, 125, 86, 0.4); }
@@ -4789,6 +4802,10 @@ button:disabled {
     transform: none;
   }
 
+  .tile-stack-backdrop.portal-layer {
+    background: rgba(5, 8, 7, 0.14);
+  }
+
   .tile-stack-header {
     position: sticky;
     z-index: 2;
@@ -4796,7 +4813,7 @@ button:disabled {
   }
 
   .tile-stack-item,
-  .tile-stack-surface { min-height: 52px; }
+  .tile-stack-surface { min-height: 48px; }
 
   .selection-inspector {
     right: 8px;
@@ -4825,10 +4842,11 @@ button:disabled {
   .tile-stack-popover.anchor-right.anchor-top,
   .tile-stack-popover.anchor-left.anchor-bottom,
   .tile-stack-popover.anchor-right.anchor-bottom { bottom: 118px !important; }
-  .tile-stack-header { min-height: 60px; padding: 7px; }
-  .tile-stack-heading-icon { width: 34px; height: 34px; }
+  .tile-stack-header { min-height: 48px; padding: 6px; }
+  .tile-stack-heading-icon { width: 30px; height: 30px; }
   .tile-stack-close,
   .inspector-close { width: 36px; height: 36px; }
+  .tile-stack-close { width: 34px; height: 34px; }
   .selection-details dd { font-size: 8px; }
 }
 

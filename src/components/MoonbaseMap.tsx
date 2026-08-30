@@ -1,11 +1,9 @@
 import {
-  useEffect,
   useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
-import { createPortal } from 'react-dom'
 import {
   detectRooms,
   getWorkstationFootprintSize,
@@ -41,6 +39,7 @@ import {
 import { ModuleConnectors, ModuleTilemap } from './ModuleTilemap'
 import { getModuleWalkableCells } from './moduleTileGeometry'
 import { PawnSprite, type PawnSpriteVariant } from './PawnSprite'
+import { TileStackPicker } from './TileStackPicker'
 
 export interface MoonbaseMapProps {
   width: number
@@ -119,15 +118,6 @@ const isExterior = (module: ModuleState) =>
   module.type === 'solar_battery_skid' || module.type === 'landing_pad'
 
 const words = (value: string) => value.replaceAll('_', ' ').replaceAll('-', ' ')
-
-const mapTileIcon = (tile: MapTileInspection): GameIconName => {
-  if (tile.surfaceKind === 'wall') return 'wall'
-  if (tile.surfaceKind === 'door') return 'door'
-  if (tile.surfaceKind === 'floor' || tile.surfaceKind === 'corridor') return 'floor'
-  if (tile.surfaceKind === 'solar') return 'solar'
-  if (tile.surfaceKind === 'landing-pad') return 'landingPad'
-  return 'map'
-}
 
 const initials = (name: string) => name
   .split(/\s+/)
@@ -384,10 +374,8 @@ export function MoonbaseMap({
   const [stackPicker, setStackPicker] = useState<{
     tile: MapTileInspection
     trigger: HTMLElement | null
-    placement: CSSProperties
   } | null>(null)
   const mapRef = useRef<HTMLDivElement>(null)
-  const stackPickerRef = useRef<HTMLElement>(null)
   const activePlan = plan.status !== 'completed'
   const plannedWorkIds = new Set<WorkOrderId>(
     activePlan ? plan.actions.map((action) => action.workOrderId) : [],
@@ -601,17 +589,9 @@ export function MoonbaseMap({
   const customRoomCount = constructionLayout ? detectRooms(constructionLayout).length : null
   const accessibleSummary = `${customRoomCount === null ? `${inspectableModules.length} base areas` : `${customRoomCount} player-built rooms`}, ${crew.length} crew, ${equipment.length} equipment items, and ${workOrders.length} work orders.${placementSummary}${dustActive ? ' Dust front active.' : ''}`
 
-  const closeStackPicker = (restoreFocus = true) => {
-    const trigger = stackPicker?.trigger
-    setStackPicker(null)
-    if (restoreFocus) trigger?.focus()
-  }
-
   const dispatchInspectable = (tile: MapTileInspection, item: MapInspectable) => {
-    const trigger = stackPicker?.trigger
     setSelectedCellKey(tile.key)
     setRovingCellKey(tile.key)
-    setStackPicker(null)
     if (item.kind === 'crew' && onSelectCrew) {
       onSelectCrew(item.id)
     } else if (item.kind === 'equipment' && onSelectEquipment) {
@@ -621,28 +601,13 @@ export function MoonbaseMap({
     } else {
       onInspectTile?.(withFocusedMapItem(tile, item))
     }
-    if (trigger) requestAnimationFrame(() => trigger.isConnected && trigger.focus())
   }
 
   const activateTile = (tile: MapTileInspection, trigger: HTMLElement | null) => {
     setSelectedCellKey(tile.key)
     setRovingCellKey(tile.key)
     if (tile.contents.length > 1) {
-      const bounds = trigger?.getBoundingClientRect()
-      const anchorRight = tile.cell.x >= Math.floor(width * 0.62)
-      const anchorBottom = tile.cell.y >= Math.floor(height * 0.56)
-      setStackPicker({
-        tile,
-        trigger,
-        placement: {
-          ...(anchorRight
-            ? { right: Math.max(8, window.innerWidth - (bounds?.right ?? 0) + 10) }
-            : { left: Math.max(8, (bounds?.left ?? 0) + 10) }),
-          ...(anchorBottom
-            ? { bottom: Math.max(8, window.innerHeight - (bounds?.top ?? 0) + 10) }
-            : { top: Math.max(8, (bounds?.bottom ?? 0) + 10) }),
-        },
-      })
+      setStackPicker({ tile, trigger })
       return
     }
     setStackPicker(null)
@@ -673,45 +638,6 @@ export function MoonbaseMap({
       `[data-map-cell][data-grid-x="${next.x}"][data-grid-y="${next.y}"]`,
     )?.focus()
   }
-
-  const handleStackPickerKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      closeStackPicker()
-      return
-    }
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-    const choices = [...(stackPickerRef.current?.querySelectorAll<HTMLButtonElement>(
-      '.tile-stack-item, .tile-stack-surface',
-    ) ?? [])]
-    if (choices.length === 0) return
-    event.preventDefault()
-    const currentIndex = Math.max(0, choices.indexOf(document.activeElement as HTMLButtonElement))
-    const nextIndex = event.key === 'Home'
-      ? 0
-      : event.key === 'End'
-        ? choices.length - 1
-        : event.key === 'ArrowDown'
-          ? (currentIndex + 1) % choices.length
-          : (currentIndex - 1 + choices.length) % choices.length
-    choices[nextIndex].focus()
-  }
-
-  useEffect(() => {
-    if (!stackPicker) return
-    const frame = requestAnimationFrame(() => {
-      stackPickerRef.current?.querySelector<HTMLButtonElement>('.tile-stack-item')?.focus()
-    })
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (stackPickerRef.current?.contains(event.target as Node)) return
-      setStackPicker(null)
-    }
-    document.addEventListener('pointerdown', closeOnOutsidePointer)
-    return () => {
-      cancelAnimationFrame(frame)
-      document.removeEventListener('pointerdown', closeOnOutsidePointer)
-    }
-  }, [stackPicker])
 
   return (
     <div
@@ -1105,76 +1031,17 @@ export function MoonbaseMap({
           </button>
         ))}
 
-      {stackPicker && createPortal((
-        <section
-          aria-labelledby="tile-stack-title"
-          className={[
-            'tile-stack-popover',
-            'portal-layer',
-            stackPicker.tile.cell.x >= Math.floor(width * 0.62) ? 'anchor-right' : 'anchor-left',
-            stackPicker.tile.cell.y >= Math.floor(height * 0.56) ? 'anchor-bottom' : 'anchor-top',
-          ].join(' ')}
-          data-grid-x={stackPicker.tile.cell.x}
-          data-grid-y={stackPicker.tile.cell.y}
-          onKeyDown={handleStackPickerKeyDown}
-          ref={stackPickerRef}
-          role="dialog"
-          style={stackPicker.placement}
-        >
-          <header className="tile-stack-header">
-            <span className="tile-stack-heading-icon"><GameIcon name="inspect" /></span>
-            <span>
-              <small>Tile {String(stackPicker.tile.cell.x + 1).padStart(2, '0')} · {String(stackPicker.tile.cell.y + 1).padStart(2, '0')}</small>
-              <strong id="tile-stack-title">Choose an item</strong>
-              <em>{stackPicker.tile.contents.length} things here</em>
-            </span>
-            <button
-              aria-label="Close item picker"
-              className="tile-stack-close"
-              onClick={() => closeStackPicker()}
-              type="button"
-            >
-              <GameIcon name="close" />
-            </button>
-          </header>
-
-          <div className="tile-stack-list">
-            {stackPicker.tile.contents.map((item) => (
-              <button
-                className={`tile-stack-item stack-kind-${item.kind}`}
-                key={item.key}
-                onClick={() => dispatchInspectable(stackPicker.tile, item)}
-                type="button"
-              >
-                <span className="tile-stack-item-icon"><GameIcon name={item.icon} /></span>
-                <span className="tile-stack-item-copy">
-                  <strong>{item.label}</strong>
-                  <small>{item.subtitle}</small>
-                </span>
-                <GameIcon className="tile-stack-chevron" name="chevron" />
-              </button>
-            ))}
-          </div>
-
-          <button
-            className="tile-stack-surface"
-            onClick={() => {
-              const trigger = stackPicker.trigger
-              setStackPicker(null)
-              onInspectTile?.(withFocusedMapItem(stackPicker.tile, null))
-              requestAnimationFrame(() => trigger?.isConnected && trigger.focus())
-            }}
-            type="button"
-          >
-            <span className="tile-stack-item-icon"><GameIcon name={mapTileIcon(stackPicker.tile)} /></span>
-            <span className="tile-stack-item-copy">
-              <strong>{stackPicker.tile.surfaceLabel}</strong>
-              <small>{stackPicker.tile.roomLabel ?? 'Exterior'} · Inspect tile surface</small>
-            </span>
-            <GameIcon className="tile-stack-chevron" name="chevron" />
-          </button>
-        </section>
-      ), document.body)}
+      {stackPicker && (
+        <TileStackPicker
+          gridHeight={height}
+          gridWidth={width}
+          onClose={() => setStackPicker(null)}
+          onSelectItem={dispatchInspectable}
+          onSelectSurface={(tile) => onInspectTile?.(withFocusedMapItem(tile, null))}
+          tile={stackPicker.tile}
+          trigger={stackPicker.trigger}
+        />
+      )}
 
       {dustActive && (
         <div aria-hidden="true" className="dust-warning-flag">

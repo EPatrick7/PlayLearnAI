@@ -1,9 +1,16 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createConstructionLayout, type GridPoint } from '../game/construction'
+import {
+  createConstructionLayout,
+  type ConstructionLayout,
+  type GridPoint,
+} from '../game/construction'
 import type { ConstructionTool } from '../game/constructionCatalog'
+import type { ConstructionOrder } from '../game/constructionJobs'
+import type { CrewMember } from '../game/types'
 import { ConstructionMap } from './ConstructionMap'
+import type { MapTileInspection } from './mapInspection'
 
 const originalElementFromPoint = Object.getOwnPropertyDescriptor(document, 'elementFromPoint')
 
@@ -17,20 +24,42 @@ afterEach(() => {
   }
 })
 
-const renderMap = (selectedTool: ConstructionTool | null = null) => {
+interface RenderMapOptions {
+  constructionOrders?: readonly ConstructionOrder[]
+  constructionStock?: number
+  constructionStockpile?: GridPoint | null
+  crew?: readonly CrewMember[]
+  crewCells?: ReadonlyMap<string, GridPoint>
+  inspectionByCell?: ReadonlyMap<string, MapTileInspection>
+  layout?: ConstructionLayout
+  overlapCounts?: ReadonlyMap<string, number>
+}
+
+const renderMap = (
+  selectedTool: ConstructionTool | null = null,
+  options: RenderMapOptions = {},
+) => {
   const onApply = vi.fn()
   const onCancelTool = vi.fn()
   const onInspectCell = vi.fn()
+  const layout = options.layout ?? createConstructionLayout()
   const view = render(
     <div className="construction-map-scroll">
       <ConstructionMap
-        layout={createConstructionLayout()}
+        constructionOrders={options.constructionOrders}
+        constructionStock={options.constructionStock}
+        constructionStockpile={options.constructionStockpile}
+        crew={options.crew}
+        crewCells={options.crewCells}
+        inspectionByCell={options.inspectionByCell}
+        layout={layout}
         onApply={onApply}
         onCancelTool={onCancelTool}
         onError={vi.fn()}
         onInspectCell={onInspectCell}
         onRotate={vi.fn()}
         onUndo={vi.fn()}
+        overlapCounts={options.overlapCounts}
         rotation={0}
         selectedTool={selectedTool}
       />
@@ -44,6 +73,39 @@ const renderMap = (selectedTool: ConstructionTool | null = null) => {
   )!
   return { cell, map, onApply, onCancelTool, onInspectCell, scroll, surface }
 }
+
+const builder: CrewMember = {
+  id: 'crew-builder',
+  name: 'Amina Okafor',
+  role: 'Mission Commander',
+  trait: 'Steady',
+  status: 'idle',
+  health: 100,
+  fatigue: 12,
+  morale: 90,
+  location: 'habitat',
+  taskId: null,
+  skills: { engineering: 3, science: 2, medicine: 1, operations: 3 },
+}
+
+const inspectionTile = (
+  cell: GridPoint,
+  contents: MapTileInspection['contents'],
+): MapTileInspection => ({
+  key: `${cell.x}:${cell.y}`,
+  cell,
+  surfaceKind: 'terrain',
+  surfaceLabel: 'Lunar regolith',
+  surfaceDetail: 'Exterior surveyed ground',
+  roomId: null,
+  roomLabel: null,
+  roomArea: null,
+  moduleId: null,
+  moduleName: null,
+  atmosphere: 'exterior',
+  contents,
+  focusedItem: null,
+})
 
 describe('ConstructionMap pan and zoom', () => {
   it('left-drags and one-finger drags the nearest scroll container in Pan mode', () => {
@@ -157,6 +219,199 @@ describe('ConstructionMap pan and zoom', () => {
       pointerType: 'mouse',
     })
     expect(onInspectCell).not.toHaveBeenCalled()
+  })
+
+  it('preserves a directly hit colonist identity through the camera pointer gesture', () => {
+    const crewCell = { x: 6, y: 7 }
+    const { map, onInspectCell } = renderMap(null, {
+      crew: [builder],
+      crewCells: new Map([[builder.id, crewCell]]),
+    })
+    const pawn = map.querySelector<HTMLElement>(`[data-crew-id="${builder.id}"]`)!
+
+    expect(pawn).toHaveAttribute('data-inspect-item-key', `crew:${builder.id}`)
+    fireEvent.pointerDown(pawn, {
+      button: 0,
+      clientX: 120,
+      clientY: 140,
+      pointerId: 71,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(pawn, {
+      button: 0,
+      clientX: 120,
+      clientY: 140,
+      pointerId: 71,
+      pointerType: 'mouse',
+    })
+
+    expect(onInspectCell).toHaveBeenCalledWith(
+      crewCell,
+      { x: 120, y: 140 },
+      `crew:${builder.id}`,
+    )
+  })
+
+  it('keeps touch jitter as a direct colonist tap, then pans by the full drag distance', () => {
+    const crewCell = { x: 6, y: 7 }
+    const { map, onInspectCell, scroll } = renderMap(null, {
+      crew: [builder],
+      crewCells: new Map([[builder.id, crewCell]]),
+    })
+    const pawn = map.querySelector<HTMLElement>(`[data-crew-id="${builder.id}"]`)!
+    scroll.scrollLeft = 100
+
+    fireEvent.pointerDown(pawn, {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+      pointerId: 72,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 108,
+      clientY: 100,
+      pointerId: 72,
+      pointerType: 'touch',
+    })
+    expect(scroll.scrollLeft).toBe(100)
+    fireEvent.pointerUp(map, {
+      clientX: 108,
+      clientY: 100,
+      pointerId: 72,
+      pointerType: 'touch',
+    })
+    expect(onInspectCell).toHaveBeenCalledWith(
+      crewCell,
+      { x: 108, y: 100 },
+      `crew:${builder.id}`,
+    )
+
+    onInspectCell.mockClear()
+    fireEvent.pointerDown(pawn, {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+      pointerId: 73,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 108,
+      clientY: 100,
+      pointerId: 73,
+      pointerType: 'touch',
+    })
+    fireEvent.pointerMove(map, {
+      clientX: 113,
+      clientY: 100,
+      pointerId: 73,
+      pointerType: 'touch',
+    })
+    expect(scroll.scrollLeft).toBe(87)
+    fireEvent.pointerUp(map, {
+      clientX: 113,
+      clientY: 100,
+      pointerId: 73,
+      pointerType: 'touch',
+    })
+    expect(onInspectCell).not.toHaveBeenCalled()
+  })
+
+  it('opens overlap inspection from an accessible button without arming camera pan', () => {
+    const point = { x: 4, y: 5 }
+    const tile = inspectionTile(point, [
+      {
+        key: `crew:${builder.id}`,
+        kind: 'crew',
+        id: builder.id,
+        label: builder.name,
+        subtitle: 'Colonist · Idle',
+        detail: builder.role,
+        icon: 'crew',
+        cell: point,
+        stats: [],
+      },
+      {
+        key: 'blueprint:wall-1',
+        kind: 'blueprint',
+        id: 'wall-1',
+        label: 'Wall blueprint',
+        subtitle: 'Blueprint · Paused · P3',
+        detail: 'Build a wall.',
+        icon: 'wall',
+        cell: point,
+        stats: [],
+      },
+    ])
+    const { map, onInspectCell } = renderMap(null, {
+      inspectionByCell: new Map([[tile.key, tile]]),
+      overlapCounts: new Map([[tile.key, 2]]),
+    })
+    const trigger = screen.getByRole('button', {
+      name: /choose 2 overlapping items on column 5, row 6: Amina Okafor, Wall blueprint/i,
+    })
+
+    expect(trigger.querySelector('.game-icon')).toBeInTheDocument()
+    expect(trigger).toHaveTextContent('2')
+    fireEvent.pointerDown(trigger, {
+      button: 0,
+      pointerId: 74,
+      pointerType: 'mouse',
+    })
+    expect(map).not.toHaveClass('is-panning')
+    fireEvent.click(trigger)
+
+    expect(onInspectCell).toHaveBeenCalledWith(point, { x: 0, y: 0 })
+  })
+
+  it('exposes stable inspection keys on every rendered construction object type', () => {
+    const layout = createConstructionLayout()
+    layout.boundaries = [{ x: 2, y: 2, kind: 'wall' }]
+    layout.workstations = [{
+      id: 'rack-1',
+      type: 'storage-rack',
+      label: 'Storage rack',
+      origin: { x: 5, y: 5 },
+      size: { width: 2, height: 2 },
+      rotation: 0,
+    }]
+    const blueprint: ConstructionOrder = {
+      id: 'construction-1:1',
+      commandId: 'construction-1',
+      sequence: 1,
+      priority: 3,
+      operation: 'construct',
+      status: 'building',
+      block: null,
+      assignedCrewId: null,
+      target: {
+        kind: 'boundary',
+        cells: [{ x: 9, y: 6 }],
+        construct: { x: 9, y: 6, kind: 'wall' },
+        deconstruct: null,
+      },
+      materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
+      work: { required: 1, completed: 0 },
+    }
+    const { map } = renderMap(null, {
+      constructionOrders: [blueprint],
+      constructionStock: 10,
+      constructionStockpile: { x: 8, y: 9 },
+      crew: [builder],
+      crewCells: new Map([[builder.id, { x: 7, y: 7 }]]),
+      layout,
+    })
+
+    expect(map.querySelector('[data-tile-kind="wall"]'))
+      .toHaveAttribute('data-inspect-item-key', 'boundary:2:2')
+    expect(map.querySelector('[data-workstation-id="rack-1"]'))
+      .toHaveAttribute('data-inspect-item-key', 'workstation:rack-1')
+    expect(map.querySelector('[data-construction-order-id="construction-1:1"]'))
+      .toHaveAttribute('data-inspect-item-key', 'blueprint:construction-1:1')
+    expect(map.querySelector('[data-crew-id="crew-builder"]'))
+      .toHaveAttribute('data-inspect-item-key', 'crew:crew-builder')
+    expect(map.querySelector('.construction-stockpile'))
+      .toHaveAttribute('data-inspect-item-key', 'stockpile:construction-material')
   })
 
   it.each(['mouse', 'touch'])('never inspects a cancelled stationary %s pointer', (pointerType) => {

@@ -69,7 +69,11 @@ interface ConstructionMapProps {
   onError: (message: string) => void
   onRotate: () => void
   onUndo: () => void
-  onInspectCell?: (cell: GridPoint, anchor: PointerPosition) => void
+  onInspectCell?: (
+    cell: GridPoint,
+    anchor: PointerPosition,
+    preferredItemKey?: string | null,
+  ) => void
   selectedCell?: GridPoint | null
   overlapCounts?: ReadonlyMap<string, number>
   inspectionByCell?: ReadonlyMap<string, MapTileInspection>
@@ -166,6 +170,17 @@ const pointFromElement = (element: Element | null): GridPoint | null => {
   return Number.isInteger(x) && Number.isInteger(y) ? { x, y } : null
 }
 
+const gridPointFromElement = (element: Element | null): GridPoint | null => {
+  const target = element?.closest<HTMLElement>('[data-grid-x][data-grid-y]')
+  if (!target) return null
+  const x = Number(target.dataset.gridX)
+  const y = Number(target.dataset.gridY)
+  return Number.isInteger(x) && Number.isInteger(y) ? { x, y } : null
+}
+
+const inspectItemKeyFromElement = (element: Element | null) =>
+  element?.closest<HTMLElement>('[data-inspect-item-key]')?.dataset.inspectItemKey ?? null
+
 const workstationInput = (
   kind: WorkstationKind,
   point: GridPoint,
@@ -221,6 +236,8 @@ export function ConstructionMap({
   const panLastPointRef = useRef<PointerPosition | null>(null)
   const panStartPointRef = useRef<PointerPosition | null>(null)
   const panStartCellRef = useRef<GridPoint | null>(null)
+  const panPointerTypeRef = useRef('mouse')
+  const panStartInspectItemKeyRef = useRef<string | null>(null)
   const panMovedRef = useRef(false)
   const panInspectsStationaryPointerRef = useRef(true)
   const cameraInitializedRef = useRef(false)
@@ -281,6 +298,7 @@ export function ConstructionMap({
     const direct = pointFromElement(event.target as Element)
     if (direct) return direct
     return pointAtClient({ x: event.clientX, y: event.clientY })
+      ?? gridPointFromElement(event.target as Element)
   }
 
   const scrollContainer = () => mapRef.current?.closest<HTMLElement>('.construction-map-scroll') ?? null
@@ -496,6 +514,10 @@ export function ConstructionMap({
     panLastPointRef.current = { x: event.clientX, y: event.clientY }
     panStartPointRef.current = { x: event.clientX, y: event.clientY }
     panStartCellRef.current = pointerPoint(event)
+    panPointerTypeRef.current = event.pointerType
+    panStartInspectItemKeyRef.current = inspectStationaryPointer
+      ? inspectItemKeyFromElement(event.target as Element)
+      : null
     panMovedRef.current = false
     panInspectsStationaryPointerRef.current = inspectStationaryPointer
     setIsPanning(true)
@@ -508,11 +530,16 @@ export function ConstructionMap({
   ) => {
     if (panPointerIdRef.current !== event.pointerId) return false
     const clicked = !panMovedRef.current
-    const inspectedCell = pointerPoint(event) ?? panStartCellRef.current
+    const inspectedCell = clicked
+      ? panStartCellRef.current ?? pointerPoint(event)
+      : null
+    const preferredItemKey = panStartInspectItemKeyRef.current
     panPointerIdRef.current = null
     panLastPointRef.current = null
     panStartPointRef.current = null
     panStartCellRef.current = null
+    panPointerTypeRef.current = 'mouse'
+    panStartInspectItemKeyRef.current = null
     panMovedRef.current = false
     panInspectsStationaryPointerRef.current = true
     setIsPanning(false)
@@ -522,7 +549,15 @@ export function ConstructionMap({
     if (inspectStationaryPointer && clicked && inspectedCell && onInspectCell) {
       setCursor(inspectedCell)
       setHoverCell(inspectedCell)
-      onInspectCell(inspectedCell, { x: event.clientX, y: event.clientY })
+      if (preferredItemKey) {
+        onInspectCell(
+          inspectedCell,
+          { x: event.clientX, y: event.clientY },
+          preferredItemKey,
+        )
+      } else {
+        onInspectCell(inspectedCell, { x: event.clientX, y: event.clientY })
+      }
     }
     return true
   }
@@ -675,6 +710,8 @@ export function ConstructionMap({
       panLastPointRef.current = null
       panStartPointRef.current = null
       panStartCellRef.current = null
+      panPointerTypeRef.current = 'mouse'
+      panStartInspectItemKeyRef.current = null
       panMovedRef.current = false
       touchPointsRef.current.clear()
       touchPanCenterRef.current = null
@@ -798,6 +835,10 @@ export function ConstructionMap({
         clearDraft()
         panPointerIdRef.current = null
         panLastPointRef.current = null
+        panStartPointRef.current = null
+        panStartCellRef.current = null
+        panPointerTypeRef.current = 'touch'
+        panStartInspectItemKeyRef.current = null
         setIsPanning(true)
         touchPanCenterRef.current = touchCenter()
         touchPinchDistanceRef.current = touchDistance()
@@ -893,6 +934,8 @@ export function ConstructionMap({
       panLastPointRef.current = { x: event.clientX, y: event.clientY }
       panStartPointRef.current = touchDraftStart
       panStartCellRef.current = null
+      panPointerTypeRef.current = 'touch'
+      panStartInspectItemKeyRef.current = null
       panMovedRef.current = true
       panInspectsStationaryPointerRef.current = false
       setIsPanning(true)
@@ -907,7 +950,13 @@ export function ConstructionMap({
       const previous = panLastPointRef.current
       const start = panStartPointRef.current
       const container = scrollContainer()
-      if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) >= PAN_DRAG_THRESHOLD) {
+      if (!panMovedRef.current && start) {
+        const dragThreshold = panPointerTypeRef.current === 'touch'
+          ? TOUCH_PAN_DRAG_THRESHOLD
+          : PAN_DRAG_THRESHOLD
+        if (Math.hypot(event.clientX - start.x, event.clientY - start.y) < dragThreshold) {
+          return
+        }
         panMovedRef.current = true
       }
       if (previous && container) {
@@ -991,6 +1040,8 @@ export function ConstructionMap({
     panLastPointRef.current = null
     panStartPointRef.current = null
     panStartCellRef.current = null
+    panPointerTypeRef.current = 'mouse'
+    panStartInspectItemKeyRef.current = null
     panMovedRef.current = false
     setIsPanning(false)
     clearDraft()
@@ -1278,7 +1329,7 @@ export function ConstructionMap({
           return (
             <span
               aria-hidden="true"
-              className={`construction-boundary boundary-${boundary.kind} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+              className={`construction-boundary construction-inspect-target boundary-${boundary.kind} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
               data-boundary-connection={connection.name}
               data-boundary-mask={connection.mask}
               data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -1287,6 +1338,7 @@ export function ConstructionMap({
               data-connect-west={connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
               data-grid-x={boundary.x}
               data-grid-y={boundary.y}
+              data-inspect-item-key={`boundary:${keyFor(boundary)}`}
               data-tile-kind={boundary.kind}
               key={`boundary-${boundary.x}-${boundary.y}`}
               style={{ gridColumn: `${boundary.x + 1}`, gridRow: `${boundary.y + 1}` }}
@@ -1304,11 +1356,12 @@ export function ConstructionMap({
           return (
             <span
               aria-label={`${workstation.label}, ${footprint.width} by ${footprint.height} tiles`}
-              className={`construction-workstation workstation-${kind}`}
+              className={`construction-workstation construction-inspect-target workstation-${kind}`}
               data-grid-height={footprint.height}
               data-grid-width={footprint.width}
               data-grid-x={workstation.origin.x}
               data-grid-y={workstation.origin.y}
+              data-inspect-item-key={`workstation:${workstation.id}`}
               data-workstation-id={workstation.id}
               data-workstation-kind={kind}
               key={workstation.id}
@@ -1328,9 +1381,10 @@ export function ConstructionMap({
         {constructionStockpile && (
           <span
             aria-label={`Construction pallet, ${Math.round(constructionStock * 10) / 10} material on hand`}
-            className="construction-stockpile"
+            className="construction-stockpile construction-inspect-target"
             data-grid-x={constructionStockpile.x}
             data-grid-y={constructionStockpile.y}
+            data-inspect-item-key="stockpile:construction-material"
             role="img"
             style={{
               gridColumn: `${constructionStockpile.x + 1}`,
@@ -1354,7 +1408,7 @@ export function ConstructionMap({
             return (
               <span
                 aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
-                className={`construction-blueprint construction-blueprint-boundary construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
+                className={`construction-blueprint construction-blueprint-boundary construction-inspect-target construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${boundary.kind === 'door' ? `door-${getBoundaryDoorAxis(connection.mask)}` : ''}`}
                 data-boundary-connection={connection.name}
                 data-boundary-mask={connection.mask}
                 data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -1365,6 +1419,7 @@ export function ConstructionMap({
                 data-construction-order-status={order.status}
                 data-grid-x={cell.x}
                 data-grid-y={cell.y}
+                data-inspect-item-key={`blueprint:${order.id}`}
                 key={order.id}
                 role="img"
                 style={{ gridColumn: `${cell.x + 1}`, gridRow: `${cell.y + 1}` }}
@@ -1383,13 +1438,14 @@ export function ConstructionMap({
           return (
             <span
               aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
-              className={`construction-blueprint construction-blueprint-workstation blueprint-${order.operation} status-${order.status}`}
+              className={`construction-blueprint construction-blueprint-workstation construction-inspect-target blueprint-${order.operation} status-${order.status}`}
               data-construction-order-id={order.id}
               data-construction-order-status={order.status}
               data-grid-height={footprint.height}
               data-grid-width={footprint.width}
               data-grid-x={workstation.origin.x}
               data-grid-y={workstation.origin.y}
+              data-inspect-item-key={`blueprint:${order.id}`}
               key={order.id}
               role="img"
               style={{
@@ -1425,12 +1481,13 @@ export function ConstructionMap({
               aria-label={order
                 ? `${name}, ${activity}, ${constructionOrderLabel(order)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} material` : ''}`
                 : `${name}, ${member.status}`}
-              className={`construction-pawn ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'} ${carriedMaterial > 0 ? 'worker-carrying' : ''}`}
+              className={`construction-pawn construction-inspect-target ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'} ${carriedMaterial > 0 ? 'worker-carrying' : ''}`}
               data-construction-worker-id={order ? member.id : undefined}
               data-construction-worker-state={order ? activityClass : undefined}
               data-crew-id={member.id}
               data-grid-x={cell.x}
               data-grid-y={cell.y}
+              data-inspect-item-key={`crew:${member.id}`}
               data-order-id={order?.id}
               key={member.id}
               role="img"
@@ -1531,13 +1588,40 @@ export function ConstructionMap({
         {[...overlapCounts.entries()].map(([cellKey, count]) => {
           if (count < 2) return null
           const [x, y] = cellKey.split(':').map(Number)
+          const labels = inspectionByCell.get(cellKey)?.contents.map((item) => item.label) ?? []
           return (
-            <span
-              aria-hidden="true"
+            <button
+              aria-haspopup="dialog"
+              aria-hidden={selectedTool ? 'true' : undefined}
+              aria-label={`Choose ${count} overlapping items on column ${x + 1}, row ${y + 1}${labels.length > 0 ? `: ${labels.join(', ')}` : ''}`}
               className="construction-stack-count"
+              data-construction-cell
+              data-grid-x={x}
+              data-grid-y={y}
               key={`stack-count-${cellKey}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (selectedTool || !onInspectCell) return
+                const bounds = event.currentTarget.getBoundingClientRect()
+                const cell = { x, y }
+                setCursor(cell)
+                setHoverCell(cell)
+                onInspectCell(cell, {
+                  x: bounds.left + bounds.width / 2,
+                  y: bounds.top + bounds.height / 2,
+                })
+              }}
+              onPointerDown={(event) => {
+                if (!selectedTool) event.stopPropagation()
+              }}
               style={{ gridColumn: `${x + 1}`, gridRow: `${y + 1}` }}
-            >{count}</span>
+              tabIndex={selectedTool ? -1 : 0}
+              title={`Choose from ${count} things here`}
+              type="button"
+            >
+              <GameIcon name="inspect" />
+              <b>{count}</b>
+            </button>
           )
         })}
 

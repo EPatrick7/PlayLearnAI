@@ -1685,22 +1685,51 @@
 }
 
 .construction-stack-count {
+  appearance: none;
   position: relative;
   z-index: 20;
-  min-width: 15px;
-  height: 15px;
-  margin: -5px -5px 0 0;
-  padding: 0 3px;
+  min-width: 28px;
+  height: 28px;
+  margin: -8px -8px 0 0;
+  padding: 0 4px;
   place-self: start end;
-  display: grid;
+  display: inline-flex;
+  gap: 1px;
+  align-items: center;
+  justify-content: center;
   place-items: center;
   border: 2px solid #252721;
-  border-radius: 8px;
+  border-radius: 6px;
   color: #d8c58f;
   background: #3b3d34;
   box-shadow: 0 2px 3px rgba(0, 0, 0, 0.42);
-  font: 900 7px/1 ui-monospace, monospace;
+  font: 900 8px/1 ui-monospace, monospace;
   pointer-events: none;
+}
+
+.construction-stack-count .game-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.construction-stack-count b { font: inherit; }
+
+.construction-map.pan-active .construction-inspect-target,
+.construction-map.pan-active .construction-stack-count {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.construction-stack-count:hover,
+.construction-stack-count:focus-visible {
+  border-color: #72694f;
+  color: #f0d89f;
+  background: #4a4b3f;
+}
+
+.construction-stack-count:focus-visible {
+  outline: 2px solid #f0d89f;
+  outline-offset: 2px;
 }
 
 @media (max-width: 700px) {
@@ -1726,6 +1755,18 @@
   .construction-designator-summary > .game-icon { width: 17px; height: 17px; }
   .construction-designator-summary strong { font-size: 9px; }
   .construction-edge-pan-indicator { bottom: 72px; min-height: 30px; font-size: 8px; }
+  .construction-stack-count {
+    min-width: 32px;
+    height: 32px;
+    margin: -8px -8px 0 0;
+    border-radius: 7px;
+    font-size: 9px;
+  }
+
+  .construction-stack-count .game-icon {
+    width: 14px;
+    height: 14px;
+  }
 }
 
 /* Architect inspection and material economy. */
@@ -1783,8 +1824,9 @@
   z-index: 64;
   left: 12px;
   bottom: 76px;
-  width: min(430px, calc(100vw - 24px));
-  max-height: min(70dvh, 520px);
+  width: min(350px, calc(100vw - 24px));
+  max-height: min(66dvh, 430px);
+  padding: 8px;
   overflow-y: auto;
 }
 
@@ -1794,20 +1836,133 @@
 .construction-selection-inspector.selection-workstation::before { background: #bdc4ae; }
 
 .construction-selection-inspector .selection-context {
+  margin-top: 6px;
+  padding: 6px 7px;
   white-space: normal;
 }
 
+.construction-selection-inspector .selection-heading {
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.construction-selection-inspector .selection-kind {
+  width: 40px;
+  height: 40px;
+}
+
+.construction-selection-inspector .selection-kind-pawn {
+  overflow: visible;
+  border-color: rgba(125, 198, 202, 0.34);
+  background: radial-gradient(circle at 50% 62%, rgba(94, 163, 166, 0.18), transparent 72%);
+}
+
+.construction-selection-inspector .selection-kind-pawn .pawn-sprite {
+  transform: translateY(2px) scale(1.02);
+}
+
+.construction-selection-inspector .selection-heading strong {
+  grid-row: 1;
+  font: 760 14px/1.1 Georgia, "Times New Roman", serif;
+}
+
+.construction-selection-inspector .selection-heading small {
+  grid-row: 2;
+  overflow: hidden;
+  color: #a4a69d;
+  font: 650 8px/1.15 Inter, sans-serif;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.construction-selection-inspector .selection-heading > .selection-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.selection-stack-button {
+  min-width: 34px;
+  height: 30px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid rgba(224, 197, 133, 0.28);
+  border-radius: 2px;
+  color: #ddc787;
+  background: rgba(164, 119, 39, 0.1);
+}
+
+.selection-stack-button:hover,
+.selection-stack-button:focus-visible {
+  border-color: rgba(240, 216, 159, 0.62);
+  color: #f4dda4;
+  background: rgba(180, 132, 45, 0.2);
+}
+
+.selection-stack-button .game-icon { width: 13px; height: 13px; }
+.selection-stack-button b { font: 850 8px/1 ui-monospace, monospace; }
+
 .construction-selection-inspector .tile-selection-stats {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .construction-selection-inspector .selection-stats > span {
-  min-height: 46px;
+  min-height: 42px;
+  padding: 5px 6px;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 5px;
+  row-gap: 2px;
 }
 
+.construction-selection-inspector .selection-stats > span > .game-icon {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: center;
+  width: 13px;
+  height: 13px;
+  color: #c6ad72;
+}
+
+.construction-selection-inspector .selection-stats small,
 .construction-selection-inspector .selection-stats strong {
+  grid-column: 2;
   white-space: normal;
 }
+
+.construction-selection-inspector .selection-stats small { font-size: 6px; }
+.construction-selection-inspector .selection-stats strong {
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+.construction-selection-inspector .selection-stats > span[data-stat-label="Materials"],
+.construction-selection-inspector .selection-stats > span[data-stat-label="Operation"],
+.construction-selection-inspector .selection-stats > span[data-stat-label="Task"],
+.construction-selection-inspector .selection-stats > span[data-stat-label="Cargo"] {
+  grid-column: 1 / -1;
+}
+
+.selection-location {
+  min-height: 24px;
+  margin: 5px 1px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #90948b;
+  font: 650 8px/1 Inter, sans-serif;
+}
+
+.selection-location .game-icon { width: 12px; height: 12px; color: #b7a26f; }
+.selection-location i { width: 1px; height: 11px; background: rgba(217, 204, 169, 0.16); }
 
 .construction-inspector-actions {
   margin-top: 8px;
@@ -1979,12 +2134,14 @@
     bottom: 68px;
     left: 8px;
     width: auto;
-    max-height: min(53dvh, 390px);
+    max-height: min(44dvh, 330px);
   }
 
-  .construction-selection-inspector .tile-selection-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  .construction-selection-inspector .selection-heading { grid-template-columns: 40px minmax(0, 1fr) auto; }
+  .construction-selection-inspector .selection-kind { width: 38px; height: 38px; }
+  .construction-selection-inspector .tile-selection-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .construction-selection-inspector .selection-stats > span { min-height: 40px; }
+  .selection-stack-button { min-width: 40px; height: 36px; }
 
   .construction-inspector-actions { align-items: stretch; }
   .construction-priority-stepper { min-width: 0; flex: 1 1 auto; }

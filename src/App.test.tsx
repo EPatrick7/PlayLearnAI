@@ -327,9 +327,9 @@ describe('freeform settlement builder', () => {
 
     clickConstructionCell({ x: 0, y: 0 })
     const terrainInspector = screen.getByRole('region', { name: 'Lunar regolith inspector' })
-    expect(terrainInspector).toHaveTextContent('Column 1 · Row 1')
-    expect(terrainInspector).toHaveTextContent('Lunar exterior')
-    expect(terrainInspector).toHaveTextContent('Nothing')
+    expect(terrainInspector).toHaveTextContent('Exterior · Tile 1, 1')
+    expect(terrainInspector).toHaveTextContent('PressureVacuum')
+    expect(terrainInspector).toHaveTextContent('ContentsEmpty')
 
     fireEvent.keyDown(window, { key: 'b' })
     expect(screen.queryByRole('region', { name: 'Lunar regolith inspector' })).not.toBeInTheDocument()
@@ -390,6 +390,27 @@ describe('freeform settlement builder', () => {
       name: /wall blueprint, paused/i,
     })).toBeVisible()
 
+    fireEvent.pointerDown(pausedWorker, {
+      button: 0,
+      clientX: 320,
+      clientY: 240,
+      pointerId: 38,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(pausedWorker, {
+      button: 0,
+      clientX: 320,
+      clientY: 240,
+      pointerId: 38,
+      pointerType: 'mouse',
+    })
+    const directBuilder = useColonyStore.getState().crew.find(
+      (member) => member.id === order.assignedCrewId,
+    )!
+    expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: `${directBuilder.name} inspector` })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Close inspector' }))
+
     const map = constructionMap()
     map.focus()
     expect(screen.getByRole('status')).toHaveTextContent(
@@ -397,7 +418,7 @@ describe('freeform settlement builder', () => {
     )
     fireEvent.keyDown(map, { key: 'Enter' })
     const chooser = screen.getByRole('dialog', { name: 'Choose an item' })
-    expect(chooser).toHaveTextContent('2 things here')
+    expect(within(chooser).getByLabelText('2 overlapping items')).toHaveTextContent('2')
     expect(within(chooser).getByRole('button', { name: /Colonist/i })).toBeVisible()
     expect(within(chooser).getByRole('button', {
       name: /Wall blueprint.*Blueprint · Paused/i,
@@ -410,7 +431,9 @@ describe('freeform settlement builder', () => {
     )!
     expect(screen.getByRole('region', { name: `${builder.name} inspector` })).toBeVisible()
 
-    clickConstructionCell({ x: 9, y: 6 }, 3)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Choose 2 overlapping items on this tile',
+    }))
     expect(screen.getByRole('dialog', { name: 'Choose an item' })).toBeVisible()
     fireEvent.keyDown(window, { key: 'b' })
     expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
@@ -459,7 +482,7 @@ describe('freeform settlement builder', () => {
     fireEvent.keyDown(map, { key: 'Enter' })
 
     const inspector = screen.getByRole('region', { name: 'Construction pallet inspector' })
-    expect(inspector).toHaveTextContent('Column 9 · Row 10')
+    expect(inspector).toHaveTextContent('Exterior9, 10')
   })
 
   it('announces keyboard cursor position and commits a keyboard wall draft', () => {
@@ -868,8 +891,8 @@ describe('freeform settlement builder', () => {
     fireEvent.click(stackedTile)
 
     const chooser = screen.getByRole('dialog', { name: 'Choose an item' })
-    expect(chooser).toHaveTextContent('Tile 05 · 09')
-    expect(chooser).toHaveTextContent('2 things here')
+    expect(chooser).toHaveTextContent('Tile 5, 9')
+    expect(within(chooser).getByLabelText('2 overlapping items')).toHaveTextContent('2')
     expect(within(chooser).getByRole('button', { name: /Amina Okafor.*Colonist/i })).toBeVisible()
     expect(within(chooser).getByRole('button', { name: /Amina bunk.*Workstation/i })).toBeVisible()
     expect(within(chooser).getByRole('button', { name: /Pressurized floor/i })).toBeVisible()

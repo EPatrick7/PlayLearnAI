@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useRef,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -9,6 +8,7 @@ import {
 import { createPortal } from 'react-dom'
 import { GameIcon, type GameIconName } from './GameIcon'
 import type { MapInspectable, MapTileInspection } from './mapInspection'
+import { PawnSprite } from './PawnSprite'
 
 export interface TileStackPickerProps {
   tile: MapTileInspection
@@ -44,19 +44,33 @@ const pickerPlacement = (
   const bounds = trigger?.getBoundingClientRect()
   const viewportWidth = typeof window === 'undefined' ? 0 : window.innerWidth
   const viewportHeight = typeof window === 'undefined' ? 0 : window.innerHeight
-  const anchorRight = tile.cell.x >= Math.floor(gridWidth * 0.62)
-  const anchorBottom = tile.cell.y >= Math.floor(gridHeight * 0.56)
+  const margin = 8
+  const gap = 8
+  const estimatedWidth = Math.min(260, Math.max(220, viewportWidth - margin * 2))
+  const estimatedHeight = Math.min(342, 46 + (tile.contents.length + 1) * 48)
+  const anchorRight = bounds
+    ? bounds.right + gap + estimatedWidth > viewportWidth - margin
+    : tile.cell.x >= Math.floor(gridWidth * 0.62)
+  const anchorBottom = bounds
+    ? bounds.top + estimatedHeight > viewportHeight - margin
+    : tile.cell.y >= Math.floor(gridHeight * 0.56)
+  const left = bounds
+    ? anchorRight
+      ? bounds.left - estimatedWidth - gap
+      : bounds.right + gap
+    : margin
+  const top = bounds
+    ? anchorBottom
+      ? bounds.bottom - estimatedHeight
+      : bounds.top
+    : margin
 
   return {
     anchorRight,
     anchorBottom,
     style: {
-      ...(anchorRight
-        ? { right: bounds ? Math.max(8, viewportWidth - bounds.right + 10) : 8 }
-        : { left: bounds ? Math.max(8, bounds.left + 10) : 8 }),
-      ...(anchorBottom
-        ? { bottom: bounds ? Math.max(8, viewportHeight - bounds.top + 10) : 8 }
-        : { top: bounds ? Math.max(8, bounds.bottom + 10) : 8 }),
+      left: Math.max(margin, Math.min(left, viewportWidth - estimatedWidth - margin)),
+      top: Math.max(margin, Math.min(top, viewportHeight - estimatedHeight - margin)),
     },
   }
 }
@@ -77,23 +91,12 @@ export function TileStackPicker({
 }: TileStackPickerProps) {
   const pickerRef = useRef<HTMLElement>(null)
   const onCloseRef = useRef(onClose)
-  const titleId = useId()
   const placement = pickerPlacement(tile, trigger, gridWidth, gridHeight)
   const contentKeys = tile.contents.map((item) => item.key).join('\u001f')
 
   useEffect(() => {
     onCloseRef.current = onClose
   }, [onClose])
-
-  useEffect(() => {
-    const background = document.getElementById('root')
-    if (!background || background.contains(pickerRef.current)) return
-    const wasInert = background.hasAttribute('inert')
-    background.setAttribute('inert', '')
-    return () => {
-      if (!wasInert) background.removeAttribute('inert')
-    }
-  }, [])
 
   const restoreTriggerFocus = useCallback(() => {
     requestAnimationFrame(() => {
@@ -128,22 +131,6 @@ export function TileStackPicker({
       event.preventDefault()
       event.stopPropagation()
       closeAndRestore()
-      return
-    }
-    if (event.key === 'Tab') {
-      const controls = [...(pickerRef.current?.querySelectorAll<HTMLButtonElement>(
-        'button:not(:disabled)',
-      ) ?? [])]
-      if (controls.length === 0) return
-      event.preventDefault()
-      event.stopPropagation()
-      const currentIndex = controls.indexOf(document.activeElement as HTMLButtonElement)
-      const nextIndex = event.shiftKey
-        ? (currentIndex <= 0 ? controls.length - 1 : currentIndex - 1)
-        : currentIndex < 0 || currentIndex >= controls.length - 1
-          ? 0
-          : currentIndex + 1
-      controls[nextIndex].focus()
       return
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
@@ -195,8 +182,7 @@ export function TileStackPicker({
     <>
     <div aria-hidden="true" className="tile-stack-backdrop portal-layer" />
     <section
-      aria-labelledby={titleId}
-      aria-modal="true"
+      aria-label="Choose an item"
       className={[
         'tile-stack-popover',
         'portal-layer',
@@ -213,10 +199,10 @@ export function TileStackPicker({
       <header className="tile-stack-header">
         <span className="tile-stack-heading-icon"><GameIcon name="inspect" /></span>
         <span>
-          <small>Tile {String(tile.cell.x + 1).padStart(2, '0')} · {String(tile.cell.y + 1).padStart(2, '0')}</small>
-          <strong id={titleId}>Choose an item</strong>
-          <em>{tile.contents.length} things here</em>
+          <strong>Tile {tile.cell.x + 1}, {tile.cell.y + 1}</strong>
+          <small>Select what to inspect</small>
         </span>
+        <em aria-label={`${tile.contents.length} overlapping items`}>{tile.contents.length}</em>
         <button
           aria-label="Close item picker"
           className="tile-stack-close"
@@ -235,12 +221,15 @@ export function TileStackPicker({
             onClick={() => selectItem(item)}
             type="button"
           >
-            <span className="tile-stack-item-icon"><GameIcon name={item.icon} /></span>
+            <span className={`tile-stack-item-icon ${item.portrait ? 'tile-stack-pawn-icon' : ''}`}>
+              {item.portrait
+                ? <PawnSprite {...item.portrait} size="compact" />
+                : <GameIcon name={item.icon} />}
+            </span>
             <span className="tile-stack-item-copy">
               <strong>{item.label}</strong>
               <small>{item.subtitle}</small>
             </span>
-            <GameIcon className="tile-stack-chevron" name="chevron" />
           </button>
         ))}
       </div>
@@ -248,10 +237,9 @@ export function TileStackPicker({
       <button className="tile-stack-surface" onClick={selectSurface} type="button">
         <span className="tile-stack-item-icon"><GameIcon name={surfaceIcon(tile)} /></span>
         <span className="tile-stack-item-copy">
-          <strong>{tile.surfaceLabel}</strong>
-          <small>{tile.roomLabel ?? 'Exterior'} · Inspect tile surface</small>
+          <strong>Surface · {tile.surfaceLabel}</strong>
+          <small>{tile.roomLabel ?? 'Exterior'} · Tile {tile.cell.x + 1}, {tile.cell.y + 1}</small>
         </span>
-        <GameIcon className="tile-stack-chevron" name="chevron" />
       </button>
     </section>
     </>

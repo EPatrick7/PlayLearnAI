@@ -24,11 +24,13 @@ import { useColonyStore } from '../game/store'
 import type { Priority } from '../game/types'
 import { ConstructionMap } from './ConstructionMap'
 import { GameIcon, type GameIconName } from './GameIcon'
+import { PawnSprite } from './PawnSprite'
 import { TileStackPicker } from './TileStackPicker'
 import {
   buildMapInspection,
   constructionPhaseSummary,
   type MapInspectable,
+  type MapInspectionStat,
   type MapTileInspection,
 } from './mapInspection'
 
@@ -150,6 +152,49 @@ const pressureLabel = (atmosphere: 'yes' | 'low' | 'no' | 'exterior') => {
   return 'Vacuum'
 }
 
+const inspectionStatIcon = (label: string): GameIconName => {
+  if (label === 'Health') return 'shield'
+  if (label === 'Fatigue') return 'clock'
+  if (label === 'Role' || label === 'Builder') return 'crew'
+  if (label === 'Task' || label === 'Status' || label === 'Operation') return 'work'
+  if (label === 'Cargo' || label === 'Materials' || label === 'On pallet' || label === 'Reserved' || label === 'Available') return 'storage'
+  if (label === 'Progress') return 'activity'
+  if (label === 'Priority') return 'plan'
+  if (label === 'Footprint' || label === 'Tile') return 'map'
+  if (label === 'Rotation') return 'reset'
+  if (label === 'Room' || label === 'Area') return 'habitat'
+  if (label === 'Pressure') return 'atmosphere'
+  if (label === 'Contents') return 'inspect'
+  if (label === 'Connection') return 'corridor'
+  return 'gear'
+}
+
+const compactInspectionStats = (item: MapInspectable): MapInspectionStat[] => {
+  if (item.kind === 'crew') {
+    return item.stats.filter((stat) => stat.label !== 'Role')
+  }
+  if (item.kind === 'blueprint') {
+    const compact = item.stats.filter((stat) => stat.label !== 'Status' && stat.label !== 'Priority')
+    const order = ['Progress', 'Builder', 'Materials', 'Operation']
+    return [...compact].sort((left, right) => (
+      order.indexOf(left.label) - order.indexOf(right.label)
+    ))
+  }
+  if (item.kind === 'boundary') {
+    return item.stats.filter((stat) => stat.label !== 'Tile')
+  }
+  if (item.kind === 'workstation') {
+    return item.stats.filter((stat) => stat.label !== 'Room')
+  }
+  return item.stats
+}
+
+const inspectionHeaderLine = (item: MapInspectable) => {
+  if (item.kind !== 'crew') return item.subtitle
+  const role = item.stats.find((stat) => stat.label === 'Role')?.value
+  return [item.subtitle, role].filter(Boolean).join(' · ')
+}
+
 export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const colony = useColonyStore()
   const layout = colony.settlement.layout
@@ -268,6 +313,13 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
   const selectedItem = directlySelectedItem ?? (completedSelectionKey
     ? selectedTile?.contents.find((item) => item.key === completedSelectionKey) ?? null
     : null)
+  const selectedItemStats = selectedItem ? compactInspectionStats(selectedItem) : []
+  const selectedItemContext = selectedItem && (
+    selectedItem.kind === 'equipment'
+    || selectedItem.kind === 'work'
+    || selectedItem.kind === 'stockpile'
+    || selectedItem.kind === 'workstation'
+  ) ? selectedItem.detail : null
   const selectedBlueprint = selectedItem?.kind === 'blueprint'
     ? constructionOrders.find((order) => order.id === selectedItem.id) ?? null
     : null
@@ -298,20 +350,41 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
     setToastVisible(true)
   }
 
-  const inspectCell = (cell: GridPoint, anchor: { x: number; y: number }) => {
+  const openInspectionStack = (tile: MapTileInspection, trigger: HTMLElement | null) => {
+    setBuildOpen(false)
+    setSelection(null)
+    setStackTrigger(trigger)
+    setStackSnapshot(tile)
+  }
+
+  const inspectCell = (
+    cell: GridPoint,
+    anchor: { x: number; y: number },
+    preferredItemKey?: string | null,
+  ) => {
     const cellKey = pointKey(cell)
     const tile = inspectionByCell.get(cellKey)
     if (!tile) return
     setBuildOpen(false)
+    const preferredItem = preferredItemKey
+      ? tile.contents.find((item) => item.key === preferredItemKey) ?? null
+      : null
     const trigger = (typeof document.elementFromPoint === 'function'
-      ? document.elementFromPoint(anchor.x, anchor.y)?.closest<HTMLElement>('[data-construction-cell]')
+      ? document.elementFromPoint(anchor.x, anchor.y)?.closest<HTMLElement>(
+          '[data-inspect-item-key], [data-construction-cell]',
+        )
       : null) ?? document.querySelector<HTMLElement>(
       `[data-construction-cell][data-grid-x="${cell.x}"][data-grid-y="${cell.y}"]`,
     )
+    if (preferredItem) {
+      setStackSnapshot(null)
+      setStackTrigger(null)
+      setSelection({ cellKey, itemKey: preferredItem.key })
+      setAnnouncement(`${preferredItem.label} selected.`)
+      return
+    }
     if (tile.contents.length > 1) {
-      setSelection(null)
-      setStackTrigger(trigger)
-      setStackSnapshot(tile)
+      openInspectionStack(tile, trigger)
       return
     }
     setStackSnapshot(null)
@@ -667,44 +740,68 @@ export function SettlementBuilder({ onExit }: SettlementBuilderProps) {
             data-inspected-kind={selectedItem?.kind ?? 'surface'}
           >
             <div className="selection-heading">
-              <span className="selection-kind">
-                <GameIcon name={selectedItem?.icon ?? tileSurfaceIcon(selectedTile.surfaceKind)} />
+              <span className={`selection-kind ${selectedItem?.portrait ? 'selection-kind-pawn' : ''}`}>
+                {selectedItem?.portrait
+                  ? <PawnSprite {...selectedItem.portrait} size="compact" />
+                  : <GameIcon name={selectedItem?.icon ?? tileSurfaceIcon(selectedTile.surfaceKind)} />}
               </span>
               <span>
-                <small>{selectedItem ? selectedItem.subtitle : `Tile ${selectedTile.cell.x + 1}, ${selectedTile.cell.y + 1}`}</small>
                 <strong>{selectedItem?.label ?? selectedTile.surfaceLabel}</strong>
+                <small>{selectedItem
+                  ? inspectionHeaderLine(selectedItem)
+                  : `${selectedTile.roomLabel ?? 'Exterior'} · Tile ${selectedTile.cell.x + 1}, ${selectedTile.cell.y + 1}`}</small>
               </span>
-              <button aria-label="Close inspector" className="inspector-close" onClick={() => setSelection(null)} type="button">
-                <GameIcon name="close" />
-              </button>
+              <span className="selection-heading-actions">
+                {selectedTile.contents.length > 1 && (
+                  <button
+                    aria-haspopup="dialog"
+                    aria-label={`Choose ${selectedTile.contents.length} overlapping items on this tile`}
+                    className="selection-stack-button"
+                    onClick={(event) => openInspectionStack(selectedTile, event.currentTarget)}
+                    title="Choose another item on this tile"
+                    type="button"
+                  >
+                    <GameIcon name="inspect" /><b>{selectedTile.contents.length}</b>
+                  </button>
+                )}
+                <button aria-label="Close inspector" className="inspector-close" onClick={() => setSelection(null)} type="button">
+                  <GameIcon name="close" />
+                </button>
+              </span>
             </div>
 
-            <p className="selection-context">
-              <GameIcon name={selectedItem?.icon ?? tileSurfaceIcon(selectedTile.surfaceKind)} />
-              {selectedItem?.detail ?? selectedTile.surfaceDetail}
-            </p>
+            {selectedItemContext && (
+              <p className="selection-context">
+                <GameIcon name={selectedItem?.icon ?? tileSurfaceIcon(selectedTile.surfaceKind)} />
+                {selectedItemContext}
+              </p>
+            )}
 
             {selectedItem ? (
-              <div className="selection-stats tile-selection-stats">
-                {selectedItem.stats.map((stat) => (
-                  <span key={stat.label}><small>{stat.label}</small><strong>{stat.value}</strong></span>
+              selectedItemStats.length > 0 && <div className="selection-stats tile-selection-stats">
+                {selectedItemStats.map((stat) => (
+                  <span data-stat-label={stat.label} key={stat.label}>
+                    <GameIcon name={inspectionStatIcon(stat.label)} />
+                    <small>{stat.label}</small>
+                    <strong>{stat.value}</strong>
+                  </span>
                 ))}
               </div>
             ) : (
               <div className="selection-stats tile-selection-stats">
-                <span><small>Surface</small><strong>{selectedTile.surfaceLabel}</strong></span>
-                <span><small>Room</small><strong>{selectedTile.roomLabel ?? 'Exterior'}</strong></span>
-                <span><small>Contents</small><strong>{selectedTile.contents.length}</strong></span>
-                <span><small>Pressure</small><strong>{pressureLabel(selectedTile.atmosphere)}</strong></span>
+                <span><GameIcon name="atmosphere" /><small>Pressure</small><strong>{pressureLabel(selectedTile.atmosphere)}</strong></span>
+                <span><GameIcon name="inspect" /><small>Contents</small><strong>{selectedTile.contents.length === 0 ? 'Empty' : selectedTile.contents.length}</strong></span>
               </div>
             )}
 
-            <dl className="selection-details">
-              <div><dt>Coordinates</dt><dd>Column {selectedTile.cell.x + 1} · Row {selectedTile.cell.y + 1}</dd></div>
-              <div><dt>Area</dt><dd>{selectedTile.roomLabel ?? 'Lunar exterior'}</dd></div>
-              <div><dt>Surface</dt><dd>{selectedTile.surfaceLabel}</dd></div>
-              <div><dt>On tile</dt><dd>{selectedTile.contents.length === 0 ? 'Nothing' : `${selectedTile.contents.length} ${selectedTile.contents.length === 1 ? 'thing' : 'things'}`}</dd></div>
-            </dl>
+            {selectedItem && (
+              <p className="selection-location">
+                <GameIcon name="map" />
+                <span>{selectedTile.roomLabel ?? 'Exterior'}</span>
+                <i />
+                <span>{selectedTile.cell.x + 1}, {selectedTile.cell.y + 1}</span>
+              </p>
+            )}
 
             {selectedBlueprint && (
               <div className="construction-inspector-actions">

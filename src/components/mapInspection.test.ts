@@ -70,6 +70,71 @@ const inspection = (
 }
 
 describe('construction map inspection', () => {
+  it.each([
+    { kind: 'wall' as const, label: 'Composite wall', icon: 'wall' as const },
+    { kind: 'door' as const, label: 'Pressure door', icon: 'door' as const },
+  ])('keeps a $kind as one structure above the underlying terrain surface', ({ kind, label, icon }) => {
+    const layout = createConstructionLayout()
+    layout.boundaries = [{ x: 5, y: 4, kind }]
+    const tiles = buildMapInspection({
+      width: layout.width,
+      height: layout.height,
+      modules: [],
+      crew: [],
+      equipment: [],
+      workOrders: [],
+      entityCells: {
+        crew: new Map(),
+        equipment: new Map(),
+        work: new Map(),
+      },
+      constructionLayout: layout,
+    })
+
+    const tile = tiles.get('5:4')
+    expect(tile).toMatchObject({
+      surfaceKind: 'terrain',
+      surfaceLabel: 'Lunar regolith',
+    })
+    expect(tile?.contents).toEqual([
+      expect.objectContaining({
+        key: 'boundary:5:4',
+        kind: 'boundary',
+        label,
+        icon,
+      }),
+    ])
+    expect(tile?.contents.filter((item) => item.label === label)).toHaveLength(1)
+  })
+
+  it('uses the inspectable key as a stable tie-break for same-kind, same-label items', () => {
+    const layout = createConstructionLayout()
+    const crewTemplate = createInitialState().crew[0]
+    const crew = [
+      { ...crewTemplate, id: 'crew-zulu', name: 'Alex Chen' },
+      { ...crewTemplate, id: 'crew-alpha', name: 'Alex Chen' },
+    ]
+    const tiles = buildMapInspection({
+      width: layout.width,
+      height: layout.height,
+      modules: [],
+      crew,
+      equipment: [],
+      workOrders: [],
+      entityCells: {
+        crew: new Map(crew.map((member) => [member.id, { x: 5, y: 4 }])),
+        equipment: new Map(),
+        work: new Map(),
+      },
+      constructionLayout: layout,
+    })
+
+    expect(tiles.get('5:4')?.contents.map((item) => item.key)).toEqual([
+      'crew:crew-alpha',
+      'crew:crew-zulu',
+    ])
+  })
+
   it('does not claim an enclosed freeform room is pressurized without atmosphere data', () => {
     const layout = createStarterConstruction()
     const tiles = buildMapInspection({

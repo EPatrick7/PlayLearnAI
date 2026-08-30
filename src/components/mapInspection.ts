@@ -22,6 +22,10 @@ import type {
   WorkOrder,
 } from '../game/types'
 import type { GameIconName } from './GameIcon'
+import {
+  crewPawnPresentation,
+  type CrewPawnPresentation,
+} from './crewPawnPresentation'
 
 export type MapInspectableKind =
   | 'crew'
@@ -45,6 +49,7 @@ export interface MapInspectable {
   subtitle: string
   detail: string
   icon: GameIconName
+  portrait?: CrewPawnPresentation
   cell: GridPoint
   stats: MapInspectionStat[]
 }
@@ -418,18 +423,17 @@ export const buildMapInspection = ({
       if (!tile) return
       const connection = getBoundaryConnection(constructionLayout, boundary)
       const doorAxis = boundary.kind === 'door' ? getBoundaryDoorAxis(connection.mask) : null
-      tile.surfaceKind = boundary.kind
-      tile.surfaceLabel = boundary.kind === 'door' ? 'Pressure door' : 'Composite wall'
-      tile.surfaceDetail = boundary.kind === 'door'
+      const boundaryLabel = boundary.kind === 'door' ? 'Pressure door' : 'Composite wall'
+      const boundaryDetail = boundary.kind === 'door'
         ? `${titleCase(doorAxis ?? 'horizontal')} pressure seal`
         : `${titleCase(connection.name)} pressure shell`
       addInspectable(tiles, boundary, {
         key: `boundary:${pointKey(boundary)}`,
         kind: 'boundary',
         id: pointKey(boundary),
-        label: tile.surfaceLabel,
+        label: boundaryLabel,
         subtitle: `Structure · ${titleCase(connection.name)}`,
-        detail: tile.surfaceDetail,
+        detail: boundaryDetail,
         icon: boundary.kind === 'door' ? 'door' : 'wall',
         stats: [
           { label: 'Type', value: boundary.kind === 'door' ? 'Door' : 'Wall' },
@@ -568,7 +572,7 @@ export const buildMapInspection = ({
     })
   }
 
-  crew.forEach((member) => {
+  crew.forEach((member, memberIndex) => {
     const cell = entityCells.crew.get(member.id)
     if (!cell) return
     const constructionAssignment = constructionAssignmentByCrewId.get(member.id)
@@ -592,6 +596,7 @@ export const buildMapInspection = ({
         ? `${member.role} · ${constructionActivity}: ${constructionPresentation.label}${carried > 0 ? ` · Carrying ${formatConstructionAmount(carried)} material` : ''}`
         : member.role,
       icon: 'crew',
+      portrait: crewPawnPresentation(member, memberIndex),
       stats: [
         { label: 'Health', value: `${Math.round(member.health)}%` },
         { label: 'Fatigue', value: `${Math.round(member.fatigue)}%` },
@@ -649,6 +654,7 @@ export const buildMapInspection = ({
     tile.contents.sort((left, right) => (
       inspectableOrder[left.kind] - inspectableOrder[right.kind]
       || left.label.localeCompare(right.label)
+      || left.key.localeCompare(right.key)
     ))
   })
 
