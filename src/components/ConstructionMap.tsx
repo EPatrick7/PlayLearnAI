@@ -247,9 +247,9 @@ export function ConstructionMap({
   const dragEndRef = useRef<GridPoint | null>(null)
   const draftPointerStartRef = useRef<PointerPosition | null>(null)
   const draftDraggingRef = useRef(false)
+  const cancelledDraftPointerIdRef = useRef<number | null>(null)
   const keyboardAnchorRef = useRef<GridPoint | null>(null)
   const spacePressedRef = useRef(false)
-  const spacePanUsedRef = useRef(false)
   const touchPointsRef = useRef(new Map<number, PointerPosition>())
   const touchPanCenterRef = useRef<PointerPosition | null>(null)
   const touchPinchDistanceRef = useRef<number | null>(null)
@@ -595,11 +595,17 @@ export function ConstructionMap({
     const clampedZoom = clampZoom(nextZoom)
     if (clampedZoom === zoomRef.current) return
     const rect = map.getBoundingClientRect()
+    const anchorClientX = rect.width > 0
+      ? Math.min(rect.right, Math.max(rect.left, clientX))
+      : clientX
+    const anchorClientY = rect.height > 0
+      ? Math.min(rect.bottom, Math.max(rect.top, clientY))
+      : clientY
     zoomAnchorRef.current = {
-      clientX,
-      clientY,
-      mapX: rect.width ? (clientX - rect.left) / rect.width : 0.5,
-      mapY: rect.height ? (clientY - rect.top) / rect.height : 0.5,
+      clientX: anchorClientX,
+      clientY: anchorClientY,
+      mapX: rect.width ? (anchorClientX - rect.left) / rect.width : 0.5,
+      mapY: rect.height ? (anchorClientY - rect.top) / rect.height : 0.5,
     }
     zoomRef.current = clampedZoom
     setZoom(clampedZoom)
@@ -625,36 +631,19 @@ export function ConstructionMap({
       const container = mapRef.current?.closest<HTMLElement>('.construction-map-scroll') ?? null
       if (!container) return
       const lineHeight = 16
-      const pageWidth = container.clientWidth || 800
       const pageHeight = container.clientHeight || 600
-      const deltaX = event.deltaMode === 1
-        ? event.deltaX * lineHeight
-        : event.deltaMode === 2
-          ? event.deltaX * pageWidth
-          : event.deltaX
-      const deltaY = event.deltaMode === 1
-        ? event.deltaY * lineHeight
-        : event.deltaMode === 2
-          ? event.deltaY * pageHeight
-          : event.deltaY
-      const modifierZoom = event.ctrlKey || event.metaKey
-      const pixelPan = event.deltaMode === WheelEvent.DOM_DELTA_PIXEL && !modifierZoom
+      const wheelDelta = event.deltaY !== 0 ? event.deltaY : event.deltaX
+      const normalizedDelta = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? wheelDelta * lineHeight
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? wheelDelta * pageHeight
+          : wheelDelta
 
-      if (pixelPan || (!modifierZoom && event.shiftKey)) {
-        event.preventDefault()
-        if (event.shiftKey && deltaX === 0) container.scrollLeft += deltaY
-        else {
-          container.scrollLeft += deltaX
-          container.scrollTop += deltaY
-        }
-        return
-      }
-
-      if (deltaY === 0) return
+      if (normalizedDelta === 0) return
       event.preventDefault()
       const boundedDelta = Math.min(
         MAX_WHEEL_ZOOM_DELTA,
-        Math.max(-MAX_WHEEL_ZOOM_DELTA, deltaY),
+        Math.max(-MAX_WHEEL_ZOOM_DELTA, normalizedDelta),
       )
       const factor = Math.exp(-boundedDelta * 0.0015)
       setZoomAround(zoomRef.current * factor, event.clientX, event.clientY)
@@ -682,6 +671,37 @@ export function ConstructionMap({
   }, [centerMapInViewport])
 
   useEffect(() => {
+    let firstFrame: number | null = null
+    let secondFrame: number | null = null
+    const recenterAfterViewportChange = () => {
+      if (firstFrame !== null) cancelAnimationFrame(firstFrame)
+      if (secondFrame !== null) cancelAnimationFrame(secondFrame)
+      firstFrame = requestAnimationFrame(() => {
+        firstFrame = null
+        secondFrame = requestAnimationFrame(() => {
+          secondFrame = null
+          centerMapInViewport()
+        })
+      })
+    }
+    window.addEventListener('resize', recenterAfterViewportChange)
+    window.visualViewport?.addEventListener('resize', recenterAfterViewportChange)
+    const container = scrollContainer()
+    let resizeObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined' && container) {
+      resizeObserver = new ResizeObserver(recenterAfterViewportChange)
+      resizeObserver.observe(container)
+    }
+    return () => {
+      window.removeEventListener('resize', recenterAfterViewportChange)
+      window.visualViewport?.removeEventListener('resize', recenterAfterViewportChange)
+      resizeObserver?.disconnect()
+      if (firstFrame !== null) cancelAnimationFrame(firstFrame)
+      if (secondFrame !== null) cancelAnimationFrame(secondFrame)
+    }
+  }, [centerMapInViewport])
+
+  useEffect(() => {
     if (selectedTool === 'wall' || selectedTool === 'erase') return stopEdgePan
     edgePanPointerRef.current = null
     edgePanLastTimestampRef.current = null
@@ -705,6 +725,7 @@ export function ConstructionMap({
       dragEndRef.current = null
       draftPointerStartRef.current = null
       draftDraggingRef.current = false
+      cancelledDraftPointerIdRef.current = null
       keyboardAnchorRef.current = null
       panPointerIdRef.current = null
       panLastPointRef.current = null
@@ -717,7 +738,6 @@ export function ConstructionMap({
       touchPanCenterRef.current = null
       touchPinchDistanceRef.current = null
       spacePressedRef.current = false
-      spacePanUsedRef.current = false
       setDragStart(null)
       setDragEnd(null)
       setDraftTool(null)
@@ -833,6 +853,7 @@ export function ConstructionMap({
       if (touchPointsRef.current.size >= 2) {
         event.preventDefault()
         clearDraft()
+        cancelledDraftPointerIdRef.current = null
         panPointerIdRef.current = null
         panLastPointRef.current = null
         panStartPointRef.current = null
@@ -853,26 +874,26 @@ export function ConstructionMap({
       spacePressedRef.current
     )
     if (temporarySpacePan) {
-      spacePanUsedRef.current = true
       clearDraft()
       beginPan(event, false)
       return
     }
-    const panButton = (!selectedTool && event.button === 0) || (selectedTool && event.button === 1)
-    if (panButton) {
-      beginPan(event)
+    if (event.button === 1) {
+      beginPan(event, false)
+      return
+    }
+    if (!selectedTool && event.button === 0) {
+      beginPan(event, true)
       return
     }
     if (!selectedTool || event.button !== 0) return
     const point = pointerPoint(event)
-    if (!point) {
-      beginPan(event, false)
-      return
-    }
+    if (!point) return
     event.preventDefault()
     updatePreviewLabelAnchor(event.clientX, event.clientY)
     pointerIdRef.current = event.pointerId
     draftPointerStartRef.current = { x: event.clientX, y: event.clientY }
+    cancelledDraftPointerIdRef.current = null
     draftDraggingRef.current = false
     edgePanPointerRef.current = { x: event.clientX, y: event.clientY }
     edgePanLastTimestampRef.current = null
@@ -931,21 +952,8 @@ export function ConstructionMap({
       ) >= TOUCH_PAN_DRAG_THRESHOLD
     ) {
       event.preventDefault()
-      const container = scrollContainer()
       clearDraft()
-      panPointerIdRef.current = event.pointerId
-      panLastPointRef.current = { x: event.clientX, y: event.clientY }
-      panStartPointRef.current = touchDraftStart
-      panStartCellRef.current = null
-      panPointerTypeRef.current = 'touch'
-      panStartInspectItemKeyRef.current = null
-      panMovedRef.current = true
-      panInspectsStationaryPointerRef.current = false
-      setIsPanning(true)
-      if (container) {
-        container.scrollLeft -= event.clientX - touchDraftStart.x
-        container.scrollTop -= event.clientY - touchDraftStart.y
-      }
+      cancelledDraftPointerIdRef.current = event.pointerId
       return
     }
     if (panPointerIdRef.current === event.pointerId) {
@@ -996,8 +1004,16 @@ export function ConstructionMap({
   }
 
   const finishPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const wasCancelledDraft = cancelledDraftPointerIdRef.current === event.pointerId
+    if (wasCancelledDraft) cancelledDraftPointerIdRef.current = null
     const wasTouchPan = event.pointerType === 'touch' && touchPanCenterRef.current !== null
     if (event.pointerType === 'touch') touchPointsRef.current.delete(event.pointerId)
+    if (wasCancelledDraft) {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      return
+    }
     if (wasTouchPan) {
       if (touchPointsRef.current.size < 2) {
         touchPanCenterRef.current = null
@@ -1020,6 +1036,9 @@ export function ConstructionMap({
   }
 
   const cancelPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (cancelledDraftPointerIdRef.current === event.pointerId) {
+      cancelledDraftPointerIdRef.current = null
+    }
     if (event.pointerType === 'touch') touchPointsRef.current.delete(event.pointerId)
     if (touchPointsRef.current.size < 2) {
       touchPanCenterRef.current = null
@@ -1035,7 +1054,9 @@ export function ConstructionMap({
     const ownsDraft = pointerIdRef.current === event.pointerId
     const ownsPan = panPointerIdRef.current === event.pointerId
     const ownsTouch = touchPointsRef.current.has(event.pointerId)
-    if (!ownsDraft && !ownsPan && !ownsTouch) return
+    const ownsCancelledDraft = cancelledDraftPointerIdRef.current === event.pointerId
+    if (!ownsDraft && !ownsPan && !ownsTouch && !ownsCancelledDraft) return
+    if (ownsCancelledDraft) cancelledDraftPointerIdRef.current = null
     touchPointsRef.current.delete(event.pointerId)
     touchPanCenterRef.current = null
     touchPinchDistanceRef.current = null
@@ -1125,7 +1146,6 @@ export function ConstructionMap({
       event.preventDefault()
       if (!event.repeat) {
         spacePressedRef.current = true
-        spacePanUsedRef.current = false
       }
       return
     }
@@ -1142,7 +1162,6 @@ export function ConstructionMap({
     if (event.key === 'Escape') {
       event.preventDefault()
       spacePressedRef.current = false
-      spacePanUsedRef.current = false
       keyboardAnchorRef.current = null
       clearDraft()
       onCancelTool()
@@ -1158,17 +1177,11 @@ export function ConstructionMap({
     if (isEditableTarget(event.target)) return
     if (event.key !== ' ' && event.code !== 'Space') return
     event.preventDefault()
-    const wasPressed = spacePressedRef.current
-    const usedForPan = spacePanUsedRef.current
     spacePressedRef.current = false
-    spacePanUsedRef.current = false
-    const isLineDraft = selectedTool === 'wall' || selectedTool === 'erase'
-    if (wasPressed && !usedForPan && isLineDraft) activateKeyboardCursor()
   }
 
   const clearSpaceGesture = () => {
     spacePressedRef.current = false
-    spacePanUsedRef.current = false
   }
 
   useEffect(() => {
@@ -1227,11 +1240,11 @@ export function ConstructionMap({
       <p className="sr-only" id="construction-grid-help">
         Choose a build tool, then point and drag on the map. W A S D pans the camera; Arrow
         keys move the grid cursor. Hold Space and left-drag, or middle-drag, to pan without
-        leaving the active tool. On touch, drag single-placement tools to pan and tap to place.
-        Unmodified pixel scrolling pans. Pinch or Control or Command plus scrolling zooms;
-        coarse line or page wheel input also zooms around the pointer. Drag a wall or
-        deconstruction line to a screen edge to keep drawing while the camera scrolls. Tap
-        Space to start or finish a wall line. Enter places an object. R rotates. Escape cancels.
+        leaving the active tool. On touch, tap to place, drag wall and deconstruction lines,
+        and use two fingers to pan or pinch. Every wheel input zooms around the pointer. Drag
+        a wall or deconstruction line to a screen edge to keep drawing while the camera
+        scrolls. Enter places an object or starts and finishes a wall line. R rotates. Escape
+        cancels.
       </p>
       <p aria-atomic="true" aria-live="polite" className="sr-only" id="construction-grid-status" role="status">
         {cursorStatus}

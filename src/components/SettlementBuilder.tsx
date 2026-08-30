@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   detectRooms,
   eraseAt,
@@ -110,12 +110,16 @@ const toolName = (tool: ConstructionTool | null) => {
 }
 
 const instructionFor = (tool: ConstructionTool | null) => {
-  if (!tool) return 'Move / Select: drag the map to look around or select something to inspect it.'
-  if (tool === 'wall') return 'Drag a one-tile wall line · Move / Select or Space/middle-drag pans.'
-  if (tool === 'door') return 'Tap or click a wall · Move / Select or Space/middle-drag pans.'
-  if (tool === 'erase') return 'Tap or drag to deconstruct · Move / Select or Space/middle-drag pans.'
-  return `${WORKSTATION_SPECS[tool].description} · tap to place · touch-drag or Space/middle-drag pans · R rotates.`
+  if (!tool) return 'Open Build to place blueprints. Colonists haul materials and construct every funded plan.'
+  if (tool === 'wall') return 'Wall designator · drag a one-tile line. Colonists build the blueprints.'
+  if (tool === 'door') return 'Door designator · choose a wall tile. Colonists build the blueprint.'
+  if (tool === 'erase') return 'Deconstruct designator · click or drag built objects for colonists to remove.'
+  return `${WORKSTATION_SPECS[tool].description} · tap to place a blueprint · R rotates. Colonists haul and build.`
 }
+
+const shouldCollapseCatalogAfterToolChoice = () => (
+  typeof window !== 'undefined' && window.innerWidth <= 700
+)
 
 interface SettlementBuilderProps {
   constructionCompletionSummary?: string | null
@@ -212,6 +216,18 @@ export function SettlementBuilder({
     [constructionOrders, layout],
   )
   const openOrders = constructionOrders.filter((order) => order.status !== 'complete')
+  const latestSequenceByCommand = new Map<string, number>()
+  constructionOrders.forEach((order) => {
+    if (order.status === 'complete') return
+    latestSequenceByCommand.set(
+      order.commandId,
+      Math.max(latestSequenceByCommand.get(order.commandId) ?? -1, order.sequence),
+    )
+  })
+  const undoableCommandIds = [...latestSequenceByCommand.entries()]
+    .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))
+    .map(([commandId]) => commandId)
+  const undoCount = undoableCommandIds.length
   const assignedBuilders = new Set(
     openOrders.map((order) => order.assignedCrewId).filter(Boolean),
   ).size
@@ -237,16 +253,23 @@ export function SettlementBuilder({
   const [buildOpen, setBuildOpen] = useState(false)
   const [category, setCategory] = useState<BuildCategory>('structure')
   const [selectedTool, setSelectedTool] = useState<ConstructionTool | null>(null)
-  const [parkedTool, setParkedTool] = useState<ConstructionTool | null>(null)
   const [rotation, setRotation] = useState<WorkstationRotation>(0)
   const [announcement, setAnnouncement] = useState('Build freely. Rooms are enclosed shapes with at least one door.')
   const [toastVisible, setToastVisible] = useState(false)
   const simulationSpeed = colony.settlement.constructionSpeed
-  const [undoCount, setUndoCount] = useState(0)
   const [selection, setSelection] = useState<ArchitectSelection | null>(null)
   const [stackSnapshot, setStackSnapshot] = useState<MapTileInspection | null>(null)
   const [stackTrigger, setStackTrigger] = useState<HTMLElement | null>(null)
-  const undoStack = useRef<string[]>([])
+  const toggleBuildMenu = useCallback(() => {
+    setBuildOpen((current) => {
+      if (!current) {
+        setSelection(null)
+        setStackSnapshot(null)
+        setStackTrigger(null)
+      }
+      return !current
+    })
+  }, [])
   const rooms = useMemo(() => detectRooms(layout), [layout])
   const readyForShift = canBeginOperations(colony)
   const visibleCrew = useMemo(
@@ -420,36 +443,32 @@ export function SettlementBuilder({
     }
     if (queued.commandId && queued.orderIds.length > 0) {
       onConstructionQueued?.()
-      undoStack.current = [...undoStack.current.slice(-19), queued.commandId]
-      setUndoCount(undoStack.current.length)
       const blockedCount = queued.blockedOrderIds?.length ?? 0
+      const count = queued.orderIds.length
+      const deconstruction = label === 'Deconstruct'
+      const subject = deconstruction
+        ? `deconstruction ${count === 1 ? 'order' : 'orders'}`
+        : `${label.toLowerCase()} ${count === 1 ? 'blueprint' : 'blueprints'}`
       announce(blockedCount > 0
-        ? `${label} queued · ${blockedCount} ${blockedCount === 1 ? 'job needs' : 'jobs need'} material. Use Move / Select to edit blueprints.`
-        : `${label} blueprint queued · ${queued.orderIds.length} ${queued.orderIds.length === 1 ? 'job' : 'jobs'}. Use Move / Select to edit blueprints.`)
+        ? `${count} ${subject} placed · ${blockedCount} ${blockedCount === 1 ? 'is' : 'are'} waiting for material. Colonists build funded blueprints.`
+        : deconstruction
+          ? `${count} ${subject} placed. Colonists will carry out the ${count === 1 ? 'order' : 'orders'}.`
+          : `${count} ${subject} placed. Colonists will haul materials and complete the ${count === 1 ? 'blueprint' : 'blueprints'}.`)
     } else {
       announce('Pending blueprint cancelled.')
     }
   }
 
   const undo = () => {
-    const commandId = undoStack.current.at(-1)
+    const commandId = undoableCommandIds.at(-1)
     if (!commandId) {
       announce('Nothing to undo yet.')
       return
     }
-    undoStack.current = undoStack.current.slice(0, -1)
-    setUndoCount(undoStack.current.length)
     const cancelled = colony.cancelConstructionCommand(commandId)
     announce(cancelled.length > 0
       ? `Cancelled ${cancelled.length} unfinished ${cancelled.length === 1 ? 'job' : 'jobs'}.`
       : 'Nothing unfinished remains in that placement.')
-  }
-
-  const pruneUndoCommand = (commandId: string) => {
-    const nextStack = undoStack.current.filter((candidate) => candidate !== commandId)
-    if (nextStack.length === undoStack.current.length) return
-    undoStack.current = nextStack
-    setUndoCount(nextStack.length)
   }
 
   const cancelSelectedBlueprint = () => {
@@ -459,7 +478,6 @@ export function SettlementBuilder({
       announce('Nothing unfinished remains in that placement.')
       return
     }
-    pruneUndoCommand(selectedBlueprint.commandId)
     setSelection(selectedTile ? { cellKey: selectedTile.key, itemKey: null } : null)
     announce(cancelled.length === 1
       ? 'Blueprint cancelled. Collected material returned to storage.'
@@ -497,27 +515,14 @@ export function SettlementBuilder({
     announce(`${toolName(selectedTool)} rotated.`)
   }
 
-  const cancelTool = () => {
+  const cancelTool = useCallback(() => {
+    const cancelledTool = selectedTool
     setSelectedTool(null)
-    setParkedTool(null)
-    announce('Placement stopped. Move / Select mode.')
-  }
-
-  const togglePan = () => {
-    if (selectedTool) {
-      setParkedTool(selectedTool)
-      setSelectedTool(null)
-      announce(`Move / Select active. ${toolName(selectedTool)} is ready to continue from the toolbar.`)
-      return
-    }
-    if (parkedTool) {
-      setSelectedTool(parkedTool)
-      setParkedTool(null)
-      announce(`${toolName(parkedTool)} placement active.`)
-      return
-    }
-    announce('Move / Select mode.')
-  }
+    setAnnouncement(cancelledTool
+      ? `${toolName(cancelledTool)} designator cancelled.`
+      : 'No designator active.')
+    setToastVisible(true)
+  }, [selectedTool])
 
   const chooseTool = (tool: ConstructionTool) => {
     setSelection(null)
@@ -528,37 +533,33 @@ export function SettlementBuilder({
       return
     }
     setSelectedTool(tool)
-    setParkedTool(null)
     setRotation(0)
-    setBuildOpen(false)
-    announce(`${toolName(tool)} selected.`)
+    if (shouldCollapseCatalogAfterToolChoice()) setBuildOpen(false)
+    announce(`${toolName(tool)} ready. ${tool === 'wall' || tool === 'erase' ? 'Drag to draw.' : 'Tap to place.'}`)
   }
 
   const chooseCategory = (nextCategory: BuildCategory) => {
     setSelection(null)
     setStackSnapshot(null)
     setStackTrigger(null)
-    if (nextCategory !== category && selectedTool) {
-      setParkedTool(selectedTool)
+    const categoryChanged = nextCategory !== category
+    if (categoryChanged && selectedTool) {
       setSelectedTool(null)
     }
     setCategory(nextCategory)
     setBuildOpen(true)
-    announce(nextCategory !== category && selectedTool
-      ? `${toolName(selectedTool)} placement off while you browse ${categoryLabels[nextCategory]}.`
-      : `${categoryLabels[nextCategory]} tools open.`)
+    announce(categoryChanged && selectedTool
+      ? `${categoryLabels[nextCategory]} tools open. ${toolName(selectedTool)} designator cancelled.`
+      : `${categoryLabels[nextCategory]} blueprint tools open.`)
   }
 
   const resetSettlement = () => {
     if (!window.confirm('Start over with the tiny landing habitat?')) return
     colony.resetColony()
     onConstructionQueued?.()
-    undoStack.current = []
-    setUndoCount(0)
     setBuildOpen(false)
     setCategory('structure')
     setSelectedTool(null)
-    setParkedTool(null)
     setRotation(0)
     announce('New tiny landing started.')
   }
@@ -578,25 +579,15 @@ export function SettlementBuilder({
       ) return
       if (event.key.toLowerCase() === 'b' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault()
-        setBuildOpen((current) => {
-          if (!current) {
-            setSelection(null)
-            setStackSnapshot(null)
-            setStackTrigger(null)
-          }
-          return !current
-        })
+        toggleBuildMenu()
       }
       if (event.key === 'Escape') {
         if (selection) {
           setSelection(null)
-          setAnnouncement('Move / Select mode.')
+          setAnnouncement('Selection cleared.')
           setToastVisible(true)
-        } else if (selectedTool || parkedTool) {
-          setSelectedTool(null)
-          setParkedTool(null)
-          setAnnouncement('Move / Select mode.')
-          setToastVisible(true)
+        } else if (selectedTool) {
+          cancelTool()
         } else if (buildOpen) {
           setBuildOpen(false)
         } else if (onExit) {
@@ -606,7 +597,7 @@ export function SettlementBuilder({
     }
     window.addEventListener('keydown', keyboardShortcuts)
     return () => window.removeEventListener('keydown', keyboardShortcuts)
-  }, [buildOpen, onExit, parkedTool, selectedTool, selection])
+  }, [buildOpen, cancelTool, onExit, selectedTool, selection, toggleBuildMenu])
 
   useEffect(() => {
     if (!toastVisible) return
@@ -614,34 +605,18 @@ export function SettlementBuilder({
     return () => window.clearTimeout(timeout)
   }, [announcement, toastVisible])
 
-  useEffect(() => {
-    if (undoStack.current.length === 0) return
-    const unfinishedCommands = new Set(
-      constructionOrders
-        .filter((order) => order.status !== 'complete')
-        .map((order) => order.commandId),
-    )
-    const nextStack = undoStack.current.filter((commandId) => unfinishedCommands.has(commandId))
-    if (nextStack.length === undoStack.current.length) return
-    undoStack.current = nextStack
-    setUndoCount(nextStack.length)
-  }, [constructionOrders])
-
   const activeTools = toolsByCategory[category]
-  const currentTool = selectedTool ?? parkedTool
-  const currentToolDefinition = currentTool
-    ? Object.values(toolsByCategory).flat().find((tool) => tool.id === currentTool)
+  const selectedToolDefinition = selectedTool
+    ? Object.values(toolsByCategory).flat().find((tool) => tool.id === selectedTool)
     : null
   const nextRotation = (rotation + 90) % 360
   const toolInstruction = selectedTool
     ? instructionFor(selectedTool)
-    : parkedTool
-      ? `Move / Select active · drag to pan or inspect · continue ${toolName(parkedTool)} when ready.`
     : buildOpen
-      ? 'Pick a tool. Walls and objects are placed cell by cell—there are no room templates.'
+      ? 'Choose a designator, then place blueprints on the map. Colonists haul materials and build them.'
       : readyForShift
         ? 'Your first expansion is habitable. Begin the first shift when you are ready.'
-      : 'Drag/WASD/wheel to pan · Ctrl/⌘-wheel or pinch to zoom · B opens Architect.'
+      : instructionFor(null)
 
   return (
     <div className="game-shell construction-shell">
@@ -843,23 +818,14 @@ export function SettlementBuilder({
           </section>
         )}
 
-        <div className={`construction-controls ${buildOpen ? 'catalog-open' : ''} ${currentTool ? 'active-tool' : ''}`}>
+        <div className={`construction-controls ${buildOpen ? 'catalog-open' : ''} ${selectedTool ? 'active-tool' : ''}`}>
           <nav aria-label="Construction modes" className="construction-category-bar">
             <button
               aria-label="Build menu"
               aria-keyshortcuts="B"
               aria-pressed={buildOpen}
               className="architect-button"
-              onClick={() => {
-                setBuildOpen((current) => {
-                  if (!current) {
-                    setSelection(null)
-                    setStackSnapshot(null)
-                    setStackTrigger(null)
-                  }
-                  return !current
-                })
-              }}
+              onClick={toggleBuildMenu}
               type="button"
             >
               <GameIcon name="work" /><span>Build</span><small>B</small>
@@ -878,10 +844,10 @@ export function SettlementBuilder({
               </button>
             ))}
 
-            {!buildOpen && currentTool && (
+            {!buildOpen && selectedTool && (
               <span className="active-tool-summary">
-                <GameIcon name={currentToolDefinition?.icon ?? 'work'} />
-                <span><strong>{toolName(currentTool)}</strong><small>{toolInstruction}</small></span>
+                <GameIcon name={selectedToolDefinition?.icon ?? 'work'} />
+                <span><strong>{toolName(selectedTool)}</strong><small>{toolInstruction}</small></span>
               </span>
             )}
 
@@ -897,64 +863,15 @@ export function SettlementBuilder({
               </button>
             )}
 
-            {!buildOpen && currentTool && (
-              <button
-                aria-label={parkedTool ? `Continue placing ${toolName(parkedTool)}` : 'Move / Select'}
-                className="pan-button"
-                onClick={togglePan}
-                type="button"
-              >
-                <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? `Continue ${toolName(parkedTool)}` : 'Move / Select'}</span>
-              </button>
-            )}
-
-            {!buildOpen && currentTool && (
-              <button aria-label={`Stop placing ${toolName(currentTool)}`} className="cancel-tool" onClick={cancelTool} type="button">
-                <GameIcon name="close" /><span>Stop placing</span>
+            {!buildOpen && selectedTool && (
+              <button aria-label={`Cancel ${toolName(selectedTool)} designator`} className="cancel-tool" onClick={cancelTool} type="button">
+                <GameIcon name="close" /><span>Cancel</span>
               </button>
             )}
           </nav>
 
           {buildOpen && (
             <section aria-label={`${categoryLabels[category]} build tools`} className="construction-tool-tray">
-              {(currentTool || undoCount > 0) && (
-                <div className="construction-designator-strip">
-                  {currentTool && (
-                    <span className="construction-designator-summary">
-                      <GameIcon name={currentToolDefinition?.icon ?? 'work'} />
-                      <span>
-                        <small>{parkedTool ? 'Move / Select active' : 'Active designator'}</small>
-                        <strong>{toolName(currentTool)}</strong>
-                      </span>
-                    </span>
-                  )}
-                  {undoCount > 0 && (
-                    <button aria-label="Undo last construction order" className="undo-tool" onClick={undo} type="button">
-                      <GameIcon name="reset" /><span>Undo</span>
-                    </button>
-                  )}
-                  {isWorkstationTool(selectedTool) && (
-                    <button aria-label={`Rotate ${toolName(selectedTool)} to ${nextRotation}°`} className="rotate-tool" onClick={rotate} type="button">
-                      <GameIcon name="reset" /><span>Rotate</span>
-                    </button>
-                  )}
-                  {currentTool && (
-                    <button
-                      aria-label={parkedTool ? `Continue placing ${toolName(parkedTool)}` : 'Move / Select'}
-                      className="pan-button"
-                      onClick={togglePan}
-                      type="button"
-                    >
-                      <GameIcon name={parkedTool ? 'play' : 'map'} /><span>{parkedTool ? `Continue ${toolName(parkedTool)}` : 'Move / Select'}</span>
-                    </button>
-                  )}
-                  {currentTool && (
-                    <button aria-label={`Stop placing ${toolName(currentTool)}`} className="cancel-tool" onClick={cancelTool} type="button">
-                      <GameIcon name="close" /><span>Stop placing</span>
-                    </button>
-                  )}
-                </div>
-              )}
               <div className="construction-tool-list">
                 {activeTools.map((tool) => (
                   <button

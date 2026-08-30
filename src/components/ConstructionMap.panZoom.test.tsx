@@ -436,7 +436,7 @@ describe('ConstructionMap pan and zoom', () => {
   })
 
   it('keeps left drag for construction while middle drag pans with a tool active', () => {
-    const { cell, map, onApply, scroll } = renderMap('wall')
+    const { cell, map, onApply, onInspectCell, scroll } = renderMap('wall')
 
     fireEvent.pointerDown(cell({ x: 1, y: 1 }), {
       button: 0,
@@ -470,7 +470,65 @@ describe('ConstructionMap pan and zoom', () => {
 
     expect(scroll.scrollLeft).toBe(85)
     expect(onApply).toHaveBeenCalledOnce()
+    expect(onInspectCell).not.toHaveBeenCalled()
   })
+
+  it('middle-drags the camera in Move / Select mode without inspecting', () => {
+    const { map, onInspectCell, scroll } = renderMap()
+    scroll.scrollLeft = 60
+    scroll.scrollTop = 70
+
+    fireEvent.pointerDown(map, {
+      button: 1,
+      clientX: 100,
+      clientY: 100,
+      pointerId: 78,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(map, {
+      button: 1,
+      clientX: 75,
+      clientY: 80,
+      pointerId: 78,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(map, {
+      button: 1,
+      clientX: 75,
+      clientY: 80,
+      pointerId: 78,
+      pointerType: 'mouse',
+    })
+
+    expect(scroll.scrollLeft).toBe(85)
+    expect(scroll.scrollTop).toBe(90)
+    expect(onInspectCell).not.toHaveBeenCalled()
+  })
+
+  it.each([null, 'wall'] as const)(
+    'never inspects or applies from a stationary middle click with %s selected',
+    (selectedTool) => {
+      const { cell, onApply, onInspectCell } = renderMap(selectedTool)
+
+      fireEvent.pointerDown(cell({ x: 4, y: 5 }), {
+        button: 1,
+        clientX: 120,
+        clientY: 140,
+        pointerId: 77,
+        pointerType: 'mouse',
+      })
+      fireEvent.pointerUp(cell({ x: 4, y: 5 }), {
+        button: 1,
+        clientX: 120,
+        clientY: 140,
+        pointerId: 77,
+        pointerType: 'mouse',
+      })
+
+      expect(onApply).not.toHaveBeenCalled()
+      expect(onInspectCell).not.toHaveBeenCalled()
+    },
+  )
 
   it.each([
     ['mouse', 'wall'],
@@ -478,7 +536,7 @@ describe('ConstructionMap pan and zoom', () => {
     ['mouse', 'solar-array'],
     ['touch', 'solar-array'],
   ] as const)(
-    'pans from empty camera workspace with a primary %s pointer while %s remains active',
+    'leaves an active-tool primary %s gutter drag inert while %s remains selected',
     (pointerType, selectedTool) => {
       const {
         map,
@@ -513,8 +571,8 @@ describe('ConstructionMap pan and zoom', () => {
         pointerType,
       })
 
-      expect(scroll.scrollLeft).toBe(155)
-      expect(scroll.scrollTop).toBe(140)
+      expect(scroll.scrollLeft).toBe(120)
+      expect(scroll.scrollTop).toBe(100)
       expect(onApply).not.toHaveBeenCalled()
       expect(onInspectCell).not.toHaveBeenCalled()
       expect(onCancelTool).not.toHaveBeenCalled()
@@ -593,7 +651,7 @@ describe('ConstructionMap pan and zoom', () => {
     expect(onApply).not.toHaveBeenCalled()
   })
 
-  it('uses a touch drag to pan single-placement tools while preserving tap placement', () => {
+  it('cancels a dragged single-placement touch without panning and preserves tap placement', () => {
     const { cell, map, onApply, scroll } = renderMap('solar-array')
     scroll.scrollLeft = 120
     scroll.scrollTop = 100
@@ -618,8 +676,8 @@ describe('ConstructionMap pan and zoom', () => {
       pointerType: 'touch',
     })
 
-    expect(scroll.scrollLeft).toBe(60)
-    expect(scroll.scrollTop).toBe(50)
+    expect(scroll.scrollLeft).toBe(120)
+    expect(scroll.scrollTop).toBe(100)
     expect(onApply).not.toHaveBeenCalled()
     expect(map).toHaveClass('tool-active')
 
@@ -887,7 +945,7 @@ describe('ConstructionMap pan and zoom', () => {
     })
   })
 
-  it('tolerates touch jitter on object placement but pans after deliberate movement', () => {
+  it('tolerates touch jitter on object placement but cancels after deliberate movement', () => {
     const { cell, map, onApply, scroll } = renderMap('solar-array')
     scroll.scrollLeft = 100
 
@@ -935,7 +993,7 @@ describe('ConstructionMap pan and zoom', () => {
       pointerType: 'touch',
     })
     expect(onApply).toHaveBeenCalledOnce()
-    expect(scroll.scrollLeft).toBe(87)
+    expect(scroll.scrollLeft).toBe(100)
   })
 
   it('stops a wall edge-scroll silently when pointer capture is lost', () => {
@@ -1018,10 +1076,21 @@ describe('ConstructionMap pan and zoom', () => {
     fireEvent.pointerUp(map, { pointerId: 40, pointerType: 'touch' })
   })
 
-  it('pans both axes for precise trackpad scrolling without using the active tool', () => {
+  it('zooms for unmodified pixel wheel input without using the active tool', () => {
     const { map, onApply, scroll } = renderMap('wall')
     scroll.scrollLeft = 90
     scroll.scrollTop = 70
+    vi.spyOn(map, 'getBoundingClientRect').mockReturnValue({
+      bottom: 350,
+      height: 300,
+      left: 100,
+      right: 500,
+      top: 50,
+      width: 400,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    })
 
     const wheelEvent = new WheelEvent('wheel', {
       bubbles: true,
@@ -1035,27 +1104,41 @@ describe('ConstructionMap pan and zoom', () => {
     fireEvent(map, wheelEvent)
 
     expect(wheelEvent).toHaveProperty('defaultPrevented', true)
-    expect(scroll.scrollLeft).toBe(114)
-    expect(scroll.scrollTop).toBe(52)
-    expect(screen.getByText('100%')).toBeVisible()
+    expect(scroll.scrollLeft).toBe(90)
+    expect(scroll.scrollTop).toBe(70)
+    expect(Number.parseInt(screen.getByText(/%/).textContent ?? '0')).toBeGreaterThan(100)
     expect(onApply).not.toHaveBeenCalled()
     expect(map).toHaveClass('tool-active')
   })
 
-  it('pans every unmodified pixel wheel delta and reserves coarse line/page input for zoom', () => {
+  it('normalizes pixel, line, and page wheel units through the same zoom action', () => {
     const { map, scroll } = renderMap()
     scroll.scrollTop = 70
+    vi.spyOn(map, 'getBoundingClientRect').mockReturnValue({
+      bottom: 350,
+      height: 300,
+      left: 100,
+      right: 500,
+      top: 50,
+      width: 400,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    })
 
-    fireEvent.wheel(map, { deltaMode: 0, deltaY: 18 })
-    expect(scroll.scrollTop).toBe(88)
-    expect(screen.getByText('100%')).toBeVisible()
+    fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaMode: 0, deltaY: -18 })
+    const afterPixel = Number.parseInt(screen.getByText(/%/).textContent ?? '0')
+    expect(afterPixel).toBeGreaterThan(100)
+    expect(scroll.scrollTop).toBe(70)
 
-    fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaMode: 0, deltaY: 160 })
-    expect(scroll.scrollTop).toBe(248)
-    expect(screen.getByText('100%')).toBeVisible()
+    fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaMode: 1, deltaY: -1 })
+    const afterLine = Number.parseInt(screen.getByText(/%/).textContent ?? '0')
+    expect(afterLine).toBeGreaterThan(afterPixel)
+    expect(scroll.scrollTop).toBe(70)
 
     fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaMode: 2, deltaY: -1 })
-    expect(Number.parseInt(screen.getByText(/%/).textContent ?? '0')).toBeGreaterThan(100)
+    expect(Number.parseInt(screen.getByText(/%/).textContent ?? '0')).toBeGreaterThan(afterLine)
+    expect(scroll.scrollTop).toBe(70)
   })
 
   it.each(['ctrlKey', 'metaKey'] as const)(
@@ -1102,6 +1185,45 @@ describe('ConstructionMap pan and zoom', () => {
     },
   )
 
+  it('clamps an off-map wheel anchor to the nearest map edge', () => {
+    const { map, scroll } = renderMap()
+    scroll.scrollLeft = 50
+    scroll.scrollTop = 60
+    vi.spyOn(map, 'getBoundingClientRect')
+      .mockReturnValueOnce({
+        bottom: 350,
+        height: 300,
+        left: 100,
+        right: 500,
+        top: 50,
+        width: 400,
+        x: 100,
+        y: 50,
+        toJSON: () => ({}),
+      })
+      .mockReturnValueOnce({
+        bottom: 390,
+        height: 360,
+        left: 80,
+        right: 560,
+        top: 30,
+        width: 480,
+        x: 80,
+        y: 30,
+        toJSON: () => ({}),
+      })
+
+    fireEvent.wheel(map, {
+      clientX: 20,
+      clientY: 900,
+      deltaMode: 0,
+      deltaY: -20,
+    })
+
+    expect(scroll.scrollLeft).toBe(30)
+    expect(scroll.scrollTop).toBe(100)
+  })
+
   it('zooms with a coarse wheel and exposes clamped accessible controls', () => {
     const { map } = renderMap()
     const output = screen.getByText('100%')
@@ -1120,7 +1242,7 @@ describe('ConstructionMap pan and zoom', () => {
     expect(zoomOut).toBeDisabled()
     expect(screen.getByRole('button', { name: /center construction map/i })).toBeVisible()
     expect(map).toHaveAttribute('aria-keyshortcuts', expect.stringContaining('Space'))
-    expect(map).toHaveAccessibleDescription(/hold space and left-drag.*unmodified pixel scrolling pans/i)
+    expect(map).toHaveAccessibleDescription(/hold space and left-drag.*every wheel input zooms/i)
   })
 
   it('temporarily pans with Space and left drag without parking or applying the active tool', () => {
@@ -1164,16 +1286,60 @@ describe('ConstructionMap pan and zoom', () => {
     expect(onApply).toHaveBeenCalledOnce()
   })
 
-  it('reserves stationary Space for line drafts while Enter places a workstation', () => {
-    const { map, onApply } = renderMap('solar-array')
+  it('keeps stationary Space inert while Enter starts and finishes a line draft', () => {
+    const { map, onApply } = renderMap('wall')
 
     fireEvent.keyDown(map, { code: 'Space', key: ' ' })
     fireEvent.keyUp(map, { code: 'Space', key: ' ' })
     expect(onApply).not.toHaveBeenCalled()
 
     fireEvent.keyDown(map, { key: 'Enter' })
+    expect(onApply).not.toHaveBeenCalled()
+    fireEvent.keyDown(map, { key: 'ArrowRight' })
+    fireEvent.keyDown(map, { key: 'Enter' })
     expect(onApply).toHaveBeenCalledOnce()
-    expect(onApply.mock.calls[0][1]).toBe('Solar array')
+    expect(onApply.mock.calls[0][1]).toBe('Wall')
+  })
+
+  it('does not arm a line draft when Space wraps a WASD camera move', () => {
+    const { map, onApply, scroll } = renderMap('wall')
+    scroll.scrollLeft = 80
+
+    fireEvent.keyDown(map, { code: 'Space', key: ' ' })
+    fireEvent.keyDown(map, { key: 'd' })
+    fireEvent.keyUp(map, { code: 'Space', key: ' ' })
+    expect(scroll.scrollLeft).toBe(128)
+
+    fireEvent.keyDown(map, { key: 'Enter' })
+    expect(onApply).not.toHaveBeenCalled()
+    fireEvent.keyDown(map, { key: 'ArrowRight' })
+    fireEvent.keyDown(map, { key: 'Enter' })
+    expect(onApply).toHaveBeenCalledOnce()
+  })
+
+  it('recenters the occupied workspace after a viewport resize', () => {
+    let frame = 0
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frame += 1
+      callback(frame)
+      return frame
+    })
+    const { map, scroll } = renderMap()
+    Object.defineProperties(map, {
+      offsetLeft: { configurable: true, value: 400 },
+      offsetTop: { configurable: true, value: 300 },
+      offsetWidth: { configurable: true, value: 240 },
+      offsetHeight: { configurable: true, value: 180 },
+    })
+    Object.defineProperties(scroll, {
+      clientWidth: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 80 },
+    })
+
+    window.dispatchEvent(new Event('resize'))
+
+    expect(scroll.scrollLeft).toBe(470)
+    expect(scroll.scrollTop).toBe(350)
   })
 
   it('keeps the pan surface larger than the grid so margins also accept camera drags', () => {

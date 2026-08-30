@@ -100,10 +100,10 @@ const selectTool = (
   const tool = within(tray).getByRole('button', { name: toolName })
   fireEvent.click(tool)
   expect(constructionMap()).toHaveClass('tool-active')
-  expect(screen.queryByRole('region', { name: new RegExp(`^${category} build tools$`, 'i') })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'false')
-  expect(screen.getByRole('button', { name: 'Move / Select' })).toBeVisible()
-  expect(screen.getByRole('button', { name: /^Stop placing /i })).toBeVisible()
+  expect(screen.getByRole('region', { name: new RegExp(`^${category} build tools$`, 'i') })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'true')
+  expect(tool).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.queryByRole('button', { name: /Move \/ Select|Continue placing/i })).not.toBeInTheDocument()
 }
 
 const layoutFrom = (result: ConstructionResult) => {
@@ -241,7 +241,7 @@ describe('freeform settlement builder', () => {
       (order) => order.status === 'hauling' && order.commandId === 'construction-1',
     )).toBe(true)
     expect(document.querySelector('.construction-toast')).toHaveTextContent(
-      /use Move \/ Select to edit blueprints/i,
+      /5 wall blueprints placed.*Colonists will haul materials and complete the blueprints/i,
     )
     expect(constructionMap().querySelectorAll(
       '[data-construction-order-status="hauling"]',
@@ -301,28 +301,65 @@ describe('freeform settlement builder', () => {
     })
   })
 
-  it('keeps active designator controls visible and parks the tool while browsing categories', () => {
+  it('keeps the desktop catalog open and cancels the active designator when categories change', () => {
     renderFreshApp()
     const structureTools = openCategory('Structure')
+    const wall = within(structureTools).getByRole('button', { name: /^Wall:/i })
 
-    fireEvent.click(within(structureTools).getByRole('button', { name: /^Wall:/i }))
-    expect(screen.queryByRole('region', { name: /^Structure build tools$/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Move / Select' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Stop placing Wall' })).toBeVisible()
-    expect(document.querySelector('.active-tool-summary')).toHaveTextContent(
-      /Move \/ Select or Space\/middle-drag pans/i,
-    )
+    fireEvent.click(wall)
+    expect(structureTools).toBeVisible()
+    expect(wall).toHaveAttribute('aria-pressed', 'true')
     expect(constructionMap()).toHaveClass('tool-active')
+    expect(document.querySelector('.construction-designator-strip')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Move \/ Select|Continue placing/i })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
     fireEvent.click(screen.getByRole('button', { name: /^Furniture$/i }))
     expect(constructionMap()).toHaveClass('pan-active')
-    expect(screen.getByRole('button', { name: 'Continue placing Wall' })).toBeVisible()
-    expect(screen.getByText('Move / Select active')).toBeVisible()
+    expect(screen.getByRole('region', { name: /^Furniture build tools$/i })).toBeVisible()
+    expect(document.querySelector('.active-tool-summary')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue placing Wall' }))
+    const bunk = screen.getByRole('button', { name: /^Bunk bed:/i })
+    fireEvent.click(bunk)
     expect(constructionMap()).toHaveClass('tool-active')
-    expect(screen.getByRole('button', { name: 'Move / Select' })).toBeVisible()
+    expect(bunk).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('region', { name: /^Furniture build tools$/i })).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
+    expect(screen.queryByRole('region', { name: /build tools$/i })).not.toBeInTheDocument()
+    expect(document.querySelector('.active-tool-summary')).toHaveTextContent('Bunk bed')
+    expect(screen.getByRole('button', { name: 'Rotate Bunk bed to 90°' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Cancel Bunk bed designator' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /Move \/ Select|Continue placing/i })).not.toBeInTheDocument()
+
+    fireEvent.contextMenu(constructionMap())
+    expect(constructionMap()).toHaveClass('pan-active')
+    expect(document.querySelector('.active-tool-summary')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Bunk bed:/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
+    fireEvent.keyDown(constructionMap(), { key: 'Escape' })
+    expect(constructionMap()).toHaveClass('pan-active')
+    expect(screen.queryByRole('button', { name: 'Cancel Bunk bed designator' })).not.toBeInTheDocument()
+  })
+
+  it('auto-collapses the catalog after a phone-size tool choice', () => {
+    const previousWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 700 })
+    try {
+      renderFreshApp()
+      const structureTools = openCategory('Structure')
+
+      fireEvent.click(within(structureTools).getByRole('button', { name: /^Wall:/i }))
+
+      expect(screen.queryByRole('region', { name: /^Structure build tools$/i })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'false')
+      expect(document.querySelector('.active-tool-summary')).toHaveTextContent('Wall')
+      expect(screen.getByRole('button', { name: 'Cancel Wall designator' })).toBeVisible()
+      expect(screen.queryByRole('button', { name: /Move \/ Select|Continue placing/i })).not.toBeInTheDocument()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
+    }
   })
 
   it('inspects empty tiles and colonists with the same deliberate click gesture', () => {
@@ -360,7 +397,8 @@ describe('freeform settlement builder', () => {
     renderFreshApp()
     selectTool('Structure', /^Wall/i)
     clickConstructionCell({ x: 9, y: 6 })
-    fireEvent.click(screen.getByRole('button', { name: 'Stop placing Wall' }))
+    fireEvent.contextMenu(constructionMap())
+    expect(constructionMap()).toHaveClass('pan-active')
 
     act(() => {
       useColonyStore.getState().setConstructionSpeed(1)
@@ -447,7 +485,7 @@ describe('freeform settlement builder', () => {
     renderFreshApp()
     selectTool('Structure', /^Wall/i)
     dragConstructionTool({ x: 9, y: 6 }, { x: 11, y: 6 })
-    fireEvent.click(screen.getByRole('button', { name: 'Move / Select' }))
+    fireEvent.contextMenu(constructionMap())
     clickConstructionCell({ x: 10, y: 6 }, 2)
 
     const inspector = screen.getByRole('region', { name: 'Wall blueprint inspector' })
@@ -498,12 +536,10 @@ describe('freeform settlement builder', () => {
 
     fireEvent.keyDown(map, { key: 'ArrowRight' })
     expect(status).toHaveTextContent(/column 10, row 10/i)
-    fireEvent.keyDown(map, { key: ' ' })
-    fireEvent.keyUp(map, { key: ' ' })
+    fireEvent.keyDown(map, { key: 'Enter' })
     fireEvent.keyDown(map, { key: 'ArrowRight' })
     expect(status).toHaveTextContent(/column 11, row 10.*valid wall.*2 tiles/i)
-    fireEvent.keyDown(map, { key: ' ' })
-    fireEvent.keyUp(map, { key: ' ' })
+    fireEvent.keyDown(map, { key: 'Enter' })
 
     expect(useColonyStore.getState().settlement.layout.boundaries).not.toEqual(
       expect.arrayContaining([
@@ -526,20 +562,17 @@ describe('freeform settlement builder', () => {
     selectTool('Structure', /^Wall/i)
 
     const map = constructionMap()
-    fireEvent.keyDown(map, { key: ' ' })
-    fireEvent.keyUp(map, { key: ' ' })
+    fireEvent.keyDown(map, { key: 'Enter' })
 
     selectTool('Orders', /^Deconstruct/i)
     fireEvent.keyDown(map, { key: 'ArrowLeft' })
-    fireEvent.keyDown(map, { key: ' ' })
-    fireEvent.keyUp(map, { key: ' ' })
+    fireEvent.keyDown(map, { key: 'Enter' })
 
     expect(useColonyStore.getState().settlement.layout.boundaries).toContainEqual(
       { x: 7, y: 9, kind: 'door' },
     )
 
-    fireEvent.keyDown(map, { key: ' ' })
-    fireEvent.keyUp(map, { key: ' ' })
+    fireEvent.keyDown(map, { key: 'Enter' })
     expect(useColonyStore.getState().settlement.layout.boundaries).toContainEqual(
       { x: 7, y: 9, kind: 'door' },
     )
@@ -557,8 +590,7 @@ describe('freeform settlement builder', () => {
     selectTool('Structure', /^Wall/i)
 
     const map = constructionMap()
-    fireEvent.keyDown(map, { key: ' ' })
-    fireEvent.keyUp(map, { key: ' ' })
+    fireEvent.keyDown(map, { key: 'Enter' })
 
     selectTool('Structure', /^Door/i)
     for (let step = 0; step < 4; step += 1) fireEvent.keyDown(map, { key: 'ArrowLeft' })
@@ -675,6 +707,7 @@ describe('freeform settlement builder', () => {
     const revision = useColonyStore.getState().worldRevision
 
     selectTool('Production', /^Life support/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
     const rotate = screen.getByRole('button', { name: /^Rotate Life support to 90°$/i })
     fireEvent.click(rotate)
     expect(screen.getByRole('button', { name: /^Rotate Life support to 180°$/i })).toBeVisible()
@@ -732,6 +765,7 @@ describe('freeform settlement builder', () => {
     )
     expect(screen.getByRole('img', { name: /Deconstruct Life support blueprint, paused/i })).toBeVisible()
 
+    fireEvent.click(screen.getByRole('button', { name: 'Build menu' }))
     const undo = screen.getByRole('button', { name: /^Undo/i })
     expect(undo).toBeEnabled()
     fireEvent.click(undo)
@@ -744,6 +778,32 @@ describe('freeform settlement builder', () => {
     )
     expect(screen.queryByRole('img', { name: /Deconstruct Life support blueprint/i })).not.toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'Life support, 2 by 2 tiles' })).toBeVisible()
+  })
+
+  it('keeps the latest unfinished placement undoable after Architect remounts', () => {
+    const initialStock = useColonyStore.getState().reserves.constructionStock
+    const firstView = renderFreshApp()
+    selectTool('Structure', /^Wall/i)
+    dragConstructionTool({ x: 9, y: 6 }, { x: 11, y: 6 })
+
+    const commandId = useColonyStore.getState().settlement.constructionOrders.at(-1)?.commandId
+    expect(commandId).toBeTruthy()
+    expect(useColonyStore.getState().settlement.constructionOrders.filter(
+      (order) => order.commandId === commandId && order.status !== 'complete',
+    )).toHaveLength(3)
+
+    firstView.unmount()
+    renderFreshApp()
+
+    const undo = screen.getByRole('button', { name: 'Undo last construction order' })
+    expect(undo).toBeVisible()
+    fireEvent.click(undo)
+
+    expect(useColonyStore.getState().settlement.constructionOrders.some(
+      (order) => order.commandId === commandId && order.status !== 'complete',
+    )).toBe(false)
+    expect(screen.getByTitle(`${initialStock} material physically in storage`))
+      .toHaveTextContent(`${initialStock} free`)
   })
 
   it('reveals the first-shift transition after a second room has life support', () => {
