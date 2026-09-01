@@ -11,7 +11,7 @@ npm run build
 npm run lint
 ```
 
-`test:webmcp` runs the focused callback, registration lifecycle, construction safety, and full-flow regressions. `npm test` also checks the rest of the game. The full-flow test starts with the real starter layout and 14 materials, queues blueprints through registered callbacks, advances real worker construction, then stages, commits, advances, and verifies an operations plan. It does not bootstrap readiness with legacy module construction or increase the test timeout.
+`test:webmcp` runs the focused callback, registration lifecycle, construction safety, and full-flow regressions. `npm test` also checks the rest of the game. The full-flow callback fixture starts with the lower-level starter layout and 14 materials, queues blueprints through registered callbacks, advances real worker construction, then stages, commits, advances, and verifies an operations plan. The default player path now uses the arrival sequence and preset relay base; the fixture deliberately preserves direct coverage of the establishment APIs.
 
 Covered fixes include execution options without a cancellation signal, strict runtime input validation, pausing while worker ticks change the world revision, and registration cleanup/rollback after failures or phase changes.
 
@@ -23,18 +23,27 @@ After building, start a preview on an unused port:
 npm run preview -- --host 127.0.0.1 --port 4187 --strictPort
 ```
 
-Open `http://127.0.0.1:4187/` in the in-app Browser. Use a different unused port if that origin already contains a save. Saved games are scoped to the origin; **do not reset the user's existing game to run this test**. Confirm the disposable game starts in landing with 14 construction materials and no open orders.
+Open `http://127.0.0.1:4187/` in the in-app Browser. Use a different unused port if that origin already contains a save. Saved games are scoped to the origin; **do not reset the user's existing game to run this test**. Confirm the disposable game starts on the mission briefing and remains there without advancing time.
 
-Open the browser's built-in **Site tools** menu and confirm these four registrations:
+While the briefing or cutscene is visible, the game simulation is unmounted and no Site tools should be registered. Choose **Start landing**, watch or skip the arrival, and then open the browser's built-in **Site tools** menu. Confirm the three construction tools and eight operations tools are registered:
 
 - `inspect_construction`
 - `place_construction_blueprint`
 - `manage_construction`
-- `begin_first_shift`
+- `inspect_moonbase`
+- `query_crew_and_equipment`
+- `inspect_operations_plan`
+- `stage_operations_plan`
+- `edit_operations_plan`
+- `commit_operations_plan`
+- `advance_until`
+- `verify_operations_plan`
 
 Perform the following through those tools, not by changing the store in developer tools. The in-app Browser against a production preview is the host under test. Native Chrome interoperability needs a separate run and is not established by these checks.
 
-## Construction calls
+## Landing-phase callback fixture
+
+The default browser flow already begins in operations. The construction sequence below documents the direct landing-phase callback fixture exercised by the automated full-flow tests; it is retained to verify the establishment catalog and worker simulation independently of the new arrival UI.
 
 1. Call `inspect_construction` with `{}` and retain its `runId`.
 2. Pause with `manage_construction` using `{"expectedRunId":"<runId>","action":"set_speed","speed":0}`. Pausing deliberately does not require a world revision, so live worker ticks cannot prevent the pause.
@@ -67,7 +76,7 @@ This adds a second room beside the starter habitat. Ten final boundary cells plu
 
 Calling `begin_first_shift` before completion must return `not_ready`. Resume with `set_speed`, `speed: 1` and the latest expected revision. Let the visible workers haul and build. Inspect until `readyForFirstShift: true` and `construction.openOrderCount: 0`; queued ghosts alone do not establish readiness. Pause, inspect once more, and call `begin_first_shift` with fresh expected fields.
 
-The catalog must switch from **4 to 11 tools without reloading**. `begin_first_shift` disappears; the three construction tools remain beside eight operations tools.
+In the callback fixture, the catalog must switch from **4 to 11 tools without reloading**. `begin_first_shift` disappears; the three construction tools remain beside eight operations tools.
 
 ## Operations demonstration
 
@@ -97,13 +106,13 @@ Success means objective-complete execution, laboratory atmosphere `yes`, researc
 - Reuse an old world revision after a successful queue mutation: expect `stale_world` and no state change. Pause remains allowed with a stale world revision when its run ID is current.
 - Stage with an incorrect plan revision: expect `stale_revision`, with no partial edits or assignments.
 - Send malformed inputs, extra properties, unsupported values, or coordinates outside `x: 0–23`, `y: 0–17`. If the host dispatches them, the application must return `invalid_input` without mutation. A host may instead reject them against the advertised schema before the callback runs; the callback regressions test the application's independent validation.
-- Only on the disposable origin, choose reset after the operations test and accept its native confirmation dialog. The catalog must return to four landing tools. Calls retaining the old run ID must return `stale_run` even if a numeric revision matches the new run. Callback tests additionally retain old operations callbacks to verify this guard after catalog replacement.
+- Only on the disposable origin, choose reset after the operations test and accept its native confirmation dialog. The app must return to the waiting briefing with no registered tools. Starting the new arrival installs a fresh run and the eleven-tool operations catalog. Calls retaining the old run ID must return `stale_run` even if a numeric revision matches the new run; callback tests additionally verify the lower-level catalog-replacement guard.
 - The observed browser host omits the execution cancellation signal. Missing, empty, and null execution options are exercised automatically; supplied already-aborted signals must return `cancelled` before mutation. This does **not** establish end-to-end cancellation delivery by that host.
 - Capture desktop and phone screenshots from the actual build, including construction/placement, an open Plan panel, and the verified result. Save them under `docs/screenshots/`, describe what they validate, and restore temporary viewport overrides.
 
 ## Recorded live results
 
-On **2026-08-31**, the production preview at `http://127.0.0.1:4187/` was tested in **Codex's in-app Browser** using actual Site tools calls. All **12 unique tools** were exercised across landing and operations. The user's existing saved game was left intact on its original origin.
+On **2026-08-31**, before the preset-arrival flow became the default entry point, the production preview at `http://127.0.0.1:4187/` was tested in **Codex's in-app Browser** using actual Site tools calls. All **12 unique tools** were exercised across the direct landing and operations phases. This is retained as a historical lower-level callback record; the current default preview exposes no tools during arrival and eleven after handoff. The user's existing saved game was left intact on its original origin.
 
 | Check | Observed result |
 | --- | --- |

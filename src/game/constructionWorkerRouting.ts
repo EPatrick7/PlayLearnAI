@@ -65,6 +65,8 @@ export interface ConstructionRoutingInput {
   stockpile: GridPoint
   /** Internal fast path for the simulation, which normalizes the pallet first. */
   stockpileIsNormalized?: boolean
+  /** Live module cells that need EVA despite belonging to a sealed room shell. */
+  evaRequiredCells?: readonly GridPoint[]
   elapsed: number
 }
 
@@ -277,6 +279,7 @@ export const normalizeConstructionCrewPositions = (
   sourcePositions: readonly ConstructionCrewPosition[],
   stockpile: GridPoint,
   orders: readonly Pick<ConstructionOrder, 'status' | 'target'>[] = [],
+  evaRequiredCells: readonly GridPoint[] = [],
 ): ConstructionCrewPosition[] => {
   const normalizedStockpile = isConstructionCellWalkable(layout, stockpile)
     ? clonePoint(stockpile)
@@ -315,7 +318,14 @@ export const normalizeConstructionCrewPositions = (
       .filter((cell) => isInConstructionBounds(cell, layout))
       .map(pointKey),
   )
+  const pressure = analyzeConstructionPressure(layout)
+  const evaRequiredCellKeys = new Set(evaRequiredCells.map(pointKey))
+  const unsafeCellRank = (cell: GridPoint) => Number(
+    constructionEnvironmentAt(layout, pressure, cell) !== 'pressurized' ||
+    evaRequiredCellKeys.has(pointKey(cell)),
+  )
   const preferredCells = allWalkableCells(layout).sort((left, right) =>
+    unsafeCellRank(left) - unsafeCellRank(right) ||
     Number(unfinishedTargets.has(pointKey(left))) - Number(unfinishedTargets.has(pointKey(right))) ||
     manhattanDistance(left, normalizedStockpile) - manhattanDistance(right, normalizedStockpile) ||
     comparePoints(left, right),
@@ -333,6 +343,7 @@ export const normalizeConstructionCrewPositions = (
       const blockedSourceCell = blockedSourceCellByCrewId.get(crewId)
       const candidates = blockedSourceCell
         ? [...preferredCells].sort((left, right) =>
+            unsafeCellRank(left) - unsafeCellRank(right) ||
             Number(unfinishedTargets.has(pointKey(left))) -
               Number(unfinishedTargets.has(pointKey(right))) ||
             manhattanDistance(left, blockedSourceCell) -
@@ -355,6 +366,7 @@ export const normalizePersistedConstructionCrewPositions = (
   sourcePositions: unknown,
   stockpile: GridPoint,
   orders: readonly Pick<ConstructionOrder, 'status' | 'target'>[] = [],
+  evaRequiredCells: readonly GridPoint[] = [],
 ): ConstructionCrewPosition[] => {
   const sanitized = (Array.isArray(sourcePositions) ? sourcePositions : []).flatMap(
     (value): ConstructionCrewPosition[] => {
@@ -389,6 +401,7 @@ export const normalizePersistedConstructionCrewPositions = (
     sanitized,
     stockpile,
     orders,
+    evaRequiredCells,
   )
 }
 
@@ -465,17 +478,22 @@ const workerCanOccupyCell = (
   pressureTopology: ConstructionPressureTopology,
   worker: ConstructionRoutingWorker,
   cell: GridPoint,
-) => worker.hasEvaSuit !== false ||
-  constructionEnvironmentAt(layout, pressureTopology, cell) === 'pressurized'
+  evaRequiredCellKeys: ReadonlySet<string>,
+) => worker.hasEvaSuit !== false || (
+  constructionEnvironmentAt(layout, pressureTopology, cell) === 'pressurized' &&
+  !evaRequiredCellKeys.has(pointKey(cell))
+)
 
 const workerRouteOptions = (
   pressureTopology: ConstructionPressureTopology,
   transientBlockedCells: readonly GridPoint[],
   worker: Pick<ConstructionRoutingWorker, 'hasEvaSuit'>,
+  evaRequiredCells: readonly GridPoint[],
 ): ConstructionPathfindingOptions => ({
   transientBlockedCells,
   pressureTopology,
   hasEvaSuit: worker.hasEvaSuit,
+  evaRequiredCells,
 })
 
 const workerCanReachOrder = (
@@ -486,13 +504,26 @@ const workerCanReachOrder = (
   requestedPhase: ConstructionTravelPhase,
   transientBlockedCells: readonly GridPoint[],
   pressureTopology: ConstructionPressureTopology,
+  evaRequiredCells: readonly GridPoint[],
   worker: ConstructionRoutingWorker,
 ) => {
   const phase = requestedPhase === 'idle'
     ? initialTravelPhase(order)
     : requestedPhase
-  const routeOptions = workerRouteOptions(pressureTopology, transientBlockedCells, worker)
-  if (!workerCanOccupyCell(layout, pressureTopology, worker, cell)) return false
+  const routeOptions = workerRouteOptions(
+    pressureTopology,
+    transientBlockedCells,
+    worker,
+    evaRequiredCells,
+  )
+  const evaRequiredCellKeys = new Set(evaRequiredCells.map(pointKey))
+  if (!workerCanOccupyCell(
+    layout,
+    pressureTopology,
+    worker,
+    cell,
+    evaRequiredCellKeys,
+  )) return false
   if (phase === 'at_site' && routeStillAtSite(
     layout,
     cell,
@@ -523,6 +554,7 @@ export const previewConstructionWorkerRoute = ({
   stockpile,
   crewCell,
   hasEvaSuit,
+  evaRequiredCells = [],
 }: {
   layout: ConstructionLayout
   orders: readonly RoutableConstructionOrder[]
@@ -530,6 +562,7 @@ export const previewConstructionWorkerRoute = ({
   stockpile: GridPoint
   crewCell: GridPoint
   hasEvaSuit?: boolean
+  evaRequiredCells?: readonly GridPoint[]
 }): ConstructionWorkerRoutePreview => {
   const pendingConstructCells = unfinishedConstructCells(orders)
   const routeBlockedCells = solidifyingConstructCells(orders)
@@ -550,10 +583,13 @@ export const previewConstructionWorkerRoute = ({
     transientBlockedCells: routeBlockedCells,
     pressureTopology,
     hasEvaSuit,
+    evaRequiredCells,
   }
+  const evaRequiredCellKeys = new Set(evaRequiredCells.map(pointKey))
   if (
     hasEvaSuit === false &&
-    constructionEnvironmentAt(layout, pressureTopology, crewCell) !== 'pressurized'
+    (constructionEnvironmentAt(layout, pressureTopology, crewCell) !== 'pressurized' ||
+      evaRequiredCellKeys.has(pointKey(crewCell)))
   ) return { reachable: false, phase, steps: null, path: [] }
   if (phase === 'at_site' && routeStillAtSite(
     layout,
@@ -643,12 +679,15 @@ export const advanceConstructionWorkerRouting = (
     .sort((left, right) => compareIds(left.id, right.id))
   const statusByOrderId = new Map(orders.map((order) => [order.id, order.status]))
   const pressureTopology = analyzeConstructionPressure(input.layout)
+  const evaRequiredCells = input.evaRequiredCells ?? []
+  const evaRequiredCellKeys = new Set(evaRequiredCells.map(pointKey))
   const crewPositions = normalizeConstructionCrewPositions(
     input.layout,
     workers,
     input.crewPositions,
     stockpile,
     orders,
+    evaRequiredCells,
   )
   const positionByCrewId = new Map(crewPositions.map((position) => [position.crewId, position]))
   const workerById = new Map(workers.map((worker) => [worker.id, worker]))
@@ -667,6 +706,7 @@ export const advanceConstructionWorkerRouting = (
     phase,
     routeBlockedCells,
     pressureTopology,
+    evaRequiredCells,
     worker,
   )
   const workerNeedsEva = (
@@ -705,7 +745,7 @@ export const advanceConstructionWorkerRouting = (
       input.layout,
       position.cell,
       stableCells,
-      workerRouteOptions(pressureTopology, routeBlockedCells, worker),
+      workerRouteOptions(pressureTopology, routeBlockedCells, worker, evaRequiredCells),
     )
     if (!escape) return
     evacuatingCrewIds.add(position.crewId)
@@ -748,13 +788,19 @@ export const advanceConstructionWorkerRouting = (
         order.assignedCrewId = carrierId
         order.travelPhase = phase
         const routeOptions = worker
-          ? workerRouteOptions(pressureTopology, routeBlockedCells, worker)
+          ? workerRouteOptions(pressureTopology, routeBlockedCells, worker, evaRequiredCells)
           : null
         const canUnloadAtSite = Boolean(
           position &&
           worker &&
           routeOptions &&
-          workerCanOccupyCell(input.layout, pressureTopology, worker, position.cell) &&
+          workerCanOccupyCell(
+            input.layout,
+            pressureTopology,
+            worker,
+            position.cell,
+            evaRequiredCellKeys,
+          ) &&
           phase === 'at_site' &&
           routeStillAtSite(
             input.layout,
@@ -924,7 +970,12 @@ export const advanceConstructionWorkerRouting = (
       const position = positionByCrewId.get(crewId)
       const worker = workerById.get(crewId)
       if (!position || !worker) return
-      const routeOptions = workerRouteOptions(pressureTopology, routeBlockedCells, worker)
+      const routeOptions = workerRouteOptions(
+        pressureTopology,
+        routeBlockedCells,
+        worker,
+        evaRequiredCells,
+      )
       const movementRate = workerMovementRate(worker)
       let availableDistance = position.moveCredit + movementRate * elapsed
       let cell = clonePoint(position.cell)
@@ -944,7 +995,13 @@ export const advanceConstructionWorkerRouting = (
         }
 
         if (phase === 'at_site') {
-          if (!workerCanOccupyCell(input.layout, pressureTopology, worker, cell)) {
+          if (!workerCanOccupyCell(
+            input.layout,
+            pressureTopology,
+            worker,
+            cell,
+            evaRequiredCellKeys,
+          )) {
             noPathOrderIds.push(order.id)
             if (worker.hasEvaSuit === false) evaRequiredOrderIds.push(order.id)
             availableDistance = Math.min(1 - MOVEMENT_EPSILON, availableDistance)
@@ -988,13 +1045,16 @@ export const advanceConstructionWorkerRouting = (
     if (claimedCrewIds.has(position.crewId) || evacuatingCrewIds.has(position.crewId)) return
     const worker = workerById.get(position.crewId)
     if (!worker || worker.hasEvaSuit !== true) return
-    if (constructionEnvironmentAt(input.layout, pressureTopology, position.cell) === 'pressurized') {
+    if (
+      constructionEnvironmentAt(input.layout, pressureTopology, position.cell) === 'pressurized' &&
+      !evaRequiredCellKeys.has(pointKey(position.cell))
+    ) {
       return
     }
     const returnRoute = findConstructionPressureReturnPath(
       input.layout,
       position.cell,
-      workerRouteOptions(pressureTopology, routeBlockedCells, worker),
+      workerRouteOptions(pressureTopology, routeBlockedCells, worker, evaRequiredCells),
     )
     if (!returnRoute) return
     const movementRate = workerMovementRate(worker)

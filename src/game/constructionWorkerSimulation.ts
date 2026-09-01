@@ -37,6 +37,8 @@ export interface ConstructionWorkerSimulationInput {
   stockpile: GridPoint
   crewPositions: readonly ConstructionCrewPosition[]
   workers: readonly SpatialConstructionWorker[]
+  /** Live module cells that need EVA despite belonging to a sealed room shell. */
+  evaRequiredCells?: readonly GridPoint[]
   elapsed: number
 }
 
@@ -191,6 +193,8 @@ const constructionRouteContextKey = (
         .filter((order) => order.status !== 'complete' && Boolean(order.target.construct))
         .flatMap((order) => order.target.cells.map(pointKey)),
     )].sort((left, right) => left.localeCompare(right)),
+    evaRequiredCells: [...new Set((input.evaRequiredCells ?? []).map(pointKey))]
+      .sort((left, right) => left.localeCompare(right)),
   })
 }
 
@@ -248,6 +252,7 @@ export const advanceConstructionWorkerSimulation = (
     workers: input.workers,
     stockpile,
     stockpileIsNormalized: true,
+    evaRequiredCells: input.evaRequiredCells,
     elapsed,
   })
   let orders = routing.orders
@@ -419,6 +424,7 @@ export const advanceConstructionWorkerSimulation = (
     routing.crewPositions,
     finalStockpile,
     orders,
+    input.evaRequiredCells,
   )
 
   return {

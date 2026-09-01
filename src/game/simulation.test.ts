@@ -816,7 +816,10 @@ describe('committed Moonbase simulation', () => {
   })
 
   it('raises a critical breathing alert for an unsuited construction pawn in lunar vacuum', () => {
-    const state = createOperationsState()
+    const state = assignActiveConstruction(
+      createOperationsState(),
+      'crew-amina-okafor',
+    )
     state.settlement.constructionCrew = state.settlement.constructionCrew.map((position) => (
       position.crewId === 'crew-amina-okafor'
         ? { ...position, cell: { x: 8, y: 9 } }
@@ -828,6 +831,23 @@ describe('committed Moonbase simulation', () => {
       severity: 'critical',
       detail: expect.stringContaining('Amina Okafor'),
     }))
+  })
+
+  it('ignores an idle stale construction coordinate when the colonist is safely indoors', () => {
+    const state = createOperationsState()
+    state.settlement.constructionCrew = state.settlement.constructionCrew.map((position) => (
+      position.crewId === 'crew-amina-okafor'
+        ? { ...position, cell: { x: 8, y: 9 } }
+        : position
+    ))
+    const healthBefore = state.crew[0].health
+
+    expect(deriveAlerts(state).some((alert) => alert.id === 'alert-unprotected-crew'))
+      .toBe(false)
+
+    const [advanced, result] = advanceSimulation(state, { hours: 1 }, 'agent')
+    expect(result.advancedHours).toBe(1)
+    expect(advanced.crew[0].health).toBe(healthBefore)
   })
 
   it('stops before a committed oxygen floor would be crossed', () => {

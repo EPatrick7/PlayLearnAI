@@ -7,6 +7,8 @@ import {
 import type { ConstructionOrder } from '../game/constructionJobs'
 import { createStarterConstruction } from '../game/constructionCatalog'
 import { createInitialState } from '../game/seed'
+import { deployPresetMoonbase } from '../game/settlement'
+import { constructionSemanticEvaCells } from '../game/constructionHazards'
 import {
   buildMapInspection,
   constructionOrderActivity,
@@ -70,6 +72,73 @@ const inspection = (
 }
 
 describe('construction map inspection', () => {
+  it('reports preset corridors, the breached lab, and landing pad consistently', () => {
+    const [deployed] = deployPresetMoonbase(createInitialState())
+    const tiles = buildMapInspection({
+      width: deployed.map.width,
+      height: deployed.map.height,
+      modules: deployed.modules,
+      crew: [],
+      equipment: [],
+      workOrders: [],
+      entityCells: {
+        crew: new Map(),
+        equipment: new Map(),
+        work: new Map(),
+      },
+      constructionLayout: deployed.settlement.layout,
+    })
+
+    expect(tiles.get('7:9')).toMatchObject({
+      surfaceKind: 'floor',
+      surfaceLabel: 'Pressurized floor',
+      atmosphere: 'yes',
+    })
+    expect(tiles.get('16:6')).toMatchObject({
+      surfaceKind: 'floor',
+      surfaceLabel: 'Vacuum floor',
+      atmosphere: 'no',
+      moduleName: 'Kepler Laboratory',
+    })
+    expect(tiles.get('19:11')).toMatchObject({
+      surfaceKind: 'landing-pad',
+      surfaceLabel: 'Landing pad',
+      atmosphere: 'exterior',
+      moduleName: 'Shackleton Pad',
+    })
+  })
+
+  it('reports the central spine as vacuum when the breached lab is opened into it', () => {
+    const [deployed] = deployPresetMoonbase(createInitialState())
+    const layout = {
+      ...deployed.settlement.layout,
+      boundaries: deployed.settlement.layout.boundaries.filter(
+        (boundary) => boundary.x !== 16 || boundary.y !== 8,
+      ),
+    }
+    const evaRequiredCells = constructionSemanticEvaCells(
+      deployed.modules,
+      layout,
+      deployed.lab.atmosphere,
+    )
+    const tiles = buildMapInspection({
+      width: deployed.map.width,
+      height: deployed.map.height,
+      modules: deployed.modules,
+      crew: [],
+      equipment: [],
+      workOrders: [],
+      entityCells: { crew: new Map(), equipment: new Map(), work: new Map() },
+      constructionLayout: layout,
+      evaRequiredCells,
+    })
+
+    expect(tiles.get('13:9')).toMatchObject({
+      surfaceLabel: 'Vacuum floor',
+      atmosphere: 'no',
+    })
+  })
+
   it.each([
     { kind: 'wall' as const, label: 'Composite wall', icon: 'wall' as const },
     { kind: 'door' as const, label: 'Unsealed hatch', icon: 'door' as const },

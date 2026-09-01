@@ -32,6 +32,7 @@ interface RenderMapOptions {
   constructionStockpile?: GridPoint | null
   crew?: readonly CrewMember[]
   crewCells?: ReadonlyMap<string, GridPoint>
+  evaRequiredCells?: readonly GridPoint[]
   focusTarget?: { cell: GridPoint; requestId: number } | null
   inspectionByCell?: ReadonlyMap<string, MapTileInspection>
   layout?: ConstructionLayout
@@ -63,6 +64,7 @@ const renderMap = (
         constructionStockpile={options.constructionStockpile}
         crew={options.crew}
         crewCells={options.crewCells}
+        evaRequiredCells={options.evaRequiredCells}
         focusTarget={focusTarget}
         inspectionByCell={options.inspectionByCell}
         layout={layout}
@@ -406,6 +408,20 @@ describe('ConstructionMap pan and zoom', () => {
       { x: 120, y: 140 },
       `crew:${builder.id}`,
     )
+  })
+
+  it('labels a semantic vacuum cell unsafe even inside a sealed shell', () => {
+    const crewCell = { x: 6, y: 7 }
+    const { map } = renderMap(null, {
+      crew: [builder],
+      crewCells: new Map([[builder.id, crewCell]]),
+      evaRequiredCells: [crewCell],
+    })
+    const pawn = map.querySelector<HTMLElement>(`[data-crew-id="${builder.id}"]`)!
+
+    expect(pawn).toHaveAttribute('data-crew-breathing', 'unsafe')
+    expect(pawn).toHaveClass('construction-pawn--exposed')
+    expect(pawn).toHaveAccessibleName(/unprotected in vacuum/i)
   })
 
   it('inspects the exact non-origin tile clicked inside a multi-tile workstation', () => {

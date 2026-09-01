@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  eraseAt,
   paintBoundaryCell,
   paintBoundaryLine,
   placeWorkstation,
@@ -21,6 +22,7 @@ import { createInitialState, isOpaqueRunId, nextIncidentSeed } from './seed'
 import {
   advanceSimulation,
   commitOperationsPlan,
+  deriveAlerts,
   recordLearningEvidence,
   setPlanBrief,
   stagePlanAction,
@@ -336,7 +338,7 @@ describe('tiny-start settlement construction', () => {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(13)
+    expect(saved.version).toBe(14)
     expect(saved.state).toMatchObject({
       runSequence: useColonyStore.getState().runSequence,
       runId: useColonyStore.getState().runId,
@@ -592,8 +594,148 @@ describe('tiny-start settlement construction', () => {
     ;(malformedSpeed.settlement as Record<string, unknown>).constructionSpeed = 99
     expect(merge!(malformedSpeed, useColonyStore.getState()).settlement.constructionSpeed).toBe(3)
 
-    const future = await migrate!(saved.state, 14) as MoonbaseState
+    const future = await migrate!(saved.state, 15) as MoonbaseState
     expect(future).toMatchObject({ worldRevision: 1, settlement: { phase: 'landing' } })
+  })
+
+  it.each([10, 11, 13])(
+    'relocates unsuited vacuum crew from a v%s save before simulation resumes',
+    async (version) => {
+      const legacy = createInitialState()
+      legacy.settlement.phase = 'operations'
+      legacy.settlement.constructionCrew = [
+        { crewId: 'crew-amina-okafor', cell: { x: 9, y: 9 }, moveCredit: 0.75 },
+        { crewId: 'crew-mateo-alvarez', cell: { x: 8, y: 10 }, moveCredit: 0.5 },
+        { crewId: 'crew-soo-jin-park', cell: { x: 9, y: 10 }, moveCredit: 0.25 },
+        { crewId: 'crew-leila-haddad', cell: { x: 8, y: 8 }, moveCredit: 0.75 },
+        { crewId: 'crew-jonah-reed', cell: { x: 9, y: 8 }, moveCredit: 0.5 },
+        { crewId: 'crew-nia-kimani', cell: { x: 10, y: 9 }, moveCredit: 0.25 },
+      ]
+      const healthBefore = new Map(legacy.crew.map((member) => [member.id, member.health]))
+      const migrate = useColonyStore.persist.getOptions().migrate!
+      const migrated = await migrate(legacy, version) as MoonbaseState
+      const pressure = analyzeConstructionPressure(migrated.settlement.layout)
+
+      migrated.settlement.constructionCrew.forEach((position) => {
+        expect(constructionEnvironmentAt(
+          migrated.settlement.layout,
+          pressure,
+          position.cell,
+        )).toBe('pressurized')
+      })
+      expect(deriveAlerts(migrated).some((alert) => alert.id === 'alert-unprotected-crew'))
+        .toBe(false)
+
+      const [advanced, result] = advanceSimulation(migrated, { hours: 1 }, 'agent')
+      expect(result.advancedHours).toBe(1)
+      advanced.crew.forEach((member) => {
+        expect(member.health).toBe(healthBefore.get(member.id))
+      })
+    },
+  )
+
+  it('falls back to safe domain collections when a legacy payload omits them', async () => {
+    const malformed = structuredClone(createInitialState()) as unknown as Record<string, unknown>
+    delete malformed.crew
+    delete malformed.modules
+    delete malformed.lab
+
+    const options = useColonyStore.persist.getOptions()
+    const migrated = await options.migrate!(malformed, 13) as MoonbaseState
+    expect(migrated.crew).toHaveLength(createInitialState().crew.length)
+    expect(migrated.modules).toHaveLength(createInitialState().modules.length)
+
+    malformed.crew = 'not-an-array'
+    malformed.modules = { invalid: true }
+    malformed.lab = null
+    const merged = options.merge!(malformed, useColonyStore.getState())
+    expect(merged.crew).toHaveLength(createInitialState().crew.length)
+    expect(merged.modules).toHaveLength(createInitialState().modules.length)
+    expect(merged.lab).toEqual(useColonyStore.getState().lab)
+
+    malformed.crew = [null]
+    malformed.modules = [null]
+    const malformedEntries = options.merge!(malformed, useColonyStore.getState())
+    expect(malformedEntries.crew).toHaveLength(createInitialState().crew.length)
+    expect(malformedEntries.modules).toHaveLength(createInitialState().modules.length)
+
+    malformed.crew = []
+    malformed.modules = [createInitialState().modules[0]]
+    const partialCollections = options.merge!(malformed, useColonyStore.getState())
+    expect(partialCollections.crew).toHaveLength(createInitialState().crew.length)
+    expect(partialCollections.modules).toHaveLength(createInitialState().modules.length)
+    expect(partialCollections.modules.some((module) => module.location === 'laboratory')).toBe(true)
+
+    const divergent = structuredClone(createInitialState())
+    divergent.lab.atmosphere = 'yes'
+    divergent.lab.breached = false
+    const divergentLabModule = divergent.modules.find(
+      (module) => module.location === 'laboratory',
+    )!
+    divergentLabModule.atmosphere = 'no'
+    divergentLabModule.breached = true
+    const reconciled = options.merge!(divergent, useColonyStore.getState())
+    expect(reconciled.modules.find((module) => module.location === 'laboratory'))
+      .toMatchObject({ atmosphere: 'yes', breached: false })
+  })
+
+  it('keeps a physically suited exterior worker outside during migration', async () => {
+    const legacy = createInitialState()
+    legacy.settlement.phase = 'operations'
+    legacy.settlement.constructionCrew = legacy.settlement.constructionCrew.map((position) => (
+      position.crewId === 'crew-amina-okafor'
+        ? { ...position, cell: { x: 8, y: 9 } }
+        : position
+    ))
+    const amina = legacy.crew.find((member) => member.id === 'crew-amina-okafor')!
+    const suit = legacy.equipment.find((item) => item.id === 'equipment-eva-01')!
+    amina.equippedEvaSuitId = suit.id
+    amina.location = 'solar-skid'
+    suit.status = 'deployed'
+    suit.assignedCrewId = amina.id
+
+    const migrate = useColonyStore.persist.getOptions().migrate!
+    const migrated = await migrate(legacy, 13) as MoonbaseState
+
+    expect(migrated.settlement.constructionCrew.find(
+      (position) => position.crewId === amina.id,
+    )?.cell).toEqual({ x: 8, y: 9 })
+    expect(migrated.crew.find((member) => member.id === amina.id)?.equippedEvaSuitId)
+      .toBe(suit.id)
+    expect(migrated.crew.find((member) => member.id === amina.id)?.location)
+      .toBe('solar-skid')
+    expect(deriveAlerts(migrated).some((alert) => alert.id === 'alert-unprotected-crew'))
+      .toBe(false)
+  })
+
+  it('repairs an unsuited exterior semantic location as well as its stale grid cell', async () => {
+    const legacy = createInitialState()
+    legacy.settlement.phase = 'operations'
+    legacy.settlement.constructionCrew = legacy.settlement.constructionCrew.map((position) => (
+      position.crewId === 'crew-amina-okafor'
+        ? { ...position, cell: { x: 8, y: 9 } }
+        : position
+    ))
+    const amina = legacy.crew.find((member) => member.id === 'crew-amina-okafor')!
+    amina.location = 'solar-skid'
+    amina.equippedEvaSuitId = null
+    legacy.alerts = deriveAlerts(legacy)
+    expect(legacy.alerts.some((alert) => alert.id === 'alert-unprotected-crew')).toBe(true)
+    const healthBefore = amina.health
+
+    const migrate = useColonyStore.persist.getOptions().migrate!
+    const migrated = await migrate(legacy, 13) as MoonbaseState
+    const migratedAmina = migrated.crew.find((member) => member.id === amina.id)!
+
+    expect(migratedAmina.location).not.toBe('solar-skid')
+    expect(deriveAlerts(migrated).some((alert) => alert.id === 'alert-unprotected-crew'))
+      .toBe(false)
+    expect(migrated.alerts.some((alert) => alert.id === 'alert-unprotected-crew'))
+      .toBe(false)
+
+    const [advanced, result] = advanceSimulation(migrated, { hours: 1 }, 'agent')
+    expect(result.advancedHours).toBe(1)
+    expect(advanced.crew.find((member) => member.id === amina.id)?.health).toBe(healthBefore)
   })
 
   it('moves real v12 landing coordinates into deterministic pressurized starter cells', async () => {
@@ -1098,6 +1240,39 @@ describe('tiny-start settlement construction', () => {
     expect(result).toMatchObject({
       ok: false,
       error: expect.stringContaining('at least one usable exterior airlock'),
+    })
+    expect(useColonyStore.getState().settlement.constructionOrders).toEqual([])
+    useColonyStore.getState().resetColony()
+  })
+
+  it('blocks venting occupied preset space without enough EVA suits', () => {
+    useColonyStore.getState().resetColony()
+    expect(useColonyStore.getState().deployPresetMoonbase().ok).toBe(true)
+    const deployed = useColonyStore.getState()
+    const exposedCrewId = deployed.crew[0].id
+    useColonyStore.setState({
+      equipment: deployed.equipment.map((item) => item.type === 'eva_suit'
+        ? { ...item, condition: 0, assignedCrewId: null, status: 'available' as const }
+        : item),
+      settlement: {
+        ...deployed.settlement,
+        constructionCrew: deployed.settlement.constructionCrew.map((position) => (
+          position.crewId === exposedCrewId
+            ? { ...position, cell: { x: 13, y: 9 } }
+            : position
+        )),
+      },
+    })
+
+    const state = useColonyStore.getState()
+    const result = state.queueConstruction(eraseAt(
+      state.settlement.layout,
+      { x: 16, y: 8 },
+    ))
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('vent occupied space'),
     })
     expect(useColonyStore.getState().settlement.constructionOrders).toEqual([])
     useColonyStore.getState().resetColony()

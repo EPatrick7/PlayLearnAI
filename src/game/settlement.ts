@@ -3,9 +3,12 @@ import type {
   BuildBlueprint,
   BuildResult,
   BuildableModuleId,
+  LocationId,
+  MapPosition,
   MoonbaseState,
   SettlementPhase,
 } from './types'
+import { createPresetMoonbaseConstruction } from './constructionCatalog'
 import {
   detectRooms,
   getWorkstationCells,
@@ -97,6 +100,35 @@ type InteractiveActor = Extract<Actor, 'manual' | 'agent'>
 // keeps only the serializable Moonbase domain, matching the simulation boundary.
 const cloneState = (state: MoonbaseState): MoonbaseState =>
   JSON.parse(JSON.stringify(state)) as MoonbaseState
+
+const PRESET_MODULE_POSITIONS: Record<MoonbaseState['modules'][number]['type'], MapPosition> = {
+  habitat: { x: 1, y: 6, width: 6, height: 7 },
+  corridor: { x: 6, y: 8, width: 14, height: 3 },
+  life_support: { x: 8, y: 3, width: 5, height: 6 },
+  storage: { x: 8, y: 10, width: 5, height: 6 },
+  laboratory: { x: 14, y: 3, width: 5, height: 6 },
+  airlock: { x: 14, y: 10, width: 5, height: 6 },
+  solar_battery_skid: { x: 19, y: 2, width: 5, height: 5 },
+  landing_pad: { x: 19, y: 11, width: 5, height: 6 },
+}
+
+const PRESET_CREW_LOCATIONS: Record<string, LocationId> = {
+  'crew-amina-okafor': 'habitat',
+  'crew-mateo-alvarez': 'airlock',
+  'crew-soo-jin-park': 'life-support',
+  'crew-leila-haddad': 'habitat',
+  'crew-jonah-reed': 'habitat',
+  'crew-nia-kimani': 'storage',
+}
+
+const PRESET_CREW_CELLS: Record<string, { x: number; y: number }> = {
+  'crew-amina-okafor': { x: 5, y: 9 },
+  'crew-mateo-alvarez': { x: 15, y: 13 },
+  'crew-soo-jin-park': { x: 11, y: 7 },
+  'crew-leila-haddad': { x: 5, y: 8 },
+  'crew-jonah-reed': { x: 5, y: 10 },
+  'crew-nia-kimani': { x: 11, y: 14 },
+}
 
 const builtBlueprintIds = (state: Pick<MoonbaseState, 'settlement'>) => {
   const builtModuleIds = new Set(state.settlement.builtModuleIds)
@@ -282,6 +314,86 @@ const addSettlementEvent = (
     targetIds,
   })
   state.events = state.events.slice(0, 40)
+}
+
+/**
+ * Hands a fresh expedition off from the presentation-only landing sequence to
+ * a furnished, pressurized relay base. The cutscene crew never become live
+ * simulation pawns until this safe indoor deployment exists.
+ */
+export const deployPresetMoonbase = (
+  source: MoonbaseState,
+  actor: InteractiveActor = 'manual',
+): [MoonbaseState, BuildResult] => {
+  if (source.settlement.phase === 'operations') {
+    return [source, buildResult(source, 'already_operational', false, {
+      error: 'Operations are already active.',
+    })]
+  }
+
+  const state = cloneState(source)
+  const layout = createPresetMoonbaseConstruction()
+  state.modules.forEach((module) => {
+    module.position = { ...PRESET_MODULE_POSITIONS[module.type] }
+  })
+  state.crew.forEach((member) => {
+    member.location = PRESET_CREW_LOCATIONS[member.id] ?? 'habitat'
+    member.status = 'idle'
+    member.taskId = null
+    member.equippedEvaSuitId = null
+  })
+  state.equipment.forEach((item) => {
+    item.status = 'available'
+    item.reservedForWorkOrderId = null
+    item.assignedCrewId = null
+  })
+  state.workOrders.forEach((order) => {
+    order.assignedCrewIds = []
+    order.reservedEquipmentIds = []
+    order.logisticsHoursRemaining = 0
+  })
+  state.settlement = {
+    ...state.settlement,
+    phase: 'operations',
+    layout,
+    constructionOrders: [],
+    constructionSequence: 1,
+    constructionCrew: state.crew.map((member) => ({
+      crewId: member.id,
+      cell: { ...(PRESET_CREW_CELLS[member.id] ?? PRESET_CREW_CELLS['crew-amina-okafor']) },
+      moveCredit: 0,
+    })),
+    constructionStockpile: { x: 7, y: 9 },
+    builtModuleIds: state.modules.map((module) => module.id),
+    buildSites: state.settlement.buildSites.map((site) => ({
+      ...site,
+      occupiedBy: site.id === 'site-power-east'
+        ? 'solar_battery_skid'
+        : site.id === 'site-bay-northwest'
+          ? 'life_support'
+          : site.id === 'site-bay-northeast'
+            ? 'laboratory'
+            : site.id === 'site-bay-southwest'
+              ? 'storage'
+              : site.id === 'site-bay-southeast'
+                ? 'airlock'
+                : null,
+    })),
+  }
+  state.worldRevision += 1
+  state.operationsPlan = {
+    ...state.operationsPlan,
+    basedOnWorldRevision: state.worldRevision,
+  }
+  state.verification = null
+  addSettlementEvent(
+    state,
+    actor,
+    'Aquila touched down at Shackleton Pad. Six suited crew cycled through South Airlock and entered the pressurized relay base.',
+    ['module-landing-pad', 'module-airlock', ...state.crew.map((member) => member.id)],
+  )
+
+  return [state, buildResult(state, 'operations_started', true)]
 }
 
 export const constructModule = (

@@ -40,6 +40,8 @@ export interface ConstructionPathfindingOptions {
   hasEvaSuit?: boolean
   /** Reuses a topology analysis across the several route legs in one update. */
   pressureTopology?: ConstructionPressureTopology
+  /** Live semantic vacuum cells inside an otherwise sealed construction room. */
+  evaRequiredCells?: readonly GridPoint[]
 }
 
 const cardinalDirections: readonly GridPoint[] = [
@@ -109,7 +111,11 @@ const suitAllowsCell = (
   topology: ConstructionPressureTopology,
   cell: GridPoint,
   hasEvaSuit: boolean | undefined,
-) => hasEvaSuit !== false || constructionEnvironmentAt(layout, topology, cell) === 'pressurized'
+  evaRequiredCellKeys: ReadonlySet<string>,
+) => hasEvaSuit !== false || (
+  constructionEnvironmentAt(layout, topology, cell) === 'pressurized' &&
+  !evaRequiredCellKeys.has(pointKey(cell))
+)
 
 const visitLimit = (
   layout: ConstructionLayout,
@@ -158,6 +164,7 @@ export const getConstructionApproachCells = (
   const normalizedTargets = uniqueSortedInBoundsPoints(layout, targetCells)
   const targetKeys = new Set(normalizedTargets.map(pointKey))
   const pressureTopology = topologyFor(layout, options)
+  const evaRequiredCellKeys = new Set((options.evaRequiredCells ?? []).map(pointKey))
   const blocked = routeBlockedCellKeys(
     layout,
     options.transientBlockedCells,
@@ -176,7 +183,13 @@ export const getConstructionApproachCells = (
         isInConstructionBounds(candidate, layout) &&
         !targetKeys.has(key) &&
         !blocked.has(key) &&
-        suitAllowsCell(layout, pressureTopology, candidate, options.hasEvaSuit)
+        suitAllowsCell(
+          layout,
+          pressureTopology,
+          candidate,
+          options.hasEvaSuit,
+          evaRequiredCellKeys,
+        )
       ) {
         approaches.set(key, candidate)
       }
@@ -198,6 +211,7 @@ export const findConstructionPath = (
   options: ConstructionPathfindingOptions = {},
 ): ConstructionRoute | null => {
   const pressureTopology = topologyFor(layout, options)
+  const evaRequiredCellKeys = new Set((options.evaRequiredCells ?? []).map(pointKey))
   const physicallyBlocked = blockedCellKeys(layout)
   const blocked = routeBlockedCellKeys(
     layout,
@@ -209,7 +223,13 @@ export const findConstructionPath = (
     uniqueSortedInBoundsPoints(layout, destinations)
       .filter((point) => (
         !blocked.has(pointKey(point)) &&
-        suitAllowsCell(layout, pressureTopology, point, options.hasEvaSuit)
+        suitAllowsCell(
+          layout,
+          pressureTopology,
+          point,
+          options.hasEvaSuit,
+          evaRequiredCellKeys,
+        )
       ))
       .map(pointKey),
   )
@@ -220,7 +240,13 @@ export const findConstructionPath = (
     !isInConstructionBounds(start, layout) ||
     physicallyBlocked.has(startKey) ||
     constructionCellIsPressureBreach(pressureTopology, start) ||
-    !suitAllowsCell(layout, pressureTopology, start, options.hasEvaSuit) ||
+    !suitAllowsCell(
+      layout,
+      pressureTopology,
+      start,
+      options.hasEvaSuit,
+      evaRequiredCellKeys,
+    ) ||
     destinationKeys.size === 0
   ) return null
 
@@ -252,7 +278,13 @@ export const findConstructionPath = (
         !parentByKey.has(neighborKey) &&
         isInConstructionBounds(neighbor, layout) &&
         !blocked.has(neighborKey) &&
-        suitAllowsCell(layout, pressureTopology, neighbor, options.hasEvaSuit) &&
+        suitAllowsCell(
+          layout,
+          pressureTopology,
+          neighbor,
+          options.hasEvaSuit,
+          evaRequiredCellKeys,
+        ) &&
         constructionPressureStepAllowed(layout, pressureTopology, current, neighbor)
       ) {
         parentByKey.set(neighborKey, clonePoint(current))
@@ -290,10 +322,13 @@ export const findConstructionPressureReturnPath = (
   options: ConstructionPathfindingOptions = {},
 ) => {
   const pressureTopology = topologyFor(layout, options)
+  const evaRequiredCellKeys = new Set((options.evaRequiredCells ?? []).map(pointKey))
   return findConstructionPath(
     layout,
     start,
-    pressureTopology.rooms.flatMap((room) => room.cells),
+    pressureTopology.rooms
+      .flatMap((room) => room.cells)
+      .filter((cell) => !evaRequiredCellKeys.has(pointKey(cell))),
     { ...options, pressureTopology, hasEvaSuit: true },
   )
 }

@@ -31,6 +31,7 @@ import {
   analyzeConstructionPressure,
   constructionEnvironmentAt,
 } from './pressureTopology'
+import { constructionSemanticEvaCellKeys } from './constructionHazards'
 
 export const MAX_ADVANCE_HOURS = 12
 
@@ -1301,12 +1302,22 @@ const atmosphereAtCrewLocation = (state: MoonbaseState, member: CrewMember) => (
 
 const constructionCrewOutsidePressure = (state: MoonbaseState) => {
   const pressure = analyzeConstructionPressure(state.settlement.layout)
+  const semanticEvaCellKeys = constructionSemanticEvaCellKeys(
+    state.modules,
+    state.settlement.layout,
+    state.lab.atmosphere,
+  )
+  const activeConstructionCrewIds = new Set(
+    state.settlement.constructionOrders
+      .filter((order) => order.status !== 'complete' && order.assignedCrewId)
+      .map((order) => order.assignedCrewId!),
+  )
   return new Set(state.settlement.constructionCrew.flatMap((position) => (
-    constructionEnvironmentAt(
-      state.settlement.layout,
-      pressure,
-      position.cell,
-    ) === 'pressurized'
+    (state.settlement.phase === 'operations' && !activeConstructionCrewIds.has(position.crewId)) ||
+    (
+      constructionEnvironmentAt(state.settlement.layout, pressure, position.cell) === 'pressurized' &&
+      !semanticEvaCellKeys.has(`${position.cell.x}:${position.cell.y}`)
+    )
       ? []
       : [position.crewId]
   )))

@@ -1,0 +1,1509 @@
+.mission-arrival {
+  --arrival-bone: #eee3ca;
+  --arrival-ash: #a7a18f;
+  --arrival-void: #090c0b;
+  --arrival-panel: #20251f;
+  --arrival-panel-raised: #2b3028;
+  --arrival-line: rgba(226, 205, 159, 0.2);
+  --arrival-brass: #d2a956;
+  --arrival-blue: #8fc6c5;
+  --arrival-success: #87bd92;
+  width: 100%;
+  height: 100dvh;
+  min-height: 540px;
+  overflow: auto;
+  color: var(--arrival-bone);
+  background:
+    radial-gradient(circle at 74% 34%, rgba(108, 132, 121, 0.12), transparent 28%),
+    linear-gradient(135deg, rgba(207, 170, 89, 0.025), transparent 42%),
+    var(--arrival-void);
+  font-family: var(--font-ui, "Noto Sans", "Liberation Sans", ui-sans-serif, sans-serif);
+  isolation: isolate;
+}
+
+.mission-arrival *,
+.mission-arrival *::before,
+.mission-arrival *::after {
+  box-sizing: border-box;
+}
+
+.arrival-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.arrival-briefing__header,
+.arrival-cutscene__header {
+  min-height: 72px;
+  padding: 0 clamp(18px, 4vw, 64px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--arrival-line);
+  background: rgba(11, 14, 12, 0.8);
+  box-shadow: 0 1px rgba(255, 255, 255, 0.025) inset;
+}
+
+.arrival-brand {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.arrival-brand > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.arrival-brand small,
+.arrival-brand strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arrival-brand small {
+  color: #a99a73;
+  font: 800 9px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.arrival-brand strong {
+  color: #f4ead3;
+  font: 800 17px/1.1 var(--font-condensed, "Arial Narrow", sans-serif);
+  letter-spacing: 0.035em;
+}
+
+.arrival-mark {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  clip-path: polygon(16% 0, 84% 0, 100% 16%, 100% 84%, 84% 100%, 16% 100%, 0 84%, 0 16%);
+  color: #f5e9cc;
+  background:
+    radial-gradient(circle, #3b443b 0 34%, transparent 35%),
+    linear-gradient(135deg, #5a6256, #1b211b 62%);
+  box-shadow: 0 0 0 2px rgba(224, 197, 133, 0.4) inset;
+  font: 900 10px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.12em;
+}
+
+.arrival-mark::before {
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(224, 189, 105, 0.48);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(9, 11, 9, 0.5);
+  content: "";
+}
+
+.arrival-mark > span { position: relative; z-index: 1; }
+
+.arrival-mark i {
+  position: absolute;
+  right: 6px;
+  top: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--arrival-blue);
+  box-shadow: 0 0 7px rgba(143, 198, 197, 0.75);
+}
+
+.arrival-hold-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #beb398;
+  font: 800 10px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.arrival-hold-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--arrival-brass);
+  box-shadow: 0 0 0 3px rgba(210, 169, 86, 0.12), 0 0 12px rgba(210, 169, 86, 0.4);
+  animation: arrival-hold-pulse 1.8s ease-in-out infinite;
+}
+
+.arrival-briefing__content {
+  width: min(1480px, 100%);
+  min-height: min(58vh, 650px);
+  margin: 0 auto;
+  padding: clamp(38px, 6vh, 76px) clamp(24px, 5vw, 84px) clamp(30px, 5vh, 60px);
+  display: grid;
+  grid-template-columns: minmax(320px, 0.82fr) minmax(480px, 1.18fr);
+  align-items: center;
+  gap: clamp(42px, 7vw, 110px);
+}
+
+.arrival-briefing__copy {
+  max-width: 650px;
+}
+
+.arrival-kicker {
+  display: block;
+  color: var(--arrival-brass);
+  font: 850 10px/1.2 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+.arrival-briefing__copy h1,
+.arrival-cutscene__caption h1 {
+  margin: 14px 0 18px;
+  color: #f4ead3;
+  font-family: var(--font-condensed, "Arial Narrow", sans-serif);
+  font-size: clamp(46px, 5.5vw, 82px);
+  font-weight: 820;
+  line-height: 0.91;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.arrival-briefing__copy > p {
+  max-width: 580px;
+  margin: 0;
+  color: #c5bcaa;
+  font-size: clamp(15px, 1.25vw, 18px);
+  line-height: 1.65;
+}
+
+.arrival-safety-note {
+  max-width: 620px;
+  margin-top: 26px;
+  padding: 15px 16px;
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  align-items: start;
+  gap: 13px;
+  border: 1px solid rgba(143, 198, 197, 0.24);
+  border-left: 3px solid var(--arrival-blue);
+  background: linear-gradient(90deg, rgba(93, 139, 137, 0.13), rgba(26, 31, 27, 0.78));
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+}
+
+.arrival-safety-note > span {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  color: #b8ded8;
+  border: 1px solid rgba(143, 198, 197, 0.25);
+  background: rgba(7, 16, 14, 0.42);
+}
+
+.arrival-safety-note p {
+  margin: 0;
+  color: #aaa897;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.arrival-safety-note strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #e7e0ce;
+  font-size: 13px;
+}
+
+.arrival-briefing__actions {
+  margin-top: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.arrival-button {
+  min-height: 46px;
+  padding: 0 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  border: 1px solid #11140f;
+  border-radius: 2px;
+  color: var(--arrival-bone);
+  background: var(--arrival-panel-raised);
+  box-shadow:
+    0 0 0 1px rgba(235, 218, 177, 0.14) inset,
+    0 2px 0 rgba(255, 255, 255, 0.05) inset,
+    0 8px 24px rgba(0, 0, 0, 0.28);
+  font: 800 12px/1.1 var(--font-ui, sans-serif);
+  text-align: left;
+  transition: border-color 130ms ease, color 130ms ease, filter 130ms ease, transform 90ms ease;
+}
+
+.arrival-button:hover:not(:disabled) {
+  border-color: rgba(233, 203, 134, 0.66);
+  filter: brightness(1.08);
+}
+
+.arrival-button:active:not(:disabled) { transform: translateY(1px); }
+
+.arrival-button:focus-visible {
+  outline: 2px solid var(--arrival-blue);
+  outline-offset: 3px;
+}
+
+.arrival-button:disabled {
+  cursor: wait;
+  filter: saturate(0.45);
+  opacity: 0.62;
+}
+
+.arrival-button .game-icon { flex: 0 0 auto; }
+
+.arrival-button > span {
+  display: grid;
+  gap: 4px;
+}
+
+.arrival-button > span small {
+  color: #a59f8c;
+  font: 700 9px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.035em;
+}
+
+.arrival-button--primary {
+  min-height: 56px;
+  color: #141710;
+  border-color: #dec377;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.21), transparent 48%),
+    #cba654;
+  box-shadow:
+    0 0 0 1px rgba(50, 39, 16, 0.36) inset,
+    0 2px 0 rgba(255, 248, 218, 0.3) inset,
+    0 12px 32px rgba(0, 0, 0, 0.32);
+}
+
+.arrival-button--primary > span small { color: #4b422d; }
+
+.arrival-button--secondary { min-height: 56px; }
+
+.arrival-button--quiet {
+  min-height: 38px;
+  padding-inline: 13px;
+  color: #c5bcaa;
+  background: rgba(30, 35, 29, 0.68);
+  font: 800 10px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.arrival-preparation-error {
+  max-width: 620px !important;
+  margin-top: 12px !important;
+  padding: 9px 11px;
+  color: #f0b0a4 !important;
+  border-left: 2px solid #c96355;
+  background: rgba(120, 47, 38, 0.16);
+  font-size: 12px !important;
+  line-height: 1.45 !important;
+}
+
+.arrival-wait-copy {
+  margin-top: 16px !important;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #858476 !important;
+  font: 700 10px/1.4 var(--font-readout, ui-monospace, monospace) !important;
+}
+
+.arrival-wait-copy .game-icon { width: 14px; height: 14px; }
+
+.arrival-briefing__visual {
+  position: relative;
+  min-width: 0;
+  border: 1px solid #080a08;
+  background: #121612;
+  box-shadow:
+    0 0 0 1px rgba(224, 204, 157, 0.2),
+    0 26px 70px rgba(0, 0, 0, 0.46);
+}
+
+.arrival-briefing__visual::before,
+.arrival-briefing__visual::after {
+  position: absolute;
+  z-index: 8;
+  width: 24px;
+  height: 24px;
+  border-color: rgba(218, 177, 84, 0.7);
+  content: "";
+  pointer-events: none;
+}
+
+.arrival-briefing__visual::before {
+  left: -6px;
+  top: -6px;
+  border-left: 2px solid;
+  border-top: 2px solid;
+}
+
+.arrival-briefing__visual::after {
+  right: -6px;
+  bottom: -6px;
+  border-right: 2px solid;
+  border-bottom: 2px solid;
+}
+
+.arrival-briefing-scene {
+  position: relative;
+  height: clamp(300px, 31vw, 440px);
+  min-height: 300px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, transparent 0 62%, rgba(197, 188, 161, 0.04) 62.2%, transparent 63%),
+    radial-gradient(circle at 60% 22%, rgba(100, 129, 120, 0.08), transparent 30%),
+    #080b0b;
+}
+
+.arrival-briefing-scene::before {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  background:
+    linear-gradient(90deg, rgba(8, 11, 11, 0.48), transparent 18% 82%, rgba(8, 11, 11, 0.35)),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 4px);
+  content: "";
+  pointer-events: none;
+}
+
+.arrival-briefing-scene__sky i,
+.arrival-scene__sky > i {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #ded9ca;
+  box-shadow: 0 0 5px rgba(255, 255, 255, 0.6);
+}
+
+.arrival-briefing-scene__sky i:nth-child(1), .arrival-scene__sky > i:nth-child(1) { left: 8%; top: 14%; }
+.arrival-briefing-scene__sky i:nth-child(2), .arrival-scene__sky > i:nth-child(2) { left: 25%; top: 28%; opacity: 0.5; }
+.arrival-briefing-scene__sky i:nth-child(3), .arrival-scene__sky > i:nth-child(3) { left: 42%; top: 11%; }
+.arrival-briefing-scene__sky i:nth-child(4), .arrival-scene__sky > i:nth-child(4) { left: 67%; top: 31%; opacity: 0.6; }
+.arrival-briefing-scene__sky i:nth-child(5), .arrival-scene__sky > i:nth-child(5) { left: 91%; top: 17%; }
+.arrival-scene__sky > i:nth-child(6) { left: 56%; top: 8%; opacity: 0.5; }
+.arrival-scene__sky > i:nth-child(7) { left: 82%; top: 37%; opacity: 0.7; }
+
+.arrival-briefing-scene__earth,
+.arrival-scene__earth {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at 67% 27%, #d7e5de 0 5%, transparent 6%),
+    radial-gradient(ellipse at 38% 64%, #60847a 0 12%, transparent 13%),
+    radial-gradient(circle at 35% 30%, #779c9a, #42636b 44%, #273d47 68%, #16252b 72%);
+  box-shadow: 0 0 14px rgba(121, 187, 195, 0.26);
+}
+
+.arrival-briefing-scene__earth { right: 9%; top: 10%; }
+
+.arrival-briefing-scene__ridge {
+  position: absolute;
+  right: -6%;
+  bottom: 0;
+  left: -6%;
+  height: 42%;
+  background:
+    radial-gradient(ellipse at 24% 70%, rgba(23, 25, 21, 0.52) 0 7%, transparent 7.3%),
+    radial-gradient(ellipse at 68% 92%, rgba(37, 39, 33, 0.68) 0 11%, transparent 11.4%),
+    linear-gradient(166deg, transparent 0 22%, #56584f 22.4% 45%, #383b35 45.4% 100%);
+  box-shadow: 0 -1px rgba(226, 219, 194, 0.1);
+  transform: skewX(-7deg);
+}
+
+.arrival-briefing-scene__route {
+  position: absolute;
+  z-index: 3;
+  right: 22%;
+  bottom: 20%;
+  width: 40%;
+  height: 15%;
+  border-top: 1px dashed rgba(218, 177, 84, 0.52);
+  border-radius: 50%;
+  transform: rotate(-8deg);
+}
+
+.arrival-briefing-scene__lander {
+  position: absolute;
+  z-index: 5;
+  left: 14%;
+  bottom: 20%;
+  width: 70px;
+  height: 62px;
+  display: grid;
+  place-items: center;
+  clip-path: polygon(25% 0, 75% 0, 92% 63%, 100% 63%, 100% 83%, 68% 83%, 62% 100%, 38% 100%, 32% 83%, 0 83%, 0 63%, 8% 63%);
+  color: #d0b15f;
+  background: linear-gradient(135deg, #d8d2bc, #777a6c 65%, #464a42);
+  box-shadow: 0 7px 18px rgba(0, 0, 0, 0.5);
+}
+
+.arrival-briefing-scene__lander::after {
+  position: absolute;
+  inset: 9px 22px 25px;
+  border: 2px solid #303a38;
+  background: #1b2c32;
+  content: "";
+}
+
+.arrival-briefing-scene__lander .game-icon { position: relative; z-index: 2; }
+
+.arrival-briefing-scene .arrival-base {
+  right: 4%;
+  bottom: 20%;
+  width: 48%;
+  height: 38%;
+  transform: scale(0.78);
+  transform-origin: right bottom;
+}
+
+.arrival-briefing-scene__crew {
+  position: absolute;
+  z-index: 5;
+  left: 35%;
+  bottom: 17%;
+  display: flex;
+  align-items: end;
+  gap: 0;
+  transform: scale(0.55);
+  transform-origin: left bottom;
+}
+
+.arrival-briefing-scene__crew .pawn-sprite:nth-child(2) { transform: translateY(-5px); }
+.arrival-briefing-scene__crew .pawn-sprite:nth-child(4) { transform: translateY(-4px); }
+.arrival-briefing-scene__crew .pawn-sprite:nth-child(6) { transform: translateY(-2px); }
+
+.arrival-briefing-scene__label {
+  position: absolute;
+  z-index: 9;
+  padding: 4px 6px;
+  color: #d8c68f;
+  border: 1px solid rgba(218, 177, 84, 0.3);
+  background: rgba(8, 11, 10, 0.76);
+  font: 800 7px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.1em;
+}
+
+.arrival-briefing-scene__label--pad { left: 8%; bottom: 10%; }
+.arrival-briefing-scene__label--base { right: 5%; top: 42%; }
+
+.arrival-briefing__manifest {
+  min-height: 54px;
+  padding: 0 15px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: center;
+  gap: 14px;
+  border-top: 1px solid rgba(218, 195, 143, 0.19);
+  background: #1e231d;
+}
+
+.arrival-briefing__manifest > span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.arrival-briefing__manifest > span + span {
+  padding-left: 14px;
+  border-left: 1px solid rgba(226, 205, 159, 0.12);
+}
+
+.arrival-briefing__manifest small {
+  color: #8f8d7d;
+  font: 750 7px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.arrival-briefing__manifest strong {
+  overflow: hidden;
+  color: #d7d1bd;
+  font: 800 10px/1.1 var(--font-condensed, "Arial Narrow", sans-serif);
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.arrival-loop {
+  padding: 30px clamp(24px, 5vw, 84px) 38px;
+  display: grid;
+  grid-template-columns: minmax(240px, 0.38fr) minmax(600px, 1fr);
+  gap: clamp(30px, 5vw, 80px);
+  border-top: 1px solid var(--arrival-line);
+  background:
+    linear-gradient(90deg, rgba(210, 169, 86, 0.04), transparent 35%),
+    #151914;
+}
+
+.arrival-loop > header { max-width: 410px; }
+
+.arrival-loop h2 {
+  margin: 8px 0 6px;
+  color: #e9dfc8;
+  font: 800 clamp(21px, 2vw, 29px)/1.08 var(--font-condensed, "Arial Narrow", sans-serif);
+  letter-spacing: -0.015em;
+}
+
+.arrival-loop > header p {
+  margin: 0;
+  color: #969485;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.arrival-loop ol {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  list-style: none;
+}
+
+.arrival-loop li {
+  position: relative;
+  min-width: 0;
+  min-height: 116px;
+  padding: 19px 24px 12px 17px;
+  border-left: 1px solid rgba(222, 200, 149, 0.16);
+}
+
+.arrival-loop li:last-child { border-right: 1px solid rgba(222, 200, 149, 0.16); }
+
+.arrival-loop li > .game-icon:not(.arrival-loop__arrow) {
+  width: 18px;
+  height: 18px;
+  margin-bottom: 9px;
+  color: #cbae67;
+}
+
+.arrival-loop__number {
+  position: absolute;
+  right: 10px;
+  top: 9px;
+  color: rgba(208, 192, 154, 0.25);
+  font: 800 9px/1 var(--font-readout, ui-monospace, monospace);
+}
+
+.arrival-loop h3 {
+  margin: 0 0 5px;
+  color: #e2d9c5;
+  font: 800 15px/1 var(--font-condensed, "Arial Narrow", sans-serif);
+  letter-spacing: 0.035em;
+}
+
+.arrival-loop li p {
+  margin: 0;
+  color: #939285;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.arrival-loop__arrow {
+  position: absolute;
+  z-index: 2;
+  right: -7px;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  padding: 2px;
+  color: #7f806f;
+  background: #151914;
+  transform: translateY(-50%);
+}
+
+.arrival-loop li:last-child .arrival-loop__arrow { display: none; }
+
+/* Arrival cinematic */
+.mission-arrival--cutscene {
+  position: relative;
+  display: grid;
+  grid-template-rows: 72px minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.arrival-cutscene__header { position: relative; z-index: 10; }
+
+.arrival-cutscene__counter {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #9f9987;
+  font: 800 9px/1 var(--font-readout, ui-monospace, monospace);
+  transform: translate(-50%, -50%);
+}
+
+.arrival-cutscene__counter > span:first-child { color: var(--arrival-brass); }
+
+.arrival-cutscene__counter i {
+  width: 26px;
+  height: 1px;
+  background: rgba(228, 211, 170, 0.25);
+}
+
+.arrival-cutscene__body {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.arrival-scene {
+  position: absolute;
+  inset: 0;
+  min-height: 360px;
+  overflow: hidden;
+  background: #07090a;
+}
+
+.arrival-scene::after {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  background:
+    linear-gradient(90deg, rgba(5, 7, 7, 0.4), transparent 16% 78%, rgba(5, 7, 7, 0.18)),
+    linear-gradient(180deg, transparent 0 64%, rgba(6, 8, 7, 0.25)),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 5px);
+  content: "";
+  pointer-events: none;
+}
+
+.arrival-scene__sky {
+  position: absolute;
+  inset: 0 0 38%;
+  background:
+    radial-gradient(circle at 64% 28%, rgba(90, 117, 111, 0.08), transparent 23%),
+    linear-gradient(180deg, #050707, #0b0f0e);
+}
+
+.arrival-scene__earth { right: 9%; top: 11%; width: 38px; height: 38px; }
+
+.arrival-scene__horizon {
+  position: absolute;
+  z-index: 1;
+  right: -5%;
+  bottom: 34%;
+  left: -5%;
+  height: 22%;
+  clip-path: polygon(0 53%, 7% 35%, 15% 45%, 22% 18%, 30% 39%, 40% 47%, 50% 28%, 58% 44%, 68% 35%, 76% 48%, 86% 22%, 94% 40%, 100% 31%, 100% 100%, 0 100%);
+  background: linear-gradient(180deg, #494d46, #2b302b 74%);
+  box-shadow: 0 -1px rgba(222, 217, 197, 0.14);
+}
+
+.arrival-scene__surface {
+  position: absolute;
+  z-index: 2;
+  inset: 60% -4% 0;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 52% -15%, rgba(187, 184, 167, 0.16), transparent 32%),
+    linear-gradient(174deg, #696a61, #464941 60%, #33362f);
+}
+
+.arrival-scene__surface::before {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 12% 25%, rgba(33, 35, 31, 0.24) 0 1px, transparent 2px),
+    radial-gradient(circle at 72% 67%, rgba(28, 30, 27, 0.22) 0 2px, transparent 3px);
+  background-size: 38px 29px, 59px 47px;
+  content: "";
+  opacity: 0.7;
+}
+
+.arrival-crater {
+  position: absolute;
+  border: 1px solid rgba(27, 30, 27, 0.26);
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 47% 42%, rgba(22, 25, 22, 0.4), rgba(89, 90, 80, 0.15) 57%, transparent 60%);
+  box-shadow: 2px 2px rgba(211, 207, 186, 0.06) inset;
+  transform: scaleY(0.36);
+}
+
+.arrival-crater--one { left: 8%; top: 23%; width: 150px; height: 90px; }
+.arrival-crater--two { right: 12%; bottom: 0; width: 220px; height: 120px; }
+.arrival-crater--three { left: 55%; top: 14%; width: 75px; height: 45px; }
+
+.arrival-pad {
+  position: absolute;
+  left: 12%;
+  top: 2%;
+  width: clamp(240px, 28vw, 430px);
+  height: 52%;
+  border: 2px solid rgba(199, 190, 162, 0.27);
+  border-radius: 50%;
+  background:
+    linear-gradient(90deg, transparent 49.7%, rgba(215, 201, 157, 0.18) 50%, transparent 50.3%),
+    linear-gradient(0deg, transparent 49.7%, rgba(215, 201, 157, 0.18) 50%, transparent 50.3%),
+    rgba(30, 33, 29, 0.12);
+  transform: rotate(-3deg) skewX(-12deg);
+}
+
+.arrival-pad b {
+  position: absolute;
+  right: 9%;
+  bottom: 9%;
+  color: rgba(224, 206, 155, 0.25);
+  font: 900 18px/1 var(--font-readout, ui-monospace, monospace);
+}
+
+.arrival-base {
+  position: absolute;
+  z-index: 4;
+  right: 5%;
+  bottom: 30%;
+  width: min(47vw, 710px);
+  height: min(23vw, 300px);
+}
+
+.arrival-base__module {
+  position: absolute;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #b9b39f;
+  border: 2px solid #292d28;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.15), transparent 18%),
+    repeating-linear-gradient(90deg, transparent 0 34px, rgba(37, 42, 37, 0.35) 34px 36px),
+    linear-gradient(180deg, #8b8d7f, #62665b 72%, #464a41);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.46);
+}
+
+.arrival-base__module--life {
+  left: 0;
+  width: 24%;
+  height: 50%;
+  clip-path: polygon(10% 0, 90% 0, 100% 22%, 100% 100%, 0 100%, 0 22%);
+}
+
+.arrival-base__module--habitat {
+  left: 29%;
+  width: 42%;
+  height: 74%;
+  clip-path: polygon(7% 0, 93% 0, 100% 16%, 100% 100%, 0 100%, 0 16%);
+}
+
+.arrival-base__module--stores {
+  right: 0;
+  width: 24%;
+  height: 43%;
+  clip-path: polygon(12% 0, 88% 0, 100% 26%, 100% 100%, 0 100%, 0 26%);
+}
+
+.arrival-base__module .game-icon { width: 22px; height: 22px; color: #313a37; }
+
+.arrival-base__module > span,
+.arrival-base__module > b {
+  position: relative;
+  z-index: 2;
+  font-family: var(--font-readout, ui-monospace, monospace);
+  text-shadow: 0 1px #272a26;
+}
+
+.arrival-base__module--life > span,
+.arrival-base__module--stores > span { font-size: 7px; letter-spacing: 0.1em; }
+
+.arrival-base__module--habitat > span {
+  margin-top: 13%;
+  color: #c9be9c;
+  font-size: clamp(8px, 0.8vw, 13px);
+  font-weight: 900;
+  letter-spacing: 0.17em;
+}
+
+.arrival-base__module--habitat > b {
+  color: #383e38;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+}
+
+.arrival-base__module--habitat > i {
+  position: absolute;
+  bottom: 19%;
+  width: 10%;
+  aspect-ratio: 1.35;
+  border: 1px solid #28302e;
+  background: #23363a;
+  box-shadow: 0 0 6px rgba(127, 194, 196, 0.24) inset;
+}
+
+.arrival-base__module--habitat > i:nth-of-type(1) { left: 25%; }
+.arrival-base__module--habitat > i:nth-of-type(2) { left: 45%; }
+.arrival-base__module--habitat > i:nth-of-type(3) { left: 65%; }
+
+.arrival-base__corridor {
+  position: absolute;
+  bottom: 13%;
+  width: 12%;
+  height: 21%;
+  border-block: 2px solid #2d312c;
+  background: linear-gradient(180deg, #76796c, #51554d);
+}
+
+.arrival-base__corridor--left { left: 20%; }
+.arrival-base__corridor--right { right: 20%; }
+
+.arrival-base__airlock {
+  position: absolute;
+  right: -3.5%;
+  bottom: 0;
+  width: 8%;
+  min-width: 36px;
+  height: 42%;
+  display: grid;
+  place-items: center;
+  color: #1e2927;
+  border: 2px solid #242a25;
+  background: linear-gradient(90deg, #6e7166, #a0a08f 52%, #64685e);
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.4);
+}
+
+.arrival-base__airlock::before {
+  position: absolute;
+  inset: 13% 17% 5%;
+  border: 2px solid #343b36;
+  border-radius: 13px 13px 2px 2px;
+  background: linear-gradient(90deg, #383f3b, #59635e 52%, #333a36);
+  content: "";
+}
+
+.arrival-base__airlock .game-icon { position: relative; z-index: 2; width: 16px; height: 16px; color: #9fcac2; }
+
+.arrival-base__airlock small {
+  position: absolute;
+  z-index: 2;
+  bottom: 8%;
+  color: #d3caa9;
+  font: 800 5px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.06em;
+}
+
+.arrival-base__beacon {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: -7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--arrival-blue);
+  box-shadow: 0 0 9px rgba(143, 198, 197, 0.85);
+  animation: arrival-beacon 1.2s ease-in-out infinite;
+}
+
+.arrival-base__antenna {
+  position: absolute;
+  left: 46%;
+  bottom: 72%;
+  width: 2px;
+  height: 31%;
+  background: #696d63;
+}
+
+.arrival-base__antenna::before {
+  position: absolute;
+  left: -14px;
+  top: 5%;
+  width: 29px;
+  height: 11px;
+  border: 2px solid #70766d;
+  border-radius: 50%;
+  content: "";
+  transform: rotate(-17deg);
+}
+
+.arrival-base__antenna i {
+  position: absolute;
+  left: -2px;
+  width: 6px;
+  height: 1px;
+  background: #8a8d7f;
+}
+
+.arrival-base__antenna i:nth-child(1) { top: 28%; }
+.arrival-base__antenna i:nth-child(2) { top: 54%; }
+.arrival-base__antenna i:nth-child(3) { top: 80%; }
+
+.arrival-lander {
+  position: absolute;
+  z-index: 5;
+  left: clamp(18%, 25vw, 30%);
+  top: 1%;
+  width: clamp(110px, 11vw, 170px);
+  height: clamp(135px, 14vw, 205px);
+  filter: drop-shadow(0 20px 16px rgba(0, 0, 0, 0.48));
+  transform: translate(-50%, -38%);
+  transition: top 1.8s cubic-bezier(0.2, 0.68, 0.32, 1), transform 1.8s cubic-bezier(0.2, 0.68, 0.32, 1);
+}
+
+.arrival-lander__body {
+  position: absolute;
+  left: 22%;
+  top: 4%;
+  width: 56%;
+  height: 67%;
+  display: grid;
+  place-items: center;
+  clip-path: polygon(22% 0, 78% 0, 100% 28%, 93% 100%, 7% 100%, 0 28%);
+  color: #c49e4b;
+  background:
+    linear-gradient(90deg, transparent 47%, rgba(37, 42, 39, 0.48) 48% 51%, transparent 52%),
+    linear-gradient(135deg, #d6d0bd, #959787 46%, #565c54 74%);
+  box-shadow: 0 2px rgba(255, 255, 255, 0.24) inset;
+}
+
+.arrival-lander__body::before {
+  position: absolute;
+  left: 27%;
+  top: 15%;
+  width: 46%;
+  height: 24%;
+  border: 2px solid #3b4542;
+  border-radius: 50% 50% 12% 12%;
+  background: linear-gradient(145deg, #36565c, #17282d 70%);
+  box-shadow: 0 0 8px rgba(148, 205, 202, 0.17) inset;
+  content: "";
+}
+
+.arrival-lander__body b {
+  position: absolute;
+  left: 50%;
+  bottom: 23%;
+  color: #3e4139;
+  font: 900 clamp(6px, 0.55vw, 9px)/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.13em;
+  transform: translateX(-50%);
+}
+
+.arrival-lander__body .game-icon { position: absolute; right: 13%; bottom: 9%; width: 15%; }
+
+.arrival-lander__body i {
+  position: absolute;
+  left: 15%;
+  bottom: 11%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--arrival-success);
+  box-shadow: 0 0 7px rgba(135, 189, 146, 0.6);
+}
+
+.arrival-lander__antenna {
+  position: absolute;
+  left: 50%;
+  top: -7%;
+  width: 2px;
+  height: 14%;
+  background: #989b8c;
+}
+
+.arrival-lander__antenna::before {
+  position: absolute;
+  left: -7px;
+  top: -2px;
+  width: 14px;
+  height: 6px;
+  border: 2px solid #8f9386;
+  border-radius: 50%;
+  content: "";
+  transform: rotate(-15deg);
+}
+
+.arrival-lander__leg {
+  position: absolute;
+  top: 58%;
+  width: 3px;
+  height: 32%;
+  background: #8f9285;
+  transform-origin: top;
+}
+
+.arrival-lander__leg::after {
+  position: absolute;
+  bottom: -3px;
+  width: 28px;
+  height: 5px;
+  border-radius: 50%;
+  background: #777b71;
+  content: "";
+}
+
+.arrival-lander__leg--left { left: 29%; transform: rotate(26deg); }
+.arrival-lander__leg--left::after { left: -20px; }
+.arrival-lander__leg--right { right: 29%; transform: rotate(-26deg); }
+.arrival-lander__leg--right::after { right: -20px; }
+
+.arrival-lander__engine {
+  position: absolute;
+  top: 68%;
+  width: 12%;
+  height: 30%;
+  clip-path: polygon(10% 0, 90% 0, 100% 100%, 50% 78%, 0 100%);
+  background: linear-gradient(180deg, #e8c05e, #f3e2a3 32%, rgba(112, 188, 184, 0.28) 67%, transparent);
+  filter: blur(0.6px) drop-shadow(0 8px 8px rgba(229, 185, 82, 0.34));
+  opacity: 0;
+  transform-origin: top;
+  animation: arrival-engine-flicker 170ms linear infinite alternate;
+}
+
+.arrival-lander__engine--left { left: 34%; }
+.arrival-lander__engine--right { right: 34%; }
+
+.arrival-lander__ramp {
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 61%;
+  width: 31%;
+  height: 41%;
+  border: 2px solid #474c45;
+  background: repeating-linear-gradient(0deg, #7d8074 0 7px, #595e56 8px 10px);
+  opacity: 0;
+  transform: perspective(80px) rotateX(51deg) translateX(-50%);
+  transform-origin: top;
+  transition: opacity 500ms ease;
+}
+
+.arrival-scene--descent .arrival-lander {
+  top: 47%;
+  transform: translate(-50%, -50%);
+}
+
+.arrival-scene--descent .arrival-lander__engine { opacity: 1; }
+
+.arrival-scene--touchdown .arrival-lander,
+.arrival-scene--approach .arrival-lander,
+.arrival-scene--airlock .arrival-lander {
+  top: 64%;
+  transform: translate(-50%, -57%);
+  transition-duration: 900ms;
+}
+
+.arrival-scene--touchdown .arrival-lander__engine { opacity: 0.28; }
+
+.arrival-scene--approach .arrival-lander__ramp,
+.arrival-scene--airlock .arrival-lander__ramp { opacity: 1; }
+
+.arrival-dust {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  width: 28%;
+  height: 24%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(191, 186, 166, 0.25), transparent 68%);
+  filter: blur(7px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.arrival-dust--left { left: 3%; }
+.arrival-dust--right { left: 27%; }
+
+.arrival-scene--touchdown .arrival-dust {
+  animation: arrival-dust 1.6s ease-out both;
+}
+
+.arrival-crew {
+  position: absolute;
+  z-index: 6;
+  left: calc(clamp(18%, 25vw, 30%) + 3%);
+  bottom: 31%;
+  width: 37%;
+  height: 90px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+
+.arrival-crew__member {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.38));
+  transition: left 2.7s cubic-bezier(0.22, 0.58, 0.28, 1), opacity 400ms ease, transform 300ms ease;
+}
+
+.arrival-crew__member--one { z-index: 6; }
+.arrival-crew__member--two { z-index: 5; transform: translate(-12px, 10px) scale(0.9); }
+.arrival-crew__member--three { z-index: 4; transform: translate(-24px, 3px) scale(0.94); }
+.arrival-crew__member--four { z-index: 3; transform: translate(-36px, 12px) scale(0.88); }
+.arrival-crew__member--five { z-index: 2; transform: translate(-48px, 0) scale(0.96); }
+.arrival-crew__member--six { z-index: 1; transform: translate(-60px, 9px) scale(0.9); }
+
+.arrival-scene--approach .arrival-crew,
+.arrival-scene--airlock .arrival-crew { opacity: 1; }
+
+.arrival-scene--approach .arrival-crew__member--one { left: 86%; animation: arrival-suit-bob 650ms ease-in-out infinite alternate; }
+.arrival-scene--approach .arrival-crew__member--two { left: 72%; animation: arrival-suit-bob 700ms 90ms ease-in-out infinite alternate; }
+.arrival-scene--approach .arrival-crew__member--three { left: 58%; animation: arrival-suit-bob 620ms 180ms ease-in-out infinite alternate; }
+.arrival-scene--approach .arrival-crew__member--four { left: 44%; animation: arrival-suit-bob 690ms 70ms ease-in-out infinite alternate; }
+.arrival-scene--approach .arrival-crew__member--five { left: 30%; animation: arrival-suit-bob 640ms 140ms ease-in-out infinite alternate; }
+.arrival-scene--approach .arrival-crew__member--six { left: 16%; animation: arrival-suit-bob 720ms 210ms ease-in-out infinite alternate; }
+.arrival-scene--airlock .arrival-crew__member { left: 100%; opacity: 0; }
+
+.arrival-scene--airlock .arrival-base__airlock {
+  color: #d7f0e8;
+  box-shadow: 0 0 22px rgba(112, 192, 175, 0.24), 0 10px 18px rgba(0, 0, 0, 0.4);
+}
+
+.arrival-scene__telemetry {
+  position: absolute;
+  z-index: 9;
+  left: clamp(16px, 3vw, 42px);
+  top: clamp(18px, 4vh, 46px);
+  display: grid;
+  gap: 8px;
+}
+
+.arrival-scene__telemetry > span {
+  min-width: 112px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  color: #8e9385;
+  font: 750 7px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.arrival-scene__telemetry strong { color: #a9c4b8; font-size: 7px; }
+
+.arrival-cutscene__caption {
+  position: absolute;
+  z-index: 10;
+  left: clamp(24px, 6vw, 104px);
+  bottom: clamp(28px, 7vh, 88px);
+  width: min(610px, calc(100% - 48px));
+  padding: 24px 0 0 25px;
+  border-left: 2px solid var(--arrival-brass);
+  background: linear-gradient(90deg, rgba(7, 9, 8, 0.82), rgba(7, 9, 8, 0.08) 76%, transparent);
+  text-shadow: 0 2px 9px #000;
+}
+
+.arrival-cutscene__caption h1 {
+  margin: 9px 0 10px;
+  font-size: clamp(37px, 4.7vw, 71px);
+}
+
+.arrival-cutscene__caption p {
+  max-width: 520px;
+  margin: 0;
+  color: #c5bead;
+  font-size: clamp(12px, 1.1vw, 15px);
+  line-height: 1.55;
+}
+
+.arrival-stage-timer {
+  width: min(330px, 70%);
+  height: 2px;
+  margin-top: 18px;
+  overflow: hidden;
+  background: rgba(227, 213, 176, 0.16);
+}
+
+.arrival-stage-timer span {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: linear-gradient(90deg, var(--arrival-brass), #f2d88d);
+  transform-origin: left;
+  animation: arrival-timer var(--arrival-stage-duration) linear both;
+}
+
+.arrival-stage-list {
+  position: relative;
+  z-index: 10;
+  min-height: 74px;
+  margin: 0;
+  padding: 0 clamp(24px, 6vw, 104px);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: center;
+  border-top: 1px solid var(--arrival-line);
+  background: #111510;
+  list-style: none;
+}
+
+.arrival-stage-list li {
+  position: relative;
+  height: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: 1fr 1fr;
+  align-content: center;
+  align-items: end;
+  column-gap: 10px;
+  color: #77786d;
+  border-top: 2px solid transparent;
+}
+
+.arrival-stage-list li > span {
+  grid-row: 1 / 3;
+  align-self: center;
+  color: #606258;
+  font: 800 8px/1 var(--font-readout, ui-monospace, monospace);
+}
+
+.arrival-stage-list li > i {
+  width: 100%;
+  height: 1px;
+  align-self: end;
+  background: rgba(222, 205, 164, 0.13);
+}
+
+.arrival-stage-list li > strong {
+  align-self: start;
+  padding-top: 5px;
+  font: 800 8px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.arrival-stage-list li[data-state="complete"] { color: #9aaa8d; }
+.arrival-stage-list li[data-state="complete"] > i { background: #829475; }
+.arrival-stage-list li[data-state="current"] { color: #e0c275; border-top-color: var(--arrival-brass); }
+.arrival-stage-list li[data-state="current"] > span { color: #e0c275; }
+.arrival-stage-list li[data-state="current"] > i { background: #d0a957; }
+
+.mission-arrival--complete {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: #dcd3be;
+  background: #0b0e0c;
+}
+
+.mission-arrival--complete .game-icon { color: var(--arrival-success); }
+
+.mission-arrival--complete strong {
+  font: 800 12px/1 var(--font-readout, ui-monospace, monospace);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+@keyframes arrival-hold-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes arrival-beacon {
+  0%, 100% { opacity: 0.48; }
+  50% { opacity: 1; }
+}
+
+@keyframes arrival-engine-flicker {
+  from { transform: scaleX(0.78) scaleY(0.9); }
+  to { transform: scaleX(1.12) scaleY(1.06); }
+}
+
+@keyframes arrival-dust {
+  0% { opacity: 0; transform: scale(0.3); }
+  24% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.8) translateX(-10%); }
+}
+
+@keyframes arrival-suit-bob {
+  from { margin-bottom: 0; }
+  to { margin-bottom: 4px; }
+}
+
+@keyframes arrival-timer {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@media (max-width: 920px) {
+  .arrival-briefing__content {
+    min-height: auto;
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+
+  .arrival-briefing__copy { max-width: 720px; }
+  .arrival-briefing__visual { width: 100%; }
+
+  .arrival-loop {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .arrival-loop > header { max-width: 620px; }
+
+  .arrival-base {
+    right: 2%;
+    width: 53vw;
+    height: 27vw;
+  }
+
+  .arrival-cutscene__caption { bottom: 34px; }
+}
+
+@media (max-width: 620px) {
+  .mission-arrival { min-height: 620px; }
+
+  .arrival-briefing__header,
+  .arrival-cutscene__header {
+    min-height: 60px;
+    padding-inline: 14px;
+  }
+
+  .arrival-brand { gap: 9px; }
+  .arrival-mark { width: 34px; height: 34px; font-size: 8px; }
+  .arrival-mark::before { inset: 6px; }
+  .arrival-brand small { font-size: 7px; }
+  .arrival-brand strong { font-size: 14px; }
+  .arrival-hold-status { max-width: 94px; justify-content: flex-end; font-size: 7px; text-align: right; }
+
+  .arrival-briefing__content {
+    padding: 34px 18px 38px;
+    gap: 34px;
+  }
+
+  .arrival-briefing__copy h1 { margin-top: 11px; font-size: clamp(43px, 15vw, 64px); }
+  .arrival-briefing__copy > p { font-size: 14px; line-height: 1.55; }
+  .arrival-safety-note { margin-top: 22px; padding: 13px; }
+
+  .arrival-briefing__actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .arrival-button--primary,
+  .arrival-button--secondary { width: 100%; justify-content: flex-start; }
+
+  .arrival-briefing-scene { height: 300px; }
+  .arrival-briefing-scene .arrival-base { right: -4%; width: 64%; transform: scale(0.7); }
+  .arrival-briefing-scene__lander { left: 9%; width: 58px; height: 52px; }
+  .arrival-briefing-scene__crew { left: 27%; transform: scale(0.44); }
+
+  .arrival-briefing__manifest {
+    min-height: 62px;
+    padding-inline: 10px;
+    gap: 7px;
+  }
+
+  .arrival-briefing__manifest > span + span { padding-left: 8px; }
+  .arrival-briefing__manifest strong { font-size: 8px; }
+
+  .arrival-loop { padding: 28px 18px 36px; }
+  .arrival-loop ol { grid-template-columns: 1fr 1fr; }
+  .arrival-loop li { min-height: 126px; border-bottom: 1px solid rgba(222, 200, 149, 0.12); }
+  .arrival-loop li:nth-child(2) { border-right: 1px solid rgba(222, 200, 149, 0.16); }
+  .arrival-loop li:nth-child(2) .arrival-loop__arrow { display: none; }
+  .arrival-loop li:nth-child(3) { border-top: 0; }
+
+  .mission-arrival--cutscene { grid-template-rows: 60px minmax(0, 1fr) 66px; }
+  .arrival-cutscene__header .arrival-brand small { display: none; }
+
+  .arrival-cutscene__counter {
+    position: static;
+    margin-left: auto;
+    transform: none;
+  }
+
+  .arrival-button--quiet {
+    width: auto;
+    min-height: 34px;
+    padding-inline: 9px;
+    font-size: 8px;
+  }
+
+  .arrival-button--quiet .game-icon { display: none; }
+  .arrival-scene__earth { right: 7%; top: 10%; width: 27px; height: 27px; }
+  .arrival-scene__telemetry { left: 14px; top: 20px; }
+  .arrival-scene__telemetry > span { min-width: 96px; }
+  .arrival-base { right: -9%; bottom: 34%; width: 66vw; height: 35vw; min-height: 150px; }
+  .arrival-base__module--life { display: none; }
+  .arrival-base__corridor--left { display: none; }
+  .arrival-base__module--habitat { left: 5%; width: 59%; }
+  .arrival-base__corridor--right { right: 28%; }
+  .arrival-base__module--stores { right: 6%; width: 28%; }
+  .arrival-base__airlock { right: -1%; }
+
+  .arrival-lander {
+    left: 23%;
+    width: 96px;
+    height: 125px;
+  }
+
+  .arrival-scene--descent .arrival-lander { top: 45%; }
+  .arrival-scene--touchdown .arrival-lander,
+  .arrival-scene--approach .arrival-lander,
+  .arrival-scene--airlock .arrival-lander { top: 63%; }
+
+  .arrival-crew { left: 27%; bottom: 35%; width: 45%; transform: scale(0.82); transform-origin: left bottom; }
+
+  .arrival-cutscene__caption {
+    left: 17px;
+    bottom: 25px;
+    width: calc(100% - 34px);
+    padding: 16px 12px 4px 15px;
+  }
+
+  .arrival-cutscene__caption h1 { font-size: clamp(35px, 11vw, 52px); }
+  .arrival-cutscene__caption p { font-size: 11px; }
+  .arrival-stage-timer { margin-top: 12px; }
+
+  .arrival-stage-list { min-height: 66px; padding-inline: 12px; }
+  .arrival-stage-list li { column-gap: 5px; }
+  .arrival-stage-list li > strong { overflow: hidden; font-size: 6px; text-overflow: ellipsis; white-space: nowrap; }
+  .arrival-stage-list li > span { font-size: 7px; }
+}
+
+@media (max-height: 680px) and (min-width: 621px) {
+  .arrival-cutscene__caption { bottom: 24px; }
+  .arrival-cutscene__caption h1 { margin-block: 7px; font-size: clamp(34px, 4.2vw, 56px); }
+  .arrival-stage-list { min-height: 60px; }
+  .arrival-scene__telemetry { top: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-arrival *,
+  .mission-arrival *::before,
+  .mission-arrival *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+
+  .arrival-hold-status i,
+  .arrival-base__beacon { opacity: 1; }
+
+  .arrival-scene--approach .arrival-crew__member--one { left: 86%; }
+  .arrival-scene--approach .arrival-crew__member--two { left: 72%; }
+  .arrival-scene--approach .arrival-crew__member--three { left: 58%; }
+  .arrival-scene--approach .arrival-crew__member--four { left: 44%; }
+  .arrival-scene--approach .arrival-crew__member--five { left: 30%; }
+  .arrival-scene--approach .arrival-crew__member--six { left: 16%; }
+}

@@ -38,14 +38,22 @@ import {
 } from './constructionWorkerRouting'
 import { advanceConstructionWorkerSimulationFixedStep } from './constructionWorkerSimulation'
 import {
+  constructionSemanticEvaCellKeys,
+  constructionSemanticEvaCells,
+} from './constructionHazards'
+import {
   analyzeConstructionPressure,
   constructionEnvironmentAt,
 } from './pressureTopology'
-import { beginOperations as beginOperationsInState } from './settlement'
+import {
+  beginOperations as beginOperationsInState,
+  deployPresetMoonbase as deployPresetMoonbaseInState,
+} from './settlement'
 import {
   advanceSimulation,
   clearOperationsPlan,
   commitOperationsPlan,
+  deriveAlerts as deriveAlertsInState,
   rebaseOperationsPlan,
   recordLearningEvidence as recordLearningEvidenceInState,
   removePlanAction as removePlanActionFromState,
@@ -81,8 +89,75 @@ type InteractiveActor = 'manual' | 'agent'
 
 const PHASE_SAFE_PERSISTENCE_VERSION = 10
 const RUN_ID_PERSISTENCE_VERSION = 12
-const PERSISTENCE_VERSION = 13
+const PERSISTENCE_VERSION = 14
 const EVA_SAFE_PERSISTENCE_VERSION = 13
+
+const isCrewCollection = (value: unknown): value is MoonbaseState['crew'] => (
+  Array.isArray(value) && value.every((member) => {
+    if (!member || typeof member !== 'object') return false
+    const record = member as Record<string, unknown>
+    const skills = record.skills
+    return typeof record.id === 'string' &&
+      typeof record.name === 'string' &&
+      typeof record.role === 'string' &&
+      typeof record.trait === 'string' &&
+      typeof record.status === 'string' &&
+      typeof record.location === 'string' &&
+      typeof record.health === 'number' &&
+      typeof record.fatigue === 'number' &&
+      typeof record.morale === 'number' &&
+      Boolean(skills && typeof skills === 'object') &&
+      ['engineering', 'science', 'medicine', 'operations'].every(
+        (key) => typeof (skills as Record<string, unknown>)[key] === 'number',
+      )
+  })
+)
+
+const isModuleCollection = (value: unknown): value is MoonbaseState['modules'] => (
+  Array.isArray(value) && value.every((module) => {
+    if (!module || typeof module !== 'object') return false
+    const record = module as Record<string, unknown>
+    const position = record.position
+    return typeof record.id === 'string' &&
+      typeof record.name === 'string' &&
+      typeof record.type === 'string' &&
+      typeof record.location === 'string' &&
+      (record.atmosphere === 'yes' || record.atmosphere === 'low' || record.atmosphere === 'no') &&
+      typeof record.condition === 'number' &&
+      typeof record.powerPriority === 'number' &&
+      typeof record.breached === 'boolean' &&
+      Boolean(position && typeof position === 'object') &&
+      ['x', 'y', 'width', 'height'].every(
+        (key) => typeof (position as Record<string, unknown>)[key] === 'number',
+      )
+  })
+)
+
+const reconciledCrewCollection = (
+  value: unknown,
+  fallback: MoonbaseState['crew'],
+): MoonbaseState['crew'] => {
+  if (!isCrewCollection(value)) return fallback
+  const byId = new Map(value.map((member) => [member.id, member]))
+  const fallbackIds = new Set(fallback.map((member) => member.id))
+  return [
+    ...fallback.map((member) => byId.get(member.id) ?? member),
+    ...value.filter((member) => !fallbackIds.has(member.id)),
+  ]
+}
+
+const reconciledModuleCollection = (
+  value: unknown,
+  fallback: MoonbaseState['modules'],
+): MoonbaseState['modules'] => {
+  if (!isModuleCollection(value)) return fallback
+  const byId = new Map(value.map((module) => [module.id, module]))
+  const fallbackIds = new Set(fallback.map((module) => module.id))
+  return [
+    ...fallback.map((module) => byId.get(module.id) ?? module),
+    ...value.filter((module) => !fallbackIds.has(module.id)),
+  ]
+}
 
 export interface QueueConstructionResult {
   ok: boolean
@@ -120,6 +195,7 @@ export interface MoonbaseActions {
     crewId: string | null,
   ) => ConstructionBuilderAssignmentResult
   advanceConstruction: (elapsed?: number) => ConstructionAdvanceSummary
+  deployPresetMoonbase: (actor?: InteractiveActor) => BuildResult
   beginOperations: (actor?: InteractiveActor) => BuildResult
   setPlanBrief: (input: PlanBriefInput, actor?: InteractiveActor) => PlanEditResult
   stagePlanAction: (input: PlanActionInput, actor?: InteractiveActor) => PlanEditResult
@@ -300,16 +376,21 @@ const equipConstructionWorkers = (
     state.settlement.constructionOrders,
   ).layout
   const projectedPressure = analyzeConstructionPressure(projectedLayout)
+  const semanticEvaCells = constructionSemanticEvaCells(
+    state.modules,
+    projectedLayout,
+    state.lab.atmosphere,
+  )
+  const semanticEvaCellKeys = new Set(semanticEvaCells.map(constructionPointKey))
   const positionByCrewId = new Map(
     state.settlement.constructionCrew.map((position) => [position.crewId, position]),
   )
   const projectedExposedCrewIds = new Set(workers.flatMap((worker) => {
     const position = positionByCrewId.get(worker.id)
-    return position && constructionEnvironmentAt(
-      projectedLayout,
-      projectedPressure,
-      position.cell,
-    ) !== 'pressurized'
+    return position && (
+      constructionEnvironmentAt(projectedLayout, projectedPressure, position.cell) !== 'pressurized' ||
+      semanticEvaCellKeys.has(constructionPointKey(position.cell))
+    )
       ? [worker.id]
       : []
   }))
@@ -352,24 +433,40 @@ const returnAndDoffConstructionCrew = (state: MoonbaseState) => {
   if (state.settlement.constructionOrders.some((order) => order.status !== 'complete')) return
   const layout = state.settlement.layout
   const pressure = analyzeConstructionPressure(layout)
+  const semanticEvaCells = constructionSemanticEvaCells(
+    state.modules,
+    layout,
+    state.lab.atmosphere,
+  )
+  const semanticEvaCellKeys = new Set(semanticEvaCells.map(constructionPointKey))
   const occupied = new Set(state.settlement.constructionCrew.map((position) => (
     `${position.cell.x}:${position.cell.y}`
   )))
   const pressurizedGoals = pressure.rooms
     .flatMap((room) => room.cells)
-    .filter((cell) => isConstructionCellWalkable(layout, cell))
+    .filter((cell) => (
+      isConstructionCellWalkable(layout, cell) &&
+      !semanticEvaCellKeys.has(constructionPointKey(cell))
+    ))
     .sort((left, right) => left.y - right.y || left.x - right.x)
 
   for (const position of state.settlement.constructionCrew) {
     const member = state.crew.find((candidate) => candidate.id === position.crewId)
     const suit = constructionSuitForCrew(state, position.crewId)
     if (!member || !suit) continue
-    if (constructionEnvironmentAt(layout, pressure, position.cell) !== 'pressurized') {
+    if (
+      constructionEnvironmentAt(layout, pressure, position.cell) !== 'pressurized' ||
+      semanticEvaCellKeys.has(constructionPointKey(position.cell))
+    ) {
       const goals = pressurizedGoals.filter((cell) => (
         !occupied.has(`${cell.x}:${cell.y}`) ||
         (cell.x === position.cell.x && cell.y === position.cell.y)
       ))
-      const route = findConstructionPath(layout, position.cell, goals, { hasEvaSuit: true })
+      const route = findConstructionPath(layout, position.cell, goals, {
+        hasEvaSuit: true,
+        pressureTopology: pressure,
+        evaRequiredCells: semanticEvaCells,
+      })
       const destination = route?.path.at(-1)
       if (!destination) continue
       occupied.delete(`${position.cell.x}:${position.cell.y}`)
@@ -377,7 +474,10 @@ const returnAndDoffConstructionCrew = (state: MoonbaseState) => {
       position.moveCredit = 0
       occupied.add(`${destination.x}:${destination.y}`)
     }
-    if (constructionEnvironmentAt(layout, pressure, position.cell) !== 'pressurized') continue
+    if (
+      constructionEnvironmentAt(layout, pressure, position.cell) !== 'pressurized' ||
+      semanticEvaCellKeys.has(constructionPointKey(position.cell))
+    ) continue
     member.equippedEvaSuitId = null
     suit.status = 'available'
     suit.location = 'airlock'
@@ -396,6 +496,11 @@ const advanceConstructionInState = (
   let workers = spatialConstructionWorkers(state)
   equipConstructionWorkers(state, workers)
   workers = spatialConstructionWorkers(state)
+  const evaRequiredCells = constructionSemanticEvaCells(
+    state.modules,
+    state.settlement.layout,
+    state.lab.atmosphere,
+  )
   const advanced = advanceConstructionWorkerSimulationFixedStep({
     layout: state.settlement.layout,
     orders: state.settlement.constructionOrders,
@@ -403,6 +508,7 @@ const advanceConstructionInState = (
     stockpile: state.settlement.constructionStockpile,
     crewPositions: state.settlement.constructionCrew,
     workers,
+    evaRequiredCells,
     elapsed,
   })
   state.settlement = {
@@ -561,26 +667,71 @@ const resetLegacyTravelAssignments = (
 
 const constructionPointKey = ({ x, y }: GridPoint) => `${x}:${y}`
 
-const relocateLegacyEstablishmentCrew = (
-  state: MoonbaseState,
-  initialState: MoonbaseState,
-): MoonbaseState => {
-  if (state.settlement.phase === 'operations') return state
+const crewHasPhysicalEvaSuit = (state: MoonbaseState, crewId: string) => {
+  const member = state.crew.find((candidate) => candidate.id === crewId)
+  if (!member?.equippedEvaSuitId) return false
+  return state.equipment.some((item) => (
+    item.id === member.equippedEvaSuitId &&
+    item.type === 'eva_suit' &&
+    item.condition >= 65 &&
+    item.assignedCrewId === crewId &&
+    item.status === 'deployed'
+  ))
+}
 
+const crewLocationRequiresEva = (state: MoonbaseState, crewId: string) => {
+  const member = state.crew.find((candidate) => candidate.id === crewId)
+  if (!member) return true
+  if (member.location === 'laboratory') return state.lab.atmosphere !== 'yes'
+  return state.modules.find((module) => module.location === member.location)?.atmosphere !== 'yes'
+}
+
+const reconcileLaboratoryModuleState = (
+  modules: MoonbaseState['modules'],
+  lab: MoonbaseState['lab'],
+) => modules.map((module) => module.location === 'laboratory'
+  ? { ...module, atmosphere: lab.atmosphere, breached: lab.breached }
+  : module)
+
+const relocateUnprotectedConstructionCrew = <State extends MoonbaseState>(
+  state: State,
+  initialState: MoonbaseState,
+): State => {
   const layout = state.settlement.layout
   const pressure = analyzeConstructionPressure(layout)
+  const semanticEvaCellKeys = constructionSemanticEvaCellKeys(
+    state.modules,
+    layout,
+    state.lab.atmosphere,
+  )
   const safeCells = pressure.rooms
     .flatMap((room) => room.cells)
-    .filter((cell) => isConstructionCellWalkable(layout, cell))
+    .filter((cell) => (
+      isConstructionCellWalkable(layout, cell) &&
+      !semanticEvaCellKeys.has(constructionPointKey(cell))
+    ))
     .sort((left, right) => left.y - right.y || left.x - right.x)
   if (safeCells.length === 0) return state
 
   const safeCellKeys = new Set(safeCells.map(constructionPointKey))
+  const safeLocations = state.modules
+    .filter((module) => (
+      module.location === 'laboratory'
+        ? state.lab.atmosphere === 'yes'
+        : module.atmosphere === 'yes'
+    ))
+    .map((module) => module.location)
   const starterCellByCrewId = new Map(
     initialState.settlement.constructionCrew.map((position) => [position.crewId, position.cell]),
   )
   const constructionCrew = state.settlement.constructionCrew.map((position, index) => {
-    if (constructionEnvironmentAt(layout, pressure, position.cell) === 'pressurized') {
+    if (
+      (
+        constructionEnvironmentAt(layout, pressure, position.cell) === 'pressurized' &&
+        !semanticEvaCellKeys.has(constructionPointKey(position.cell))
+      ) ||
+      crewHasPhysicalEvaSuit(state, position.crewId)
+    ) {
       return position
     }
     const starterCell = starterCellByCrewId.get(position.crewId)
@@ -593,21 +744,33 @@ const relocateLegacyEstablishmentCrew = (
       moveCredit: 0,
     }
   })
+  const crew = state.crew.map((member, index) => {
+    if (
+      !crewLocationRequiresEva(state, member.id) ||
+      crewHasPhysicalEvaSuit(state, member.id) ||
+      safeLocations.length === 0
+    ) {
+      return member
+    }
+    return {
+      ...member,
+      location: safeLocations[index % safeLocations.length],
+      equippedEvaSuitId: null,
+    }
+  })
 
-  return {
+  const relocatedState = {
     ...state,
+    crew,
     settlement: {
       ...state.settlement,
       constructionCrew,
     },
-  }
-}
-
-const crewLocationRequiresEva = (state: MoonbaseState, crewId: string) => {
-  const member = state.crew.find((candidate) => candidate.id === crewId)
-  if (!member) return true
-  if (member.location === 'laboratory') return state.lab.atmosphere !== 'yes'
-  return state.modules.find((module) => module.location === member.location)?.atmosphere !== 'yes'
+  } as State
+  return {
+    ...relocatedState,
+    alerts: deriveAlertsInState(relocatedState),
+  } as State
 }
 
 const reopenLegacyEvaPlan = (source: MoonbaseState): MoonbaseState => {
@@ -671,9 +834,8 @@ const reopenLegacyEvaPlan = (source: MoonbaseState): MoonbaseState => {
 
 const hardenLegacyEvaState = (
   source: MoonbaseState,
-  initialState: MoonbaseState,
 ): MoonbaseState => {
-  const state = relocateLegacyEstablishmentCrew(structuredClone(source), initialState)
+  const state = structuredClone(source)
   state.crew.forEach((member) => {
     member.equippedEvaSuitId = null
   })
@@ -1054,21 +1216,33 @@ export const useColonyStore = create<MoonbaseStore>()(
         if (nextProjection.valid) {
           const currentPressure = analyzeConstructionPressure(state.settlement.layout)
           const nextPressure = analyzeConstructionPressure(nextProjection.layout)
+          const currentSemanticEvaCellKeys = constructionSemanticEvaCellKeys(
+            state.modules,
+            state.settlement.layout,
+            state.lab.atmosphere,
+          )
+          const nextSemanticEvaCellKeys = constructionSemanticEvaCellKeys(
+            state.modules,
+            nextProjection.layout,
+            state.lab.atmosphere,
+          )
           const deployedCrewIds = new Set(visibleConstructionCrew(state).map((member) => member.id))
           const newlyExposedCrewIds = state.settlement.constructionCrew
             .filter((position) => deployedCrewIds.has(position.crewId))
-            .filter((position) => (
-              constructionEnvironmentAt(
+            .filter((position) => {
+              const key = constructionPointKey(position.cell)
+              const currentlyRequiresEva = constructionEnvironmentAt(
                 state.settlement.layout,
                 currentPressure,
                 position.cell,
-              ) === 'pressurized' &&
-              constructionEnvironmentAt(
+              ) !== 'pressurized' || currentSemanticEvaCellKeys.has(key)
+              const nextRequiresEva = constructionEnvironmentAt(
                 nextProjection.layout,
                 nextPressure,
                 position.cell,
-              ) !== 'pressurized'
-            ))
+              ) !== 'pressurized' || nextSemanticEvaCellKeys.has(key)
+              return !currentlyRequiresEva && nextRequiresEva
+            })
             .map((position) => position.crewId)
           const unprotectedCrewIds = newlyExposedCrewIds.filter((crewId) => (
             !constructionSuitForCrew(state, crewId)
@@ -1348,6 +1522,11 @@ export const useColonyStore = create<MoonbaseStore>()(
         }
         return summary
       },
+      deployPresetMoonbase: (actor = 'manual') => {
+        const [nextState, result] = deployPresetMoonbaseInState(get(), actor)
+        if (result.ok) set(nextState)
+        return result
+      },
       beginOperations: (actor = 'manual') => {
         const [nextState, result] = beginOperationsInState(get(), actor)
         if (result.ok) set(nextState)
@@ -1458,7 +1637,15 @@ export const useColonyStore = create<MoonbaseStore>()(
               constructionStock,
             ).orders
           : normalizedOrders
-        const crewMembers = Array.isArray(state.crew) ? state.crew : initialState.crew
+        const crewMembers = reconciledCrewCollection(state.crew, initialState.crew)
+        const persistedModuleStates = reconciledModuleCollection(
+          state.modules,
+          initialState.modules,
+        )
+        const labState = state.lab && typeof state.lab === 'object'
+          ? { ...initialState.lab, ...state.lab }
+          : initialState.lab
+        const moduleStates = reconcileLaboratoryModuleState(persistedModuleStates, labState)
         const crewIds = new Set(crewMembers.map((member) => member.id))
         const constructionOrders = resetLegacyTravelAssignments(
           dependencySafeOrders,
@@ -1477,9 +1664,14 @@ export const useColonyStore = create<MoonbaseStore>()(
           version >= 7 ? state.settlement.constructionCrew : [],
           constructionStockpile,
           constructionOrders,
+          constructionSemanticEvaCells(moduleStates, layout, labState.atmosphere),
         )
         const migratedState = {
+          ...initialState,
           ...state,
+          crew: crewMembers,
+          modules: moduleStates,
+          lab: labState,
           runSequence,
           runId: version >= RUN_ID_PERSISTENCE_VERSION && isOpaqueRunId(state.runId)
             ? state.runId
@@ -1502,12 +1694,13 @@ export const useColonyStore = create<MoonbaseStore>()(
         } as MoonbaseState
         const evaSafeState = version < EVA_SAFE_PERSISTENCE_VERSION &&
           version >= RUN_ID_PERSISTENCE_VERSION
-          ? hardenLegacyEvaState(migratedState, initialState)
+          ? hardenLegacyEvaState(migratedState)
           : migratedState
-        return version < PHASE_SAFE_PERSISTENCE_VERSION &&
+        const phaseSafeState = version < PHASE_SAFE_PERSISTENCE_VERSION &&
           evaSafeState.settlement.phase !== 'operations'
           ? resetLegacyEstablishmentIncident(evaSafeState, initialState)
           : evaSafeState
+        return relocateUnprotectedConstructionCrew(phaseSafeState, initialState)
       },
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<MoonbaseState>
@@ -1526,9 +1719,15 @@ export const useColonyStore = create<MoonbaseStore>()(
           persisted.settlement.constructionOrders,
           constructionStock,
         ).orders
-        const crewMembers = Array.isArray(persisted.crew)
-          ? persisted.crew
-          : currentState.crew
+        const crewMembers = reconciledCrewCollection(persisted.crew, currentState.crew)
+        const persistedModuleStates = reconciledModuleCollection(
+          persisted.modules,
+          currentState.modules,
+        )
+        const labState = persisted.lab && typeof persisted.lab === 'object'
+          ? { ...currentState.lab, ...persisted.lab }
+          : currentState.lab
+        const moduleStates = reconcileLaboratoryModuleState(persistedModuleStates, labState)
         const crewIds = new Set(crewMembers.map((member) => member.id))
         const repairedOrders = resetLegacyTravelAssignments(
           constructionOrders,
@@ -1545,14 +1744,22 @@ export const useColonyStore = create<MoonbaseStore>()(
           persisted.settlement.constructionCrew,
           constructionStockpile,
           repairedOrders,
+          constructionSemanticEvaCells(
+            moduleStates,
+            persisted.settlement.layout,
+            labState.atmosphere,
+          ),
         )
         const runSequence = normalizedRunSequence(
           persisted.runSequence,
           currentState.runSequence,
         )
-        return {
+        const mergedState = {
           ...currentState,
           ...persisted,
+          crew: crewMembers,
+          modules: moduleStates,
+          lab: labState,
           runSequence,
           runId: isOpaqueRunId(persisted.runId)
             ? persisted.runId
@@ -1577,6 +1784,7 @@ export const useColonyStore = create<MoonbaseStore>()(
             ),
           },
         }
+        return relocateUnprotectedConstructionCrew(mergedState, currentState)
       },
     },
   ),

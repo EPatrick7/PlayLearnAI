@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GameIcon, type GameIconName } from './components/GameIcon'
 import { BackgroundMusicProvider, MusicToggle } from './audio/BackgroundMusic'
 import { AgentLinkPanel } from './components/AgentLinkPanel'
+import { MissionArrival } from './components/MissionArrival'
 import { MoonbaseMap } from './components/MoonbaseMap'
 import type { MapTileInspection } from './components/mapInspection'
 import { PawnSprite, type PawnSpriteVariant } from './components/PawnSprite'
@@ -128,7 +129,11 @@ const completedConstructionMessage = (
   return `${completedLabel} completed${builders.length > 0 ? ` by ${builders.join(' + ')}` : ''}.`
 }
 
-function GameApplication() {
+export const MISSION_ARRIVAL_SESSION_KEY = 'playlearnai-mission-arrival-complete-v1'
+export const MISSION_ARRIVAL_TEST_BYPASS_VALUE = 'test-bypass'
+export const MISSION_ARRIVAL_RESET_PENDING_VALUE = 'reset-pending'
+
+function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
   const colony = useColonyStore()
   const webMcpStatus = useWebMcpTools()
   const [activeTab, setActiveTab] = useState<DockTab>('work')
@@ -582,11 +587,11 @@ function GameApplication() {
         : 'Verify outcome'
 
   const resetRun = () => {
-    if (!window.confirm('Reset this Moonbase run and return to the tiny landing habitat?')) return
-    colony.resetColony()
+    if (!window.confirm('Reset this Moonbase run and replay the Aquila arrival?')) return
     setDrawerOpen(false)
     setSelection(null)
     clearConstructionCompletion()
+    onReplayArrival()
   }
 
   const startNextIncidentRun = () => {
@@ -1348,9 +1353,77 @@ function GameApplication() {
 }
 
 function App() {
+  const hasSavedMission = useColonyStore((state) => state.settlement.phase === 'operations')
+  const [replayPending, setReplayPending] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return window.sessionStorage.getItem(MISSION_ARRIVAL_SESSION_KEY) ===
+        MISSION_ARRIVAL_RESET_PENDING_VALUE
+    } catch {
+      return false
+    }
+  })
+  const [arrivalComplete, setArrivalComplete] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      const savedArrival = window.sessionStorage.getItem(MISSION_ARRIVAL_SESSION_KEY)
+      return (savedArrival === 'complete' && hasSavedMission) ||
+        (savedArrival === MISSION_ARRIVAL_TEST_BYPASS_VALUE && import.meta.env.MODE === 'test')
+    } catch {
+      return false
+    }
+  })
+
+  const completeArrival = useCallback(() => {
+    try {
+      window.sessionStorage.setItem(MISSION_ARRIVAL_SESSION_KEY, 'complete')
+    } catch {
+      // A private or embedded browser can deny session storage; the in-memory gate still works.
+    }
+    setReplayPending(false)
+    setArrivalComplete(true)
+  }, [])
+
+  const replayArrival = useCallback(() => {
+    try {
+      window.sessionStorage.setItem(
+        MISSION_ARRIVAL_SESSION_KEY,
+        MISSION_ARRIVAL_RESET_PENDING_VALUE,
+      )
+    } catch {
+      // Keep the replay available in memory even when storage is unavailable.
+    }
+    setReplayPending(true)
+    setArrivalComplete(false)
+  }, [])
+
+  const prepareNewMission = useCallback(() => {
+    useColonyStore.getState().resetColony()
+    const result = useColonyStore.getState().deployPresetMoonbase()
+    if (!result.ok) {
+      throw new Error(result.error ?? `arrival setup returned ${result.code}`)
+    }
+    try {
+      // The mission is fully installed before the non-blocking cinematic runs.
+      // A refresh during that sequence should resume operations, not reset again.
+      window.sessionStorage.setItem(MISSION_ARRIVAL_SESSION_KEY, 'complete')
+    } catch {
+      // The in-memory cutscene can still complete when session storage is unavailable.
+    }
+    setReplayPending(false)
+  }, [])
+
   return (
     <BackgroundMusicProvider>
-      <GameApplication />
+      {arrivalComplete ? (
+        <GameApplication onReplayArrival={replayArrival} />
+      ) : (
+        <MissionArrival
+          hasSavedMission={hasSavedMission && !replayPending}
+          onComplete={completeArrival}
+          onPrepareNewMission={prepareNewMission}
+        />
+      )}
     </BackgroundMusicProvider>
   )
 }

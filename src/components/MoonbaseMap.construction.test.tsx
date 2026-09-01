@@ -9,6 +9,7 @@ import {
   lunarTerrainFeatures,
 } from '../game/lunarTerrain'
 import { createInitialState } from '../game/seed'
+import { deployPresetMoonbase } from '../game/settlement'
 import { MoonbaseMap, type MoonbaseMapProps } from './MoonbaseMap'
 
 const wallCell = { x: 17, y: 12 }
@@ -235,6 +236,13 @@ describe('lunar terrain generation', () => {
 })
 
 describe('MoonbaseMap live construction layer', () => {
+  it('keeps the landing pad artwork visible with the freeform operations layer', () => {
+    const { container } = renderMap()
+
+    expect(container.querySelector('.module-tile-group-landing_pad')).toBeInTheDocument()
+    expect(container.querySelectorAll('[data-tile-kind="landing-pad"]')).not.toHaveLength(0)
+  })
+
   it('keeps seeded terrain stable and separate from the 24 by 18 inspection grid', () => {
     const view = renderMap({ terrainSeed: 240826 })
     const terrain = () => view.container.querySelector<HTMLElement>('.lunar-terrain')
@@ -378,6 +386,98 @@ describe('MoonbaseMap live construction layer', () => {
     expect(builder).not.toHaveClass('crew-exposed')
     expect(builder.querySelector('[data-pawn-suited="true"]')).toBeInTheDocument()
     expect(builder.querySelector('.operations-eva-badge')).toHaveTextContent('EVA')
+  })
+
+  it('does not use a stale construction coordinate to expose an idle indoor colonist', () => {
+    const state = createInitialState()
+    const amina = state.crew[0]
+    renderMap({
+      crew: [amina],
+      constructionCrew: [{
+        crewId: amina.id,
+        cell: wallCell,
+        moveCredit: 0,
+      }],
+    })
+
+    const idleCrew = screen.getByRole('button', { name: /select amina okafor/i })
+    expect(idleCrew).toHaveAttribute('data-crew-breathing', 'room')
+    expect(idleCrew).not.toHaveClass('crew-exposed')
+    expect(idleCrew.querySelector('.operations-exposure-badge')).not.toBeInTheDocument()
+  })
+
+  it('keeps preset crew at their safe handoff cells after arrival', () => {
+    const [deployed] = deployPresetMoonbase(createInitialState())
+    renderMap({
+      modules: deployed.modules,
+      crew: deployed.crew,
+      equipment: deployed.equipment,
+      workOrders: deployed.workOrders,
+      plan: deployed.operationsPlan,
+      constructionLayout: deployed.settlement.layout,
+      constructionCrew: deployed.settlement.constructionCrew,
+    })
+
+    deployed.settlement.constructionCrew.forEach((position) => {
+      const member = deployed.crew.find((candidate) => candidate.id === position.crewId)!
+      const marker = screen.getByRole('button', {
+        name: new RegExp(`select ${member.name}`, 'i'),
+      })
+      expect(marker).toHaveAttribute('data-grid-x', String(position.cell.x))
+      expect(marker).toHaveAttribute('data-grid-y', String(position.cell.y))
+      expect(marker).toHaveAttribute('data-crew-breathing', 'room')
+    })
+  })
+
+  it('does not reuse a preset handoff cell after semantic crew movement', () => {
+    const [deployed] = deployPresetMoonbase(createInitialState())
+    const amina = deployed.crew[0]
+    const stalePosition = deployed.settlement.constructionCrew.find(
+      (position) => position.crewId === amina.id,
+    )!
+    const movedCrew = deployed.crew.map((member) => (
+      member.id === amina.id ? { ...member, location: 'airlock' as const } : member
+    ))
+    renderMap({
+      modules: deployed.modules,
+      crew: movedCrew,
+      equipment: deployed.equipment,
+      workOrders: deployed.workOrders,
+      plan: deployed.operationsPlan,
+      constructionLayout: deployed.settlement.layout,
+      constructionCrew: deployed.settlement.constructionCrew,
+    })
+
+    const marker = screen.getByRole('button', { name: /select amina okafor/i })
+    expect([marker.getAttribute('data-grid-x'), marker.getAttribute('data-grid-y')]).not.toEqual([
+      String(stalePosition.cell.x),
+      String(stalePosition.cell.y),
+    ])
+    expect(marker).toHaveAttribute('data-crew-breathing', 'room')
+  })
+
+  it('marks an idle corridor colonist unsafe when a breached lab vents the room', () => {
+    const [deployed] = deployPresetMoonbase(createInitialState())
+    const layout = {
+      ...deployed.settlement.layout,
+      boundaries: deployed.settlement.layout.boundaries.filter(
+        (boundary) => boundary.x !== 16 || boundary.y !== 8,
+      ),
+    }
+    const amina = { ...deployed.crew[0], location: 'corridor' as const }
+    renderMap({
+      modules: deployed.modules,
+      crew: [amina],
+      equipment: [],
+      workOrders: [],
+      plan: deployed.operationsPlan,
+      constructionLayout: layout,
+      constructionCrew: [{ crewId: amina.id, cell: { x: 13, y: 9 }, moveCredit: 0 }],
+    })
+
+    const marker = screen.getByRole('button', { name: /select amina okafor/i })
+    expect(marker).toHaveAttribute('data-crew-breathing', 'unsafe')
+    expect(marker).toHaveClass('crew-exposed')
   })
 
   it('keeps legacy callers unchanged when construction simulation props are omitted', () => {

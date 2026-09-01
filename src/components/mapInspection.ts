@@ -97,6 +97,8 @@ export interface BuildMapInspectionInput {
   workOrders: WorkOrder[]
   entityCells: MapEntityCells
   constructionLayout?: ConstructionLayout | null
+  /** Live semantic vacuum cells inside otherwise enclosed construction rooms. */
+  evaRequiredCells?: readonly GridPoint[]
   /**
    * Construction designations that should be inspectable on the map. Complete
    * orders are intentionally ignored because their completed target is already
@@ -354,6 +356,7 @@ export const buildMapInspection = ({
   workOrders,
   entityCells,
   constructionLayout = null,
+  evaRequiredCells = [],
   constructionOrders = [],
   constructionPaused = false,
   constructionCrewNames = new Map<string, string>(),
@@ -363,6 +366,7 @@ export const buildMapInspection = ({
     ? analyzeConstructionPressure(constructionLayout)
     : null
   const rooms = pressureTopology?.rooms ?? []
+  const evaRequiredCellKeys = new Set(evaRequiredCells.map(pointKey))
   const roomByCell = new Map(
     rooms.flatMap((room) => room.cells.map((cell) => [pointKey(cell), room] as const)),
   )
@@ -373,8 +377,14 @@ export const buildMapInspection = ({
       const cell = { x, y }
       const module = moduleAtCell(modules, cell)
       const room = roomByCell.get(pointKey(cell)) ?? null
+      const pressureModule = pressureModuleAtCell(modules, cell) ?? module
+      const exteriorModule = module?.type === 'solar_battery_skid' || module?.type === 'landing_pad'
+        ? module
+        : null
       const roomAtmosphere = room
-        ? pressureModuleAtCell(modules, cell)?.atmosphere ?? (modules.length === 0 ? 'yes' : 'no')
+        ? evaRequiredCellKeys.has(pointKey(cell))
+          ? 'no'
+          : pressureModule?.atmosphere ?? 'yes'
         : null
       const surface = constructionLayout
         ? room
@@ -395,11 +405,13 @@ export const buildMapInspection = ({
                   surfaceLabel: 'Vacuum floor',
                   surfaceDetail: 'Unpressurized player-built room',
                 }
-          : {
-              surfaceKind: 'terrain' as const,
-              surfaceLabel: 'Lunar regolith',
-              surfaceDetail: 'Exterior surveyed ground',
-            }
+          : exteriorModule
+            ? legacySurface(exteriorModule, cell)
+            : {
+                surfaceKind: 'terrain' as const,
+                surfaceLabel: 'Lunar regolith',
+                surfaceDetail: 'Exterior surveyed ground',
+              }
         : module
           ? legacySurface(module, cell)
           : {
@@ -417,7 +429,9 @@ export const buildMapInspection = ({
         roomArea: room?.area ?? null,
         moduleId: module?.id ?? null,
         moduleName: module?.name ?? null,
-        atmosphere: room ? roomAtmosphere ?? 'no' : module?.atmosphere ?? 'exterior',
+        atmosphere: room
+          ? roomAtmosphere ?? 'no'
+          : exteriorModule ? 'exterior' : module?.atmosphere ?? 'exterior',
         contents: [],
         focusedItem: null,
       })

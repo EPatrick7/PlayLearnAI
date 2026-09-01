@@ -1,7 +1,11 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import App from './App'
+import App, {
+  MISSION_ARRIVAL_SESSION_KEY,
+  MISSION_ARRIVAL_RESET_PENDING_VALUE,
+  MISSION_ARRIVAL_TEST_BYPASS_VALUE,
+} from './App'
 import {
   detectRooms,
   getWorkstationCells,
@@ -256,11 +260,64 @@ const startOperations = () => {
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
+  sessionStorage.setItem(MISSION_ARRIVAL_SESSION_KEY, MISSION_ARRIVAL_TEST_BYPASS_VALUE)
   useColonyStore.getState().resetColony()
 })
 
 afterEach(() => {
   cleanup()
+})
+
+describe('mission arrival', () => {
+  it('does not trust a stale completed-arrival bit when only a landing state exists', () => {
+    sessionStorage.setItem(MISSION_ARRIVAL_SESSION_KEY, 'complete')
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: /land safely.*build deliberately/i })).toBeVisible()
+    expect(screen.queryByRole('group', { name: /freeform construction grid/i }))
+      .not.toBeInTheDocument()
+  })
+
+  it('waits for the player, then installs the preset base before opening operations', async () => {
+    sessionStorage.removeItem(MISSION_ARRIVAL_SESSION_KEY)
+    const staleLanding = useColonyStore.getState()
+    useColonyStore.setState({
+      worldRevision: 99,
+      reserves: { ...staleLanding.reserves, constructionStock: 0 },
+      settlement: {
+        ...staleLanding.settlement,
+        constructionSequence: 99,
+      },
+    })
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: /land safely.*build deliberately/i })).toBeVisible()
+    expect(useColonyStore.getState().settlement.phase).toBe('landing')
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /start landing/i }))
+      await Promise.resolve()
+    })
+
+    expect(useColonyStore.getState().settlement.phase).toBe('operations')
+    expect(useColonyStore.getState()).toMatchObject({
+      worldRevision: createInitialState().worldRevision + 1,
+      reserves: { constructionStock: createInitialState().reserves.constructionStock },
+      settlement: { constructionOrders: [], constructionSequence: 1 },
+    })
+    const preparedRunSequence = useColonyStore.getState().runSequence
+    expect(sessionStorage.getItem(MISSION_ARRIVAL_SESSION_KEY)).toBe('complete')
+
+    cleanup()
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('group', { name: /6 player-built rooms/i })).toBeVisible()
+    })
+    expect(useColonyStore.getState().runSequence).toBe(preparedRunSequence)
+    expect(sessionStorage.getItem(MISSION_ARRIVAL_SESSION_KEY)).toBe('complete')
+  })
 })
 
 describe('freeform settlement builder', () => {
@@ -2072,7 +2129,7 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('button', { name: 'Compare crew and gear' })).toBeVisible()
   })
 
-  it('requires confirmation before resetting an active run', () => {
+  it('requires confirmation before resetting an active run', async () => {
     startOperations()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     try {
@@ -2081,14 +2138,30 @@ describe('freeform settlement builder', () => {
       })
       fireEvent.click(reset)
       expect(confirm).toHaveBeenCalledWith(
-        'Reset this Moonbase run and return to the tiny landing habitat?',
+        'Reset this Moonbase run and replay the Aquila arrival?',
       )
       expect(useColonyStore.getState().settlement.phase).toBe('operations')
 
       confirm.mockReturnValue(true)
+      const runSequenceBeforeReset = useColonyStore.getState().runSequence
       fireEvent.click(reset)
-      expect(useColonyStore.getState().settlement.phase).toBe('landing')
-      expect(screen.getByRole('group', { name: /freeform construction grid/i })).toBeVisible()
+      expect(useColonyStore.getState().settlement.phase).toBe('operations')
+      expect(useColonyStore.getState().runSequence).toBe(runSequenceBeforeReset)
+      expect(screen.getByRole('heading', { name: /land safely.*build deliberately/i })).toBeVisible()
+      expect(sessionStorage.getItem(MISSION_ARRIVAL_SESSION_KEY))
+        .toBe(MISSION_ARRIVAL_RESET_PENDING_VALUE)
+
+      cleanup()
+      render(<App />)
+      expect(screen.queryByRole('button', { name: /resume saved mission/i }))
+        .not.toBeInTheDocument()
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /start landing/i }))
+        await Promise.resolve()
+      })
+      expect(useColonyStore.getState().settlement.phase).toBe('operations')
+      expect(useColonyStore.getState().runSequence).toBe(runSequenceBeforeReset + 1)
     } finally {
       confirm.mockRestore()
     }

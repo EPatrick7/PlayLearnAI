@@ -37,6 +37,7 @@ import {
   previewConstructionWorkerRoute,
   type RoutableConstructionOrder,
 } from '../game/constructionWorkerRouting'
+import { constructionSemanticEvaCells } from '../game/constructionHazards'
 import { findConstructionPath } from '../game/constructionPathfinding'
 import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
@@ -482,6 +483,11 @@ export function SettlementBuilder({
             : readyForShift
               ? 'ready'
               : 'building'
+  const semanticEvaCells = useMemo(() => constructionSemanticEvaCells(
+    colony.modules,
+    layout,
+    colony.lab.atmosphere,
+  ), [colony.lab.atmosphere, colony.modules, layout])
   const inspectionByCell = useMemo(() => buildMapInspection({
     width: layout.width,
     height: layout.height,
@@ -495,6 +501,7 @@ export function SettlementBuilder({
       work: new Map(),
     },
     constructionLayout: layout,
+    evaRequiredCells: semanticEvaCells,
     constructionOrders,
     constructionPaused: simulationSpeed === 0,
     constructionCrewNames: new Map(colony.crew.map((member) => [member.id, member.name])),
@@ -513,6 +520,7 @@ export function SettlementBuilder({
     crewCells,
     layout,
     reservedStock,
+    semanticEvaCells,
     simulationSpeed,
     visibleCrew,
   ])
@@ -668,6 +676,7 @@ export function SettlementBuilder({
             stockpile: colony.settlement.constructionStockpile,
             crewCell,
             hasEvaSuit: canUseEvaSuit,
+            evaRequiredCells: semanticEvaCells,
           })
         : null
       const unavailable = terminalReason
@@ -726,6 +735,7 @@ export function SettlementBuilder({
     constructionOrders,
     crewCells,
     layout,
+    semanticEvaCells,
     visibleCrew,
   ])
   const selectedRemovalQueued = Boolean(selectedTile && selectedItem && constructionOrders.some((order) => {
@@ -1517,6 +1527,7 @@ export function SettlementBuilder({
             constructionStockpile={colony.settlement.constructionStockpile}
             crew={visibleCrew}
             crewCells={crewCells}
+            evaRequiredCells={semanticEvaCells}
             focusTarget={mapFocusTarget}
             inspectionByCell={inspectionByCell}
             layout={layout}

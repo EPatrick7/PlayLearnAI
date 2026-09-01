@@ -11,6 +11,8 @@ import {
   type ConstructionLayout,
   type GridPoint,
 } from '../game/construction'
+import { constructionSemanticEvaCells } from '../game/constructionHazards'
+import { isConstructionCellWalkable } from '../game/constructionPathfinding'
 import {
   WORKSTATION_SPECS,
   type WorkstationKind,
@@ -493,11 +495,41 @@ export function MoonbaseMap({
       constructionAssignmentByCrewId.set(order.assignedCrewId, order)
     }
   })
+  const constructionPressureTopology = constructionLayout
+    ? analyzeConstructionPressure(constructionLayout)
+    : null
   const liveConstructionCrewCells = new Map<string, GridPoint>()
+  const semanticEvaCells = constructionLayout
+    ? constructionSemanticEvaCells(modules, constructionLayout)
+    : []
+  const semanticEvaCellKeys = new Set(
+    semanticEvaCells.map((cell) => `${cell.x}:${cell.y}`),
+  )
+  const usesPresetCrewDeployment = Boolean(
+    constructionLayout?.workstations.some((workstation) => workstation.id === 'preset-life-support'),
+  )
   if (constructionLayout) {
     constructionCrew.forEach((position) => {
+      const member = crew.find((candidate) => candidate.id === position.crewId)
+      const semanticModule = member ? moduleAt(member.location) : null
+      const matchesSemanticLocation = Boolean(semanticModule && (
+        position.cell.x >= semanticModule.position.x &&
+        position.cell.x < semanticModule.position.x + semanticModule.position.width &&
+        position.cell.y >= semanticModule.position.y &&
+        position.cell.y < semanticModule.position.y + semanticModule.position.height
+      ))
+      const safePresetPosition = usesPresetCrewDeployment &&
+        constructionPressureTopology &&
+        matchesSemanticLocation &&
+        isConstructionCellWalkable(constructionLayout, position.cell) &&
+        !constructionCellRequiresEva(
+          constructionLayout,
+          constructionPressureTopology,
+          position.cell,
+        ) &&
+        !semanticEvaCellKeys.has(`${position.cell.x}:${position.cell.y}`)
       if (
-        constructionAssignmentByCrewId.has(position.crewId)
+        (constructionAssignmentByCrewId.has(position.crewId) || safePresetPosition)
         && isInConstructionBounds(position.cell, constructionLayout)
       ) {
         liveConstructionCrewCells.set(position.crewId, { ...position.cell })
@@ -527,12 +559,12 @@ export function MoonbaseMap({
       key: string,
       location: LocationId,
       preferredOffset: number,
+      preferredCells = getModuleWalkableCells(moduleAt(location)),
     ) => {
-      const preferred = getModuleWalkableCells(moduleAt(location))
-      const offset = preferred.length > 0 ? preferredOffset % preferred.length : 0
+      const offset = preferredCells.length > 0 ? preferredOffset % preferredCells.length : 0
       const candidates = [
-        ...preferred.slice(offset),
-        ...preferred.slice(0, offset),
+        ...preferredCells.slice(offset),
+        ...preferredCells.slice(0, offset),
         ...fallbackCells,
       ]
       const seen = new Set<string>()
@@ -550,7 +582,26 @@ export function MoonbaseMap({
     crew.forEach((member, index) => {
       const liveCell = liveConstructionCrewCells.get(member.id)
       if (liveCell) customMarkerCells.set(`crew:${member.id}`, liveCell)
-      else allocateMarker(`crew:${member.id}`, member.location, index)
+      else {
+        const moduleCells = getModuleWalkableCells(moduleAt(member.location))
+        const breathableModuleCells = constructionPressureTopology
+          ? moduleCells.filter((cell) => (
+              !constructionCellRequiresEva(
+                constructionLayout,
+                constructionPressureTopology,
+                cell,
+              ) && !semanticEvaCellKeys.has(`${cell.x}:${cell.y}`)
+            ))
+          : []
+        allocateMarker(
+          `crew:${member.id}`,
+          member.location,
+          index,
+          member.equippedEvaSuitId || moduleAt(member.location).atmosphere !== 'yes'
+            ? moduleCells
+            : breathableModuleCells.length > 0 ? breathableModuleCells : moduleCells,
+        )
+      }
     })
     equipment.forEach((item, index) => allocateMarker(
       `equipment:${item.id}`,
@@ -628,6 +679,7 @@ export function MoonbaseMap({
       work: workCells,
     },
     constructionLayout,
+    evaRequiredCells: semanticEvaCells,
     constructionOrders,
     constructionPaused,
     constructionCrewNames: new Map(crew.map((member) => [member.id, member.name])),
@@ -707,9 +759,6 @@ export function MoonbaseMap({
   } : null
   const constructionPlanningLayout = constructionLayout
     ? projectConstructionOrders(constructionLayout, constructionOrders).layout
-    : null
-  const constructionPressureTopology = constructionLayout
-    ? analyzeConstructionPressure(constructionLayout)
     : null
   const placementSummary = buildingLabel
     ? ` ${compatibleBuildSites.length} compatible build sockets.`
@@ -904,6 +953,18 @@ export function MoonbaseMap({
         />
       ))}
 
+      {constructionLayout && modules
+        .filter((module) => module.type === 'landing_pad')
+        .map((module) => (
+          <ModuleTilemap
+            key={`${module.id}-exterior-tilemap`}
+            module={module}
+            modules={modules}
+            planned={plannedLocations.has(module.location)}
+            selected={selectedModuleId === module.id}
+          />
+        ))}
+
       {inspectableModules.map((module) => {
         const exterior = isExterior(module)
         const planned = plannedLocations.has(module.location)
@@ -1096,7 +1157,10 @@ export function MoonbaseMap({
         const requiresEva = Boolean(
           module.atmosphere !== 'yes' ||
           (cell && constructionLayout && constructionPressureTopology &&
-            constructionCellRequiresEva(constructionLayout, constructionPressureTopology, cell)),
+            (
+              constructionCellRequiresEva(constructionLayout, constructionPressureTopology, cell) ||
+              semanticEvaCellKeys.has(`${cell.x}:${cell.y}`)
+            )),
         )
         const suited = Boolean(member.equippedEvaSuitId)
         const exposed = requiresEva && !suited

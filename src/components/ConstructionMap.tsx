@@ -73,6 +73,7 @@ interface ConstructionMapProps {
   constructionStockpile?: GridPoint | null
   crew?: readonly CrewMember[]
   crewCells?: ReadonlyMap<string, GridPoint>
+  evaRequiredCells?: readonly GridPoint[]
   selectedTool: ConstructionTool | null
   toolActivationId?: number
   rotation: WorkstationRotation
@@ -254,6 +255,7 @@ export function ConstructionMap({
   constructionStockpile = null,
   crew = [],
   crewCells = new Map(),
+  evaRequiredCells = [],
   selectedTool,
   toolActivationId = 0,
   rotation,
@@ -325,6 +327,10 @@ export function ConstructionMap({
     (cell) => (overlapCounts.get(keyFor(cell)) ?? 0) > 1,
   ) ?? null
   const pressureTopology = useMemo(() => analyzeConstructionPressure(layout), [layout])
+  const evaRequiredCellKeys = useMemo(
+    () => new Set(evaRequiredCells.map(keyFor)),
+    [evaRequiredCells],
+  )
   const plannedPressureTopology = useMemo(
     () => analyzeConstructionPressure(planningLayout),
     [planningLayout],
@@ -1788,7 +1794,8 @@ export function ConstructionMap({
           const showWorkerTask = Boolean(order && (workerActive || order.block))
           const cell = crewCells.get(member.id)
           if (!cell) return null
-          const requiresEva = constructionCellRequiresEva(layout, pressureTopology, cell)
+          const requiresEva = constructionCellRequiresEva(layout, pressureTopology, cell) ||
+            evaRequiredCellKeys.has(keyFor(cell))
           const suited = Boolean(member.equippedEvaSuitId)
           const exposed = requiresEva && !suited
           const name = member.name

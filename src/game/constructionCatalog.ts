@@ -171,5 +171,120 @@ export const createStarterConstruction = (): ConstructionLayout => ({
   workstations: starterWorkstations(),
 })
 
+const presetBoundaries = (): BoundaryCell[] => {
+  const cells = new Map<string, BoundaryCell>()
+  const place = (x: number, y: number, kind: BoundaryKind = 'wall') => {
+    const key = `${x}:${y}`
+    const current = cells.get(key)
+    cells.set(key, {
+      x,
+      y,
+      kind: current?.kind === 'door' || kind === 'door' ? 'door' : 'wall',
+    })
+  }
+  const shell = (
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+    doors: readonly GridDoor[] = [],
+  ) => {
+    for (let x = left; x <= right; x += 1) {
+      place(x, top)
+      place(x, bottom)
+    }
+    for (let y = top; y <= bottom; y += 1) {
+      place(left, y)
+      place(right, y)
+    }
+    doors.forEach((door) => place(door.x, door.y, 'door'))
+  }
+
+  // A six-zone relay base: habitat, central spine, life support, laboratory,
+  // stores, and a dedicated airlock. Shared shell tiles become pressure doors.
+  shell(1, 6, 6, 12, [{ x: 6, y: 9 }])
+  shell(6, 8, 19, 10, [{ x: 6, y: 9 }])
+  shell(8, 3, 12, 8, [{ x: 10, y: 8 }])
+  shell(14, 3, 18, 8, [{ x: 16, y: 8 }])
+  shell(8, 10, 12, 15, [{ x: 10, y: 10 }])
+  shell(14, 10, 18, 15, [
+    { x: 16, y: 10 },
+    { x: 16, y: 15 },
+  ])
+
+  return [...cells.values()].sort((left, right) => left.y - right.y || left.x - right.x)
+}
+
+interface GridDoor {
+  x: number
+  y: number
+}
+
+const presetWorkstations = (): WorkstationPlacement[] => [
+  ...[
+    { id: 'preset-bunk-amina', x: 2, y: 7 },
+    { id: 'preset-bunk-mateo', x: 3, y: 7 },
+    { id: 'preset-bunk-soo-jin', x: 4, y: 7 },
+    { id: 'preset-bunk-leila', x: 2, y: 10 },
+    { id: 'preset-bunk-jonah', x: 3, y: 10 },
+    { id: 'preset-bunk-nia', x: 4, y: 10 },
+  ].map(({ id, x, y }) => ({
+    id,
+    type: 'bed' as const,
+    label: 'Crew bunk',
+    origin: { x, y },
+    size: { width: 1, height: 2 },
+    rotation: 0 as const,
+  })),
+  {
+    id: 'preset-life-support',
+    type: 'life-support',
+    label: 'Shackleton ECLSS',
+    origin: { x: 9, y: 4 },
+    size: { width: 2, height: 2 },
+    rotation: 0,
+  },
+  {
+    id: 'preset-research-bench',
+    type: 'research-bench',
+    label: 'Kepler research bench',
+    origin: { x: 15, y: 4 },
+    size: { width: 3, height: 2 },
+    rotation: 0,
+  },
+  {
+    id: 'preset-storage-rack',
+    type: 'storage-rack',
+    label: 'Mission stores',
+    origin: { x: 9, y: 12 },
+    size: { width: 2, height: 2 },
+    rotation: 0,
+  },
+  {
+    id: 'preset-solar-array',
+    type: 'solar-array',
+    label: 'East ridge solar array',
+    origin: { x: 20, y: 3 },
+    size: { width: 3, height: 2 },
+    rotation: 0,
+  },
+  {
+    id: 'preset-battery-bank',
+    type: 'battery-bank',
+    label: 'Surface battery bank',
+    origin: { x: 20, y: 6 },
+    size: { width: 2, height: 1 },
+    rotation: 0,
+  },
+]
+
+/** The pressurized, furnished relay base used after the opening landing. */
+export const createPresetMoonbaseConstruction = (): ConstructionLayout => ({
+  width: 24,
+  height: 18,
+  boundaries: presetBoundaries(),
+  workstations: presetWorkstations(),
+})
+
 export const isWorkstationTool = (tool: ConstructionTool | null): tool is WorkstationKind =>
   Boolean(tool && tool in WORKSTATION_SPECS)
