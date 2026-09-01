@@ -12,6 +12,10 @@ import {
   getWorkstationFootprintSize,
   type ConstructionLayout,
 } from './construction'
+import {
+  analyzeConstructionPressure,
+  constructionEnvironmentAt,
+} from './pressureTopology'
 
 export const buildBlueprints: readonly BuildBlueprint[] = [
   {
@@ -112,13 +116,32 @@ const phaseFor = (state: Pick<MoonbaseState, 'settlement'>): SettlementPhase => 
   return built.has('airlock') ? 'expanding' : 'habitable'
 }
 
-const freeformReadyForOperations = (layout: ConstructionLayout) =>
-  detectRooms(layout).length >= 2 &&
-  layout.workstations.some((workstation) => workstation.type === 'life-support')
+const freeformReadyForOperations = (layout: ConstructionLayout) => {
+  const pressure = analyzeConstructionPressure(layout)
+  return pressure.rooms.length >= 2 &&
+    layout.workstations.some((workstation) => workstation.type === 'life-support') &&
+    pressure.doors.some((door) =>
+      door.role === 'exterior_airlock' && door.roomIds.length === 1,
+    )
+}
+
+const hasOpenConstruction = (state: Pick<MoonbaseState, 'settlement'>) =>
+  state.settlement.constructionOrders.some((order) => order.status !== 'complete')
 
 export const canBeginOperations = (
   state: Pick<MoonbaseState, 'settlement'>,
-) => phaseFor(state) === 'ready' || freeformReadyForOperations(state.settlement.layout)
+) => {
+  if (state.settlement.phase === 'operations') return false
+  if (hasOpenConstruction(state)) return false
+  const pressure = analyzeConstructionPressure(state.settlement.layout)
+  if (!pressure.doors.some((door) => (
+    door.role === 'exterior_airlock' && door.roomIds.length === 1
+  ))) return false
+  if (!state.settlement.constructionCrew.every((position) => (
+    constructionEnvironmentAt(state.settlement.layout, pressure, position.cell) === 'pressurized'
+  ))) return false
+  return phaseFor(state) === 'ready' || freeformReadyForOperations(state.settlement.layout)
+}
 
 const alignOperationsModulesToConstruction = (state: MoonbaseState) => {
   const layout = state.settlement.layout
@@ -346,7 +369,9 @@ export const beginOperations = (
   }
   if (!canBeginOperations(source)) {
     return [source, buildResult(source, 'not_ready', false, {
-      error: 'Enclose a second room with a door and place Life Support before beginning operations.',
+      error: hasOpenConstruction(source)
+        ? 'Finish or cancel all open construction before beginning operations.'
+        : 'Enclose a second room, install Life Support and a working exterior airlock, and bring every colonist inside before beginning operations.',
     })]
   }
 

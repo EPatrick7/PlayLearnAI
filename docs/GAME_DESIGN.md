@@ -835,7 +835,8 @@ The target design is larger than the jam build. The submission is a polished 12�
 - Six crew with four skills—engineering, science, medicine, and operations—and compact health, fatigue, morale, task, and trait state.
 - Eight readable module types: Corridor, Habitat, Life Support, Storage, Laboratory, Airlock, Solar/Battery Skid, and Landing Pad. Only corridors and one habitat extension are placeable in the slice; the other modules can be inspected, prioritized, and repaired.
 - Atmosphere states **Yes / Low / No**, hatch-defined zones, one breach effect, sealing, and repressurization.
-- Six physical equipment objects drawn from EVA suits, engineering kits, medical kits, and one rover. Location, reservation, retrieval, and condition have gameplay consequences.
+- Seven physical equipment objects drawn from three EVA suits, engineering kits, a medical kit, and one rover. Location, reservation, retrieval, and condition have gameplay consequences.
+- Contextual hatch topology: room-to-room pressure doors, room-to-surface airlocks, invalid hatch warnings, and pressure-aware movement that requires one real EVA suit per exposed colonist.
 - Four operational reserves—oxygen, water, food, and construction stock—plus live power generation, demand, and battery charge.
 - One science-rooted production job: microwave sintering of prepared regolith into construction stock.
 - One working research payoff, **Regolith Sintering**, with one active focus and assigned researcher; completing it unlocks the slice's production job. Other target-tree nodes need not function in the slice.

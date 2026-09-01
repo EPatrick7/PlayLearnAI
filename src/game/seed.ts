@@ -8,8 +8,42 @@ import type {
   WorkOrder,
 } from './types'
 import { createStarterConstruction } from './constructionCatalog'
+import {
+  incidentProfileForSeed,
+  normalizeIncidentSeed,
+  type IncidentProfile,
+} from './incidentProfiles'
 
 export const MOONBASE_SEED = 240826
+
+const normalizeRunSequence = (runSequence: number) => (
+  Number.isSafeInteger(runSequence) && runSequence > 0 ? runSequence : 1
+)
+
+let fallbackRunIdSequence = 0
+
+const opaqueRunToken = () => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID().replaceAll('-', '')
+  }
+
+  const bytes = new Uint8Array(16)
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(bytes)
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  }
+
+  fallbackRunIdSequence += 1
+  return `${Date.now().toString(36)}${fallbackRunIdSequence.toString(36)}${Math.random().toString(36).slice(2)}`
+}
+
+export const createRunId = () => `moonbase-run-${opaqueRunToken()}`
+
+export const isOpaqueRunId = (value: unknown): value is string => (
+  typeof value === 'string' && /^moonbase-run-[a-z0-9]{16,}$/i.test(value)
+)
+
+export const nextIncidentSeed = (seed: number) => normalizeIncidentSeed(seed) + 1
 
 export const INITIAL_BUILD_SITES: BuildSiteState[] = [
   {
@@ -194,6 +228,7 @@ const crew: CrewMember[] = [
     morale: 88,
     location: 'habitat',
     taskId: null,
+    equippedEvaSuitId: null,
     skills: { engineering: 5, science: 4, medicine: 3, operations: 9 },
   },
   {
@@ -207,6 +242,7 @@ const crew: CrewMember[] = [
     morale: 82,
     location: 'airlock',
     taskId: null,
+    equippedEvaSuitId: null,
     skills: { engineering: 9, science: 3, medicine: 2, operations: 6 },
   },
   {
@@ -220,6 +256,7 @@ const crew: CrewMember[] = [
     morale: 85,
     location: 'life-support',
     taskId: null,
+    equippedEvaSuitId: null,
     skills: { engineering: 8, science: 5, medicine: 4, operations: 7 },
   },
   {
@@ -233,6 +270,7 @@ const crew: CrewMember[] = [
     morale: 90,
     location: 'habitat',
     taskId: null,
+    equippedEvaSuitId: null,
     skills: { engineering: 4, science: 10, medicine: 3, operations: 5 },
   },
   {
@@ -246,6 +284,7 @@ const crew: CrewMember[] = [
     morale: 84,
     location: 'habitat',
     taskId: null,
+    equippedEvaSuitId: null,
     skills: { engineering: 2, science: 5, medicine: 10, operations: 5 },
   },
   {
@@ -259,6 +298,7 @@ const crew: CrewMember[] = [
     morale: 86,
     location: 'storage',
     taskId: null,
+    equippedEvaSuitId: null,
     skills: { engineering: 6, science: 3, medicine: 3, operations: 9 },
   },
 ]
@@ -281,6 +321,16 @@ const equipment: Equipment[] = [
     status: 'available',
     location: 'storage',
     condition: 86,
+    reservedForWorkOrderId: null,
+    assignedCrewId: null,
+  },
+  {
+    id: 'equipment-eva-03',
+    name: 'EVA Suit 03',
+    type: 'eva_suit',
+    status: 'available',
+    location: 'life-support',
+    condition: 92,
     reservedForWorkOrderId: null,
     assignedCrewId: null,
   },
@@ -352,14 +402,14 @@ const workOrders: WorkOrder[] = [
     id: 'work-repressurize-lab',
     type: 'repressurize_lab',
     label: 'Repressurize laboratory',
-    detail: 'Pressure-test the repair and restore the zone from vacuum through low pressure to a safe atmosphere.',
+    detail: 'Enter in an EVA suit, pressure-test the repair, and restore the zone from vacuum through low pressure to a safe atmosphere.',
     location: 'laboratory',
     status: 'blocked',
     priority: 5,
     requiredSkill: 'engineering',
     minimumSkill: 6,
-    requiredEquipment: ['engineering_kit'],
-    hazard: 'indoor',
+    requiredEquipment: ['eva_suit', 'engineering_kit'],
+    hazard: 'vacuum',
     prerequisiteIds: ['work-seal-lab'],
     assignedCrewIds: [],
     reservedEquipmentIds: [],
@@ -413,7 +463,11 @@ const workOrders: WorkOrder[] = [
   },
 ]
 
-const initialEvents = (): ActivityEntry[] => [
+const formattedPower = (value: number) => (
+  Number.isInteger(value) ? String(value) : value.toFixed(1)
+)
+
+const initialEvents = (profile: IncidentProfile): ActivityEntry[] => [
   {
     id: 'event-0003',
     elapsedHours: 0,
@@ -423,7 +477,7 @@ const initialEvents = (): ActivityEntry[] => [
     planRevision: 1,
     phase: 'observed',
     actor: 'system',
-    message: 'Dust front ETA 3 hours; projected solar output will fall below live demand.',
+    message: `Dust front ETA ${profile.balance.dustStartsAtHour} hours; projected solar output will fall to ${formattedPower(24 * (1 - profile.balance.dustBaseDeratePercent / 100))} kW against 18 kW demand.`,
     targetIds: ['module-solar-skid'],
   },
   {
@@ -452,9 +506,28 @@ const initialEvents = (): ActivityEntry[] => [
   },
 ]
 
-export const createInitialState = (): MoonbaseState => ({
+export const createInitialState = (
+  seed = MOONBASE_SEED,
+  runSequence = 1,
+): MoonbaseState => {
+  const normalizedSeed = normalizeIncidentSeed(seed)
+  const normalizedRunSequence = normalizeRunSequence(runSequence)
+  const profile = incidentProfileForSeed(normalizedSeed)
+  const profiledEquipment = structuredClone(equipment).map((item) => ({
+    ...item,
+    condition: profile.balance.equipmentCondition[item.id] ?? item.condition,
+  }))
+  const profiledWorkOrders = structuredClone(workOrders).map((order) => ({
+    ...order,
+    durationHours: profile.balance.workDurationHours[order.id] ?? order.durationHours,
+  }))
+  const unmitigatedGeneration = 24 * (1 - profile.balance.dustBaseDeratePercent / 100)
+
+  return {
   baseName: 'Shackleton Relay',
-  seed: MOONBASE_SEED,
+  seed: normalizedSeed,
+  runSequence: normalizedRunSequence,
+  runId: createRunId(),
   missionDay: 1,
   hour: 6,
   elapsedHours: 0,
@@ -463,18 +536,18 @@ export const createInitialState = (): MoonbaseState => ({
   map: { width: 24, height: 18 },
   settlement: {
     phase: 'landing',
-    terrainSeed: MOONBASE_SEED,
+    terrainSeed: normalizedSeed,
     layout: createStarterConstruction(),
     constructionOrders: [],
     constructionSequence: 1,
     constructionSpeed: 1,
     constructionCrew: [
-      { crewId: 'crew-amina-okafor', cell: { x: 9, y: 9 }, moveCredit: 0 },
-      { crewId: 'crew-mateo-alvarez', cell: { x: 8, y: 10 }, moveCredit: 0 },
-      { crewId: 'crew-soo-jin-park', cell: { x: 9, y: 10 }, moveCredit: 0 },
-      { crewId: 'crew-leila-haddad', cell: { x: 8, y: 8 }, moveCredit: 0 },
-      { crewId: 'crew-jonah-reed', cell: { x: 9, y: 8 }, moveCredit: 0 },
-      { crewId: 'crew-nia-kimani', cell: { x: 10, y: 9 }, moveCredit: 0 },
+      { crewId: 'crew-amina-okafor', cell: { x: 6, y: 9 }, moveCredit: 0 },
+      { crewId: 'crew-mateo-alvarez', cell: { x: 6, y: 10 }, moveCredit: 0 },
+      { crewId: 'crew-soo-jin-park', cell: { x: 4, y: 10 }, moveCredit: 0 },
+      { crewId: 'crew-leila-haddad', cell: { x: 5, y: 10 }, moveCredit: 0 },
+      { crewId: 'crew-jonah-reed', cell: { x: 6, y: 9 }, moveCredit: 0 },
+      { crewId: 'crew-nia-kimani', cell: { x: 5, y: 10 }, moveCredit: 0 },
     ],
     constructionStockpile: { x: 8, y: 9 },
     buildSites: structuredClone(INITIAL_BUILD_SITES),
@@ -491,8 +564,8 @@ export const createInitialState = (): MoonbaseState => ({
     recommendedOxygenFloorHours: 12,
   },
   reserves: {
-    oxygenHours: 32,
-    minimumOxygenHours: 32,
+    oxygenHours: profile.balance.oxygenHours,
+    minimumOxygenHours: profile.balance.oxygenHours,
     waterDays: 9.4,
     foodDays: 8.7,
     constructionStock: 14,
@@ -500,8 +573,8 @@ export const createInitialState = (): MoonbaseState => ({
   power: {
     solarGenerationKw: 24,
     demandKw: 18,
-    batteryKwh: 30,
-    batteryCapacityKwh: 40,
+    batteryKwh: profile.balance.batteryKwh,
+    batteryCapacityKwh: profile.balance.batteryCapacityKwh,
     dustDeratePercent: 0,
     status: 'surplus',
   },
@@ -512,17 +585,17 @@ export const createInitialState = (): MoonbaseState => ({
     sealed: false,
   },
   dust: {
-    startsAtHour: 3,
+    startsAtHour: profile.balance.dustStartsAtHour,
     active: false,
     severity: 'moderate',
-    baseDeratePercent: 50,
-    mitigatedDeratePercent: 15,
+    baseDeratePercent: profile.balance.dustBaseDeratePercent,
+    mitigatedDeratePercent: profile.balance.dustMitigatedDeratePercent,
     mitigated: false,
   },
   modules: structuredClone(modules),
   crew: structuredClone(crew),
-  equipment: structuredClone(equipment),
-  workOrders: structuredClone(workOrders),
+  equipment: profiledEquipment,
+  workOrders: profiledWorkOrders,
   research: {
     id: 'research-regolith-sintering',
     title: 'Regolith Sintering',
@@ -542,11 +615,11 @@ export const createInitialState = (): MoonbaseState => ({
     {
       id: 'alert-dust-forecast',
       severity: 'warning',
-      title: 'Dust front in 3 hours',
-      detail: 'Unmitigated solar output will fall to 12 kW against 18 kW base demand.',
+      title: `Dust front in ${profile.balance.dustStartsAtHour} hours`,
+      detail: `Unmitigated solar output will fall to ${formattedPower(unmitigatedGeneration)} kW against 18 kW base demand.`,
     },
   ],
-  events: initialEvents(),
+  events: initialEvents(profile),
   learning: {
     currentPhase: 'ground',
     completedLoops: 0,
@@ -560,14 +633,15 @@ export const createInitialState = (): MoonbaseState => ({
     status: 'draft',
     revision: 1,
     basedOnWorldRevision: 1,
-    objective: null,
+    objective: 'restore_lab_and_research_sintering',
     constraints: { oxygenFloorHours: 12, protectedCrewIds: [] },
     horizonHours: 12,
-    stopCondition: null,
+    stopCondition: { kind: 'objective_complete' },
     actions: [],
     committedAtHour: null,
     baseline: null,
   },
   lastAdvance: null,
   verification: null,
-})
+  }
+}

@@ -1,11 +1,14 @@
 import {
-  detectRooms,
   getWorkstationCells,
   getWorkstationFootprintSize,
   type ConstructionLayout,
   type GridPoint,
 } from '../game/construction'
 import { getBoundaryConnection, getBoundaryDoorAxis } from '../game/boundaryConnections'
+import {
+  analyzeConstructionPressure,
+  constructionDoorConnectionAt,
+} from '../game/pressureTopology'
 import {
   WORKSTATION_SPECS,
   type WorkstationKind,
@@ -356,7 +359,10 @@ export const buildMapInspection = ({
   constructionCrewNames = new Map<string, string>(),
   constructionStockpile = null,
 }: BuildMapInspectionInput): Map<string, MapTileInspection> => {
-  const rooms = constructionLayout ? detectRooms(constructionLayout) : []
+  const pressureTopology = constructionLayout
+    ? analyzeConstructionPressure(constructionLayout)
+    : null
+  const rooms = pressureTopology?.rooms ?? []
   const roomByCell = new Map(
     rooms.flatMap((room) => room.cells.map((cell) => [pointKey(cell), room] as const)),
   )
@@ -368,7 +374,7 @@ export const buildMapInspection = ({
       const module = moduleAtCell(modules, cell)
       const room = roomByCell.get(pointKey(cell)) ?? null
       const roomAtmosphere = room
-        ? pressureModuleAtCell(modules, cell)?.atmosphere ?? 'no'
+        ? pressureModuleAtCell(modules, cell)?.atmosphere ?? (modules.length === 0 ? 'yes' : 'no')
         : null
       const surface = constructionLayout
         ? room
@@ -424,9 +430,20 @@ export const buildMapInspection = ({
       if (!tile) return
       const connection = getBoundaryConnection(constructionLayout, boundary)
       const doorAxis = boundary.kind === 'door' ? getBoundaryDoorAxis(connection.mask) : null
-      const boundaryLabel = boundary.kind === 'door' ? 'Pressure door' : 'Composite wall'
+      const doorRole = boundary.kind === 'door' && pressureTopology
+        ? constructionDoorConnectionAt(pressureTopology, boundary)?.role ?? 'invalid'
+        : null
+      const boundaryLabel = boundary.kind === 'door'
+        ? doorRole === 'pressure_door'
+          ? 'Interior pressure door'
+          : doorRole === 'exterior_airlock' ? 'Exterior airlock' : 'Unsealed hatch'
+        : 'Composite wall'
       const boundaryDetail = boundary.kind === 'door'
-        ? `${titleCase(doorAxis ?? 'horizontal')} pressure seal`
+        ? doorRole === 'pressure_door'
+          ? `${titleCase(doorAxis ?? 'horizontal')} room-to-room pressure seal`
+          : doorRole === 'exterior_airlock'
+            ? `${titleCase(doorAxis ?? 'horizontal')} one-tile suit and pressure cycle`
+            : 'Invalid pressure boundary · connect one room to vacuum or two distinct rooms'
         : `${titleCase(connection.name)} pressure shell`
       addInspectable(tiles, boundary, {
         key: `boundary:${pointKey(boundary)}`,
@@ -437,7 +454,22 @@ export const buildMapInspection = ({
         detail: boundaryDetail,
         icon: boundary.kind === 'door' ? 'door' : 'wall',
         stats: [
-          { label: 'Type', value: boundary.kind === 'door' ? 'Door' : 'Wall' },
+          {
+            label: 'Type',
+            value: boundary.kind === 'door'
+              ? doorRole === 'pressure_door'
+                ? 'Pressure door'
+                : doorRole === 'exterior_airlock' ? 'Exterior airlock' : 'Invalid hatch'
+              : 'Wall',
+          },
+          ...(boundary.kind === 'door'
+            ? [{
+                label: 'Suit',
+                value: doorRole === 'pressure_door'
+                  ? 'Not required'
+                  : doorRole === 'exterior_airlock' ? 'Required outside' : 'Unsafe boundary',
+              }]
+            : []),
           { label: 'Connection', value: titleCase(connection.name) },
           { label: 'Tile', value: `${boundary.x + 1}, ${boundary.y + 1}` },
         ],
@@ -586,6 +618,8 @@ export const buildMapInspection = ({
   crew.forEach((member, memberIndex) => {
     const cell = entityCells.crew.get(member.id)
     if (!cell) return
+    const tile = tiles.get(pointKey(cell))
+    const requiresEva = tile?.atmosphere !== 'yes'
     const constructionAssignment = constructionAssignmentByCrewId.get(member.id)
     const constructionPresentation = constructionAssignment
       ? constructionOrderPresentation(constructionAssignment)
@@ -597,21 +631,28 @@ export const buildMapInspection = ({
       constructionAssignment.materials.carriedByCrewId === member.id
       ? carriedConstructionMaterial(constructionAssignment)
       : 0
+    const suited = Boolean(member.equippedEvaSuitId)
     addInspectable(tiles, cell, {
       key: `crew:${member.id}`,
       kind: 'crew',
       id: member.id,
       label: member.name,
       subtitle: `Colonist · ${constructionActivity ?? titleCase(member.status)}`,
-      detail: constructionPresentation
+      detail: `${constructionPresentation
         ? `${member.role} · ${constructionAssignment?.forcedCrewId === member.id ? 'Manual priority' : constructionActivity}: ${constructionPresentation.label}${carried > 0 ? ` · Carrying ${formatConstructionAmount(carried)} material` : ''}`
-        : member.role,
+        : member.role} · ${suited ? 'Breathing from sealed EVA suit' : requiresEva ? 'WARNING: no breathable atmosphere' : 'Breathing room air'}`,
       icon: 'crew',
-      portrait: crewPawnPresentation(member, memberIndex),
+      portrait: crewPawnPresentation(member, memberIndex, suited),
       stats: [
         { label: 'Health', value: `${Math.round(member.health)}%` },
         { label: 'Fatigue', value: `${Math.round(member.fatigue)}%` },
         { label: 'Role', value: member.role },
+        {
+          label: 'Suit',
+          value: suited
+            ? member.equippedEvaSuitId!
+            : requiresEva ? 'Missing — unsafe' : 'Not required',
+        },
         ...(constructionPresentation
           ? [{
               label: 'Task',

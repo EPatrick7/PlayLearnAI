@@ -581,14 +581,32 @@ button:disabled {
 
 .learning-loop > span {
   position: relative;
-  height: 22px;
+  min-height: 30px;
+  padding: 3px 2px;
   display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
   place-items: center;
+  gap: 3px;
   border: 1px solid var(--line);
   border-radius: 3px;
   color: var(--faint);
   background: rgba(0, 0, 0, 0.18);
   font: 800 9px/1 ui-monospace, monospace;
+}
+
+.learning-loop > span > b {
+  width: 12px;
+  display: grid;
+  place-items: center;
+  font: inherit;
+}
+
+.learning-loop > span > small {
+  overflow: hidden;
+  font: 750 7px/1 ui-monospace, monospace;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
 }
 
 .learning-loop > span.current {
@@ -903,10 +921,8 @@ button:disabled {
 }
 
 .outcome-banner strong {
-  overflow: hidden;
   font: 700 13px/1.25 Georgia, serif;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .outcome-banner button {
@@ -1002,6 +1018,16 @@ button:disabled {
   background: var(--red);
 }
 
+.command-dock button > b.plan-complete-badge {
+  color: #132018;
+  background: var(--mint);
+}
+
+.command-dock button > b.plan-verify-badge {
+  color: #281d0d;
+  background: var(--amber-soft);
+}
+
 .command-sheet {
   position: absolute;
   z-index: 52;
@@ -1009,6 +1035,8 @@ button:disabled {
   bottom: 57px;
   left: 20px;
   height: min(302px, calc(100dvh - 142px));
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border-radius: 8px 8px 0 0;
   opacity: 0;
@@ -1028,8 +1056,10 @@ button:disabled {
 
 .sheet-header {
   height: 50px;
+  min-height: 50px;
   padding: 3px 8px 3px 12px;
   display: flex;
+  flex: 0 0 50px;
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--line);
@@ -1044,10 +1074,19 @@ button:disabled {
   font: 700 13px/1 Georgia, serif;
 }
 
-.sheet-header > span strong {
+.sheet-title {
+  margin: 0;
   overflow: hidden;
+  color: inherit;
+  font: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sheet-title:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--blue-bright);
+  outline-offset: 3px;
 }
 
 .sheet-header > button {
@@ -1079,8 +1118,9 @@ button:disabled {
 
 .sheet-body {
   width: 100%;
-  height: calc(100% - 50px);
+  height: auto;
   min-height: 0;
+  flex: 1 1 auto;
 }
 
 .work-sheet {
@@ -1342,6 +1382,17 @@ button:disabled {
 
 .loadout-card.unqualified:not(.staged) {
   color: #858986;
+}
+
+.loadout-card.unserviceable {
+  border-color: rgba(194, 103, 86, 0.38);
+  color: #a99089;
+  background: rgba(130, 57, 45, 0.08);
+  opacity: 0.78;
+}
+
+.loadout-card.unserviceable small {
+  color: #d58b7d;
 }
 
 .mini-portrait,
@@ -1869,11 +1920,10 @@ button:disabled {
 
 .queue-action p {
   margin: 0;
-  overflow: hidden;
   color: var(--ink-soft);
   font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .queue-action button {
@@ -1928,6 +1978,11 @@ button:disabled {
   display: grid;
   align-content: start;
   gap: 10px;
+}
+
+.execution-card {
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .forecast-card > header {
@@ -2085,7 +2140,10 @@ button:disabled {
 
 .plan-time-action small {
   color: var(--muted);
-  font: 650 7px/1 ui-monospace, monospace;
+  overflow: visible;
+  font: 650 7px/1.2 ui-monospace, monospace;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .plan-time-action:hover:not(:disabled) {
@@ -2115,44 +2173,86 @@ button:disabled {
   min-height: 48px;
 }
 
-.verification-evidence {
-  position: absolute;
-  right: 185px;
-  bottom: 13px;
-  width: 330px;
-  max-height: 120px;
+.verification-details {
+  padding-top: 9px;
   border: 1px solid rgba(139, 197, 165, 0.3);
   border-radius: 5px;
+  background: rgba(0, 0, 0, 0.13);
+  outline: 0;
 }
 
-.verification-evidence > header strong {
-  font: 700 11px/1.2 Georgia, serif;
+.verification-details:focus-visible {
+  box-shadow: 0 0 0 2px rgba(139, 197, 165, 0.38);
 }
 
-.verification-evidence > div {
-  margin-top: 7px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.verification-evidence > div > span {
-  padding: 4px;
-  display: flex;
-  align-items: center;
+.verification-details > header,
+.verification-risks {
+  padding: 0 9px 9px;
+  display: grid;
   gap: 3px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  color: var(--muted);
-  font: 750 7px/1 ui-monospace, monospace;
 }
 
-.verification-evidence > div > span.passed {
+.verification-details > header strong,
+.verification-risks > strong {
+  color: var(--ink-soft);
+  font: 700 11px/1.25 Georgia, serif;
+}
+
+.verification-checks {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.verification-checks article {
+  min-height: 44px;
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.verification-checks article > .game-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.verification-checks article > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.verification-checks article strong {
+  font: 800 8px/1.1 ui-monospace, monospace;
+  text-transform: uppercase;
+}
+
+.verification-checks article small,
+.verification-risks p {
+  margin: 0;
+  color: #aaa9a2;
+  font: 500 9px/1.35 Inter, sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.verification-checks article.passed {
   color: var(--mint);
 }
 
-.verification-evidence > div > span.failed {
+.verification-checks article.failed {
   color: var(--red-soft);
+}
+
+.verification-risks { padding-top: 9px; }
+
+.plan-time-action.plan-next-incident-action {
+  color: var(--mint);
+  border-color: rgba(139, 197, 165, 0.42);
+  background: rgba(139, 197, 165, 0.11);
 }
 
 .log-sheet {
@@ -3588,6 +3688,13 @@ button:disabled {
   background: linear-gradient(rgba(35, 38, 36, 0.16), rgba(13, 16, 15, 0.28));
 }
 
+.operations-map-scroll {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: hidden;
+}
+
 .settlement-map-scroll > .moonbase-map {
   --map-cell-size: min(calc(100vw / 24), calc((100dvh - 62px) / 18));
   inset: auto;
@@ -3598,7 +3705,7 @@ button:disabled {
   transform: translate(-50%, -50%);
 }
 
-.world-stage:not(.settlement-stage) > .moonbase-map {
+.operations-map-scroll > .moonbase-map {
   --map-cell-size: min(calc(100vw / 24), calc((100dvh - 62px) / 18));
   inset: auto;
   left: 50%;
@@ -4077,6 +4184,29 @@ button:disabled {
     height: calc(100dvh - 104px);
   }
 
+  .operations-map-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    touch-action: pan-x;
+  }
+
+  .operations-map-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  .operations-map-scroll > .moonbase-map {
+    --map-cell-size: 40px;
+    position: relative;
+    inset: auto;
+    left: auto;
+    top: 50%;
+    width: calc(var(--map-cell-size) * 24);
+    height: calc(var(--map-cell-size) * 18);
+    transform: translateY(-50%);
+  }
+
   .colonist-strip {
     top: 7px;
     right: 8px;
@@ -4125,9 +4255,26 @@ button:disabled {
     font-size: 12px;
   }
 
-  .incident-card > p,
+  .incident-card > p {
+    margin-bottom: 6px;
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 10px;
+    line-height: 1.3;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
   .learning-loop {
-    display: none;
+    margin-bottom: 6px;
+  }
+
+  .learning-loop > span {
+    min-height: 28px;
+  }
+
+  .learning-loop > span > small {
+    font-size: 6px;
   }
 
   .objective-progress {
@@ -4135,8 +4282,8 @@ button:disabled {
   }
 
   .text-action {
-    min-height: 31px;
-    font-size: 8px;
+    min-height: 36px;
+    font-size: 9px;
   }
 
   .alert-stack {
@@ -4264,6 +4411,7 @@ button:disabled {
     bottom: 57px;
     left: 0;
     height: min(68dvh, 560px);
+    max-height: calc(100% - 65px);
     border-right: 0;
     border-left: 0;
     border-radius: 12px 12px 0 0;
@@ -4274,16 +4422,29 @@ button:disabled {
   }
 
   .sheet-body {
-    height: calc(100% - 50px);
-    overflow: auto;
+    height: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+    touch-action: pan-y;
   }
 
-  .work-sheet,
-  .plan-sheet {
+  .work-sheet {
     display: block;
-    overflow-y: auto;
     background: var(--panel-solid);
   }
+
+  .plan-sheet {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel-solid);
+  }
+
+  .plan-sheet .forecast-card { order: 1; }
+  .plan-sheet .plan-actions { order: 2; }
+  .plan-sheet .brief-controls { order: 3; }
+  .plan-sheet .staged-queue { order: 4; }
 
   .work-sheet > *,
   .plan-sheet > section {
@@ -4311,7 +4472,8 @@ button:disabled {
   }
 
   .loadout-scroll {
-    max-height: 160px;
+    max-height: none;
+    overflow: visible;
   }
 
   .work-sheet-actions {
@@ -4345,6 +4507,7 @@ button:disabled {
   }
 
   .plan-sheet > section {
+    flex: 0 0 auto;
     padding: 13px;
   }
 
@@ -4352,15 +4515,16 @@ button:disabled {
     min-height: 190px !important;
   }
 
+  .staged-queue > div,
+  .issue-list {
+    overflow: visible;
+  }
+
   .forecast-card {
     min-height: 180px !important;
   }
 
-  .verification-evidence {
-    position: static;
-    width: auto;
-    max-height: none;
-  }
+  .execution-card { overflow: visible; }
 
   .log-sheet {
     display: block;
@@ -5123,6 +5287,116 @@ button:disabled {
 
 .colonist-strip + .incident-card { top: 76px; }
 
+.incident-profile-brief {
+  margin: 0 0 8px;
+  padding: 7px 8px;
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(143, 197, 220, 0.2);
+  border-radius: 4px;
+  background: rgba(106, 167, 199, 0.055);
+}
+
+.incident-profile-brief > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.incident-profile-brief > header small {
+  color: #85a9b6;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+}
+
+.incident-profile-brief > header strong {
+  overflow: hidden;
+  color: var(--blue-bright);
+  font: 800 9px/1 ui-monospace, monospace;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.incident-profile-brief > p {
+  margin: 0;
+  color: #c5c5bd;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.incident-profile-brief .incident-profile-focus {
+  padding-top: 5px;
+  border-top: 1px solid rgba(143, 197, 220, 0.14);
+  color: #aaaead;
+}
+
+.incident-profile-focus small {
+  margin-right: 6px;
+  color: var(--amber-soft);
+  font-size: 7px;
+  letter-spacing: 0.04em;
+}
+
+.incident-profile-next {
+  min-height: 36px;
+  padding: 5px 7px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(143, 197, 220, 0.24);
+  border-radius: 3px;
+  color: #c8d9dc;
+  background: rgba(106, 167, 199, 0.075);
+  text-align: left;
+}
+
+.incident-profile-next:hover {
+  border-color: rgba(143, 197, 220, 0.48);
+  background: rgba(106, 167, 199, 0.13);
+}
+
+.incident-profile-next > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.incident-profile-next strong {
+  font: 800 9px/1 ui-monospace, monospace;
+  text-transform: uppercase;
+}
+
+.incident-profile-next small {
+  overflow: hidden;
+  color: #8eaaaf;
+  font-size: 7px;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incident-profile-next > .game-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--blue-bright);
+}
+
+.incident-profile-next > .game-icon:last-child {
+  width: 11px;
+  color: var(--faint);
+}
+
+.incident-profile-brief > .incident-profile-announcement {
+  padding: 5px 6px;
+  border-left: 2px solid var(--mint);
+  color: #afd2bd;
+  background: rgba(139, 197, 165, 0.07);
+  font-size: 8px;
+}
+
 .incident-alerts {
   margin-top: 8px;
   padding-top: 7px;
@@ -5168,5 +5442,17 @@ button:disabled {
   }
 
   .colonist-strip + .incident-card { top: 68px; }
+  .incident-profile-brief { margin-bottom: 6px; padding: 6px 7px; gap: 4px; }
+  .incident-profile-brief > p { font-size: 8.5px; line-height: 1.3; }
+  .incident-profile-next { min-height: 34px; padding-block: 4px; }
   .mission-time .icon-button { width: 40px; height: 40px; }
+}
+
+@media (max-width: 480px), (max-width: 860px) and (max-height: 600px) {
+  .incident-profile-brief > p {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
 }

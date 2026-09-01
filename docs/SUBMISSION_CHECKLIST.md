@@ -19,10 +19,11 @@ Deadline: **September 3, 2026 at 1:00 p.m. PT**. Internal target: freeze the jud
 - [x] Human-visible updates from agent tool calls.
 - [x] Resettable demo scenario.
 - [x] Add a scenario win/fail state and outcome comparison.
-- [ ] Test every tool in ChatGPT's in-app browser.
+- [x] Test every tool in Codex's in-app Browser against the production build: all 12 unique tools across both phases ([test record](WEBMCP_TESTING.md#recorded-live-results)).
+- [ ] Repeat in the judged ChatGPT in-app Browser if its host differs from the tested Codex Browser.
 - [ ] Test in Chrome 149+ with WebMCP testing enabled.
 - [ ] Complete keyboard, small-screen, and reduced-motion checks.
-- [ ] Handle invalid and cancelled tool calls cleanly.
+- [x] Handle invalid calls and supplied cancellation signals cleanly: strict runtime validation and already-aborted callback regressions pass. The live host may reject malformed input before dispatch and did not supply a cancellation signal; host-delivered cancellation remains unverified.
 
 ## Delivery
 

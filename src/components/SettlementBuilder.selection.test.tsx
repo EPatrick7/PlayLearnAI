@@ -73,10 +73,10 @@ const addSharedDoorExpansion = (source: ConstructionLayout) => {
     paintBoundaryLine(source, { x: 7, y: 7 }, { x: 10, y: 7 }, 'wall'),
   )
   layout = layoutFrom(
-    paintBoundaryLine(layout, { x: 10, y: 7 }, { x: 10, y: 11 }, 'wall'),
+    paintBoundaryLine(layout, { x: 10, y: 7 }, { x: 10, y: 12 }, 'wall'),
   )
   return layoutFrom(
-    paintBoundaryLine(layout, { x: 10, y: 11 }, { x: 7, y: 11 }, 'wall'),
+    paintBoundaryLine(layout, { x: 10, y: 12 }, { x: 7, y: 12 }, 'wall'),
   )
 }
 
@@ -238,7 +238,7 @@ describe('SettlementBuilder inspection selection', () => {
       settlement: {
         ...initial.settlement,
         layout,
-        constructionStockpile: { x: 12, y: 9 },
+        constructionStockpile: { x: 6, y: 9 },
         constructionCrew: initial.settlement.constructionCrew.map((position) => {
           if (position.crewId === 'crew-amina-okafor') {
             return { ...position, cell: { x: 12, y: 8 } }
@@ -255,7 +255,7 @@ describe('SettlementBuilder inspection selection', () => {
       id: 'blocked-life-support',
       type: 'life-support',
       label: 'Blocked life support',
-      origin: { x: 8, y: 8 },
+      origin: { x: 8, y: 10 },
       size: { width: 2, height: 2 },
       rotation: 0,
     })
@@ -266,6 +266,7 @@ describe('SettlementBuilder inspection selection', () => {
     useColonyStore.setState((state) => ({
       settlement: {
         ...state.settlement,
+        constructionStockpile: { x: 12, y: 9 },
         constructionOrders: state.settlement.constructionOrders.map((order) => (
           order.id === orderId
             ? {
@@ -280,7 +281,7 @@ describe('SettlementBuilder inspection selection', () => {
     }))
 
     render(<SettlementBuilder />)
-    inspectCell({ x: 8, y: 8 })
+    inspectCell({ x: 8, y: 10 })
 
     const inspector = screen.getByRole('region', {
       name: 'Blocked life support blueprint inspector',
@@ -292,7 +293,7 @@ describe('SettlementBuilder inspection selection', () => {
     const recovery = within(inspector).getByRole('button', {
       name: 'Activate Door designator to add exterior access',
     })
-    expect(recovery).toHaveTextContent('Add exterior door')
+    expect(recovery).toHaveTextContent('Add exterior airlock')
 
     fireEvent.click(recovery)
 
@@ -302,7 +303,7 @@ describe('SettlementBuilder inspection selection', () => {
     expect(screen.getByRole('button', { name: 'Return to Select mode from Door' })).toBeVisible()
     expect(document.querySelector('.construction-cursor')).toHaveStyle({
       gridColumn: '11',
-      gridRow: '11',
+      gridRow: '10',
     })
     expect(screen.getByText(/cursor is on a safe exterior wall that opens onto clear floor/i))
       .toBeVisible()

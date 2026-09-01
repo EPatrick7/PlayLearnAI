@@ -11,6 +11,16 @@
   filter: drop-shadow(0 2px 2px rgba(7, 11, 10, 0.42));
 }
 
+.pawn-sprite--suited .pawn-sprite__art {
+  filter:
+    drop-shadow(0 0 2px rgba(152, 218, 210, 0.28))
+    drop-shadow(0 2px 2px rgba(7, 11, 10, 0.5));
+}
+
+.pawn-sprite--suited .pawn-sprite__visor {
+  filter: drop-shadow(0 0 1px rgba(181, 237, 230, 0.52));
+}
+
 .construction-pawn {
   width: 28px;
   height: 34px;
@@ -30,6 +40,60 @@
 
 .construction-pawn-label {
   display: none;
+}
+
+.construction-eva-badge {
+  position: absolute;
+  z-index: 4;
+  right: -7px;
+  bottom: -3px;
+  padding: 1px 3px;
+  border: 1px solid #1d2927;
+  border-radius: 2px;
+  color: #14201e;
+  background: #d9d5bd;
+  box-shadow: 0 0 4px rgba(143, 210, 202, 0.42);
+  font: 900 6px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.2px;
+}
+
+.construction-eva-badge--unsafe {
+  color: #fff0dc;
+  background: #9c3f35;
+  box-shadow: 0 0 6px rgba(224, 83, 68, 0.64);
+}
+
+.construction-pawn--exposed .pawn-sprite__art {
+  filter:
+    drop-shadow(0 0 4px rgba(239, 82, 68, 0.86))
+    drop-shadow(0 2px 2px rgba(7, 11, 10, 0.5));
+}
+
+.operations-eva-badge,
+.operations-exposure-badge {
+  position: absolute;
+  z-index: 5;
+  right: -8px;
+  bottom: 1px;
+  padding: 2px 3px;
+  border: 1px solid #1d2927;
+  border-radius: 2px;
+  color: #14201e;
+  background: #d9d5bd;
+  box-shadow: 0 0 4px rgba(143, 210, 202, 0.42);
+  font: 900 6px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.operations-exposure-badge {
+  color: #fff0dc;
+  background: #9c3f35;
+  box-shadow: 0 0 6px rgba(224, 83, 68, 0.64);
+}
+
+.crew-marker.crew-exposed .pawn-sprite__art {
+  filter:
+    drop-shadow(0 0 4px rgba(239, 82, 68, 0.86))
+    drop-shadow(0 2px 2px rgba(7, 11, 10, 0.5));
 }
 
 .crew-marker,

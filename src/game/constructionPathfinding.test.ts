@@ -6,11 +6,13 @@ import {
   type GridPoint,
   type WorkstationPlacement,
 } from './construction'
+import { createStarterConstruction } from './constructionCatalog'
 import type { ConstructionOrder } from './constructionJobs'
 import {
   findConstructionApproachPath,
   findConstructionOrderApproachPath,
   findConstructionPath,
+  findConstructionPressureReturnPath,
   getConstructionApproachCells,
   isConstructionCellWalkable,
 } from './constructionPathfinding'
@@ -225,5 +227,66 @@ describe('construction pathfinding', () => {
     findConstructionApproachPath(layout, start, targets)
 
     expect(JSON.stringify({ layout, start, targets })).toBe(before)
+  })
+
+  it('requires EVA and crosses the valid exterior airlock at a pressure boundary', () => {
+    const layout = createStarterConstruction()
+    const start = { x: 6, y: 10 }
+    const exterior = { x: 8, y: 10 }
+
+    expect(findConstructionPath(layout, start, [exterior], { hasEvaSuit: false }))
+      .toBeNull()
+    const suited = findConstructionPath(layout, start, [exterior], { hasEvaSuit: true })
+    expect(suited?.path).toContainEqual({ x: 7, y: 9 })
+  })
+
+  it('keeps an interior pressure door traversable without EVA', () => {
+    const boundaries: BoundaryCell[] = []
+    for (let x = 2; x <= 10; x += 1) {
+      boundaries.push({ x, y: 2, kind: 'wall' }, { x, y: 6, kind: 'wall' })
+    }
+    for (let y = 3; y <= 5; y += 1) {
+      boundaries.push({ x: 2, y, kind: 'wall' })
+      boundaries.push({ x: 6, y, kind: y === 4 ? 'door' : 'wall' })
+      boundaries.push({ x: 10, y, kind: 'wall' })
+    }
+    const layout = layoutWith(boundaries)
+
+    expect(findConstructionPath(
+      layout,
+      { x: 5, y: 4 },
+      [{ x: 7, y: 4 }],
+      { hasEvaSuit: false },
+    )?.path).toEqual([
+      { x: 5, y: 4 },
+      { x: 6, y: 4 },
+      { x: 7, y: 4 },
+    ])
+  })
+
+  it('blocks a shell breach shortcut and routes suited return through the airlock', () => {
+    const layout = createStarterConstruction()
+    layout.boundaries = layout.boundaries.filter((boundary) => (
+      boundary.x !== 7 || boundary.y !== 10
+    ))
+
+    const route = findConstructionPath(
+      layout,
+      { x: 6, y: 10 },
+      [{ x: 8, y: 10 }],
+      { hasEvaSuit: true },
+    )
+    expect(route?.path).toEqual([
+      { x: 6, y: 10 },
+      { x: 6, y: 9 },
+      { x: 7, y: 9 },
+      { x: 8, y: 9 },
+      { x: 8, y: 10 },
+    ])
+    expect(route?.path).not.toContainEqual({ x: 7, y: 10 })
+    expect(findConstructionPressureReturnPath(
+      createStarterConstruction(),
+      { x: 8, y: 10 },
+    )?.path).toContainEqual({ x: 7, y: 9 })
   })
 })

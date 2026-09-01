@@ -72,7 +72,7 @@ const inspection = (
 describe('construction map inspection', () => {
   it.each([
     { kind: 'wall' as const, label: 'Composite wall', icon: 'wall' as const },
-    { kind: 'door' as const, label: 'Pressure door', icon: 'door' as const },
+    { kind: 'door' as const, label: 'Unsealed hatch', icon: 'door' as const },
   ])('keeps a $kind as one structure above the underlying terrain surface', ({ kind, label, icon }) => {
     const layout = createConstructionLayout()
     layout.boundaries = [{ x: 5, y: 4, kind }]
@@ -135,7 +135,7 @@ describe('construction map inspection', () => {
     ])
   })
 
-  it('does not claim an enclosed freeform room is pressurized without atmosphere data', () => {
+  it('treats the established starter room as breathable when no incident modules are present', () => {
     const layout = createStarterConstruction()
     const tiles = buildMapInspection({
       width: layout.width,
@@ -153,9 +153,9 @@ describe('construction map inspection', () => {
     })
 
     expect(tiles.get('4:9')).toMatchObject({
-      surfaceLabel: 'Vacuum floor',
-      surfaceDetail: 'Unpressurized player-built room',
-      atmosphere: 'no',
+      surfaceLabel: 'Pressurized floor',
+      surfaceDetail: 'Sealed player-built room',
+      atmosphere: 'yes',
     })
   })
 

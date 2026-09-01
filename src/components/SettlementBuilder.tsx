@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from 'react'
 import {
   detectRooms,
@@ -40,6 +41,7 @@ import { findConstructionPath } from '../game/constructionPathfinding'
 import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
 import type { Priority } from '../game/types'
+import { AgentLinkPanel, type AgentLinkStatus } from './AgentLinkPanel'
 import { ConstructionClockControls } from './ConstructionClockControls'
 import { ConstructionMap } from './ConstructionMap'
 import {
@@ -79,7 +81,7 @@ const categoryIcons: Record<BuildCategory, GameIconName> = {
 const toolsByCategory: Record<BuildCategory, ToolDefinition[]> = {
   structure: [
     { id: 'wall', label: 'Wall', detail: 'Drag a 1-tile line', icon: 'wall' },
-    { id: 'door', label: 'Door', detail: 'Replace one wall tile', icon: 'door' },
+    { id: 'door', label: 'Door', detail: 'Replace one wall tile · airlock at vacuum · hatch between rooms', icon: 'door' },
   ],
   furniture: [
     {
@@ -139,7 +141,7 @@ const toolName = (tool: ConstructionTool | null) => {
 const instructionFor = (tool: ConstructionTool | null) => {
   if (!tool) return 'Select · click or tap to inspect · drag open ground to move · wheel or pinch to zoom.'
   if (tool === 'wall') return 'Wall blueprint · drag a one-tile line · middle/Space-drag or two-finger pan. Colonists build every tile.'
-  if (tool === 'door') return 'Door blueprint · click or tap a wall tile · middle/Space-drag or touch-drag to move.'
+  if (tool === 'door') return 'Pressure door · becomes an airlock at a room-to-vacuum boundary · stays a hatch between rooms.'
   if (tool === 'erase') return 'Deconstruct order · click or drag built objects · middle/Space-drag or two-finger pan.'
   return `${WORKSTATION_SPECS[tool].description} · click or tap to place · middle/Space-drag or touch-drag to move · rotate as needed.`
 }
@@ -153,8 +155,10 @@ const gestureFor = (tool: ConstructionTool) => (
 )
 
 interface SettlementBuilderProps {
+  agentLinkStatus?: AgentLinkStatus
   constructionCompletionSummary?: string | null
   constructionCompletionToast?: string | null
+  musicControl?: ReactNode
   onConstructionQueued?: () => void
   onExit?: () => void
 }
@@ -308,8 +312,10 @@ const inspectionHeaderLine = (item: MapInspectable) => {
 }
 
 export function SettlementBuilder({
+  agentLinkStatus = 'unavailable',
   constructionCompletionSummary = null,
   constructionCompletionToast = null,
+  musicControl,
   onConstructionQueued,
   onExit,
 }: SettlementBuilderProps) {
@@ -646,6 +652,14 @@ export function SettlementBuilder({
         (order.forcedCrewId === member.id || order.assignedCrewId === member.id)
       ))
       const crewCell = crewCells.get(member.id)
+      const canUseEvaSuit = Boolean(
+        member.equippedEvaSuitId || colony.equipment.some((item) => (
+          item.type === 'eva_suit' &&
+          item.condition >= 65 &&
+          !item.reservedForWorkOrderId &&
+          (!item.assignedCrewId || item.assignedCrewId === member.id)
+        )),
+      )
       const route = crewCell
         ? previewConstructionWorkerRoute({
             layout,
@@ -653,6 +667,7 @@ export function SettlementBuilder({
             order: routableTarget,
             stockpile: colony.settlement.constructionStockpile,
             crewCell,
+            hasEvaSuit: canUseEvaSuit,
           })
         : null
       const unavailable = terminalReason
@@ -705,6 +720,7 @@ export function SettlementBuilder({
   }, [
     builderPickerOrder,
     colony.crew,
+    colony.equipment,
     colony.settlement.constructionStockpile,
     colony.workOrders,
     constructionOrders,
@@ -1142,8 +1158,8 @@ export function SettlementBuilder({
     if (firstShiftStep === 'access-door') {
       activateExteriorDoor(
         guideAccessDoorCell
-          ? 'Door ready. The cursor is on a clear exterior wall; press Enter or choose another wall beside open floor.'
-          : 'Door ready. Replace an exterior wall beside open floor so colonists and construction material can reach the expansion.',
+          ? 'Airlock ready. The cursor is on a clear exterior wall; press Enter or choose another wall beside open floor.'
+          : 'Airlock ready. Replace an exterior wall beside open floor so suited colonists and construction material can reach the expansion.',
         guideAccessDoorCell,
       )
       return
@@ -1254,11 +1270,11 @@ export function SettlementBuilder({
         }
       : firstShiftStep === 'access-door'
         ? {
-            ariaLabel: 'Add an exterior door for colonist access',
-            compactTitle: 'Access · Door',
-            detail: 'Next: add an exterior door beside open floor so colonists and material can reach the expansion.',
+            ariaLabel: 'Add an exterior airlock for suited colonist access',
+            compactTitle: 'Access · Airlock',
+            detail: 'Next: add an exterior airlock beside open floor so suited colonists and material can reach the expansion.',
             icon: 'door' as const,
-            title: 'First shift · Add exterior door',
+            title: 'First shift · Add exterior airlock',
           }
         : firstShiftStep === 'life-support'
           ? {
@@ -1284,7 +1300,7 @@ export function SettlementBuilder({
           ? {
               ariaLabel: 'Begin first shift',
               compactTitle: 'Begin shift',
-              detail: 'Expansion habitable · begin the first shift.',
+              detail: 'Expansion habitable · exterior airlock online · begin the first shift.',
               icon: 'play' as const,
               title: 'First shift ready',
             }
@@ -1305,6 +1321,12 @@ export function SettlementBuilder({
         </div>
 
         <div className="construction-top-actions">
+          {musicControl}
+          <AgentLinkPanel
+            className="construction-agent-link"
+            settlementPhase={colony.settlement.phase}
+            status={agentLinkStatus}
+          />
           {onExit && (
             <button aria-label="Return to colony" className="construction-exit-action" onClick={onExit} title="Return to colony" type="button">
               <GameIcon name="chevron" /><span>Colony</span>
@@ -1467,6 +1489,26 @@ export function SettlementBuilder({
             </section>
           )}
         </section>
+        {firstShiftStep === 'ready' && (
+          <section
+            aria-labelledby="first-shift-promotion-title"
+            className="first-shift-promotion"
+          >
+            <span aria-hidden="true" className="first-shift-promotion-icon">
+              <GameIcon name="check" />
+            </span>
+            <span className="first-shift-promotion-copy">
+              <small>Settlement ready</small>
+              <strong id="first-shift-promotion-title">Begin the first shift</strong>
+              <span>2 rooms · exterior airlock · life support · crew safely inside</span>
+            </span>
+            <button onClick={startFirstShift} type="button">
+              <GameIcon name="play" />
+              <span>Begin operations</span>
+              <GameIcon name="chevron" />
+            </button>
+          </section>
+        )}
         <div className="construction-map-scroll" inert={constructionQueueOpen ? true : undefined}>
           <ConstructionMap
             constructionPaused={simulationSpeed === 0}
@@ -1578,13 +1620,13 @@ export function SettlementBuilder({
                   className="construction-copy-action"
                   onClick={() => activateExteriorDoor(
                     selectedBlueprintAccessDoorCell
-                      ? 'Door ready. The cursor is on a safe exterior wall that opens onto clear floor; press Enter to place it.'
-                      : 'Door ready. Choose an exterior wall beside open floor, not directly behind this blueprint.',
+                      ? 'Airlock ready. The cursor is on a safe exterior wall that opens onto clear floor; press Enter to place it.'
+                      : 'Airlock ready. Choose an exterior wall beside open floor, not directly behind this blueprint.',
                     selectedBlueprintAccessDoorCell,
                   )}
                   type="button"
                 >
-                  <GameIcon name="door" /><span>Add exterior door</span>
+                  <GameIcon name="door" /><span>Add exterior airlock</span>
                 </button>
               </div>
             )}

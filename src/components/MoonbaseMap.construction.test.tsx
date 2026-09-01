@@ -316,6 +316,10 @@ describe('MoonbaseMap live construction layer', () => {
     expect(builder).toHaveAttribute('data-grid-y', '12')
     expect(builder).toHaveAttribute('data-construction-worker-state', 'walking-to-site')
     expect(builder).toHaveAttribute('data-order-id', order.id)
+    expect(builder).toHaveAttribute('data-crew-breathing', 'unsafe')
+    expect(builder).toHaveClass('crew-exposed')
+    expect(builder.querySelector('[data-pawn-suited="false"]')).toBeInTheDocument()
+    expect(builder.querySelector('.operations-exposure-badge')).toHaveTextContent('NO O₂')
     expect(builder).toHaveAttribute('title', 'Amina Okafor — Walking to site')
     expect(builder.querySelector('.operations-worker-task')).toBeInTheDocument()
     expect(builder.querySelector('.operations-worker-cargo')).toHaveTextContent('2')
@@ -348,6 +352,32 @@ describe('MoonbaseMap live construction layer', () => {
       }),
     }))
     expect(onSelectCrew).not.toHaveBeenCalled()
+  })
+
+  it('shows an exterior construction worker as suited only when a real EVA suit is assigned', () => {
+    const state = createInitialState()
+    const suitedAmina = {
+      ...state.crew[0],
+      equippedEvaSuitId: 'equipment-eva-01',
+    }
+    renderMap({
+      crew: [suitedAmina],
+      constructionOrders: [wallOrder()],
+      constructionCrew: [{
+        crewId: suitedAmina.id,
+        cell: wallCell,
+        moveCredit: 0,
+      }],
+    })
+
+    const builder = screen.getByRole('button', {
+      name: /select amina okafor.*eva suit sealed/i,
+    })
+    expect(builder).toHaveAttribute('data-crew-breathing', 'eva')
+    expect(builder).toHaveAttribute('data-eva-suit-id', 'equipment-eva-01')
+    expect(builder).not.toHaveClass('crew-exposed')
+    expect(builder.querySelector('[data-pawn-suited="true"]')).toBeInTheDocument()
+    expect(builder.querySelector('.operations-eva-badge')).toHaveTextContent('EVA')
   })
 
   it('keeps legacy callers unchanged when construction simulation props are omitted', () => {

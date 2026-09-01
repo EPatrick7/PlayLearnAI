@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest'
+import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -36,6 +37,7 @@ interface RenderMapOptions {
   layout?: ConstructionLayout
   overlapCounts?: ReadonlyMap<string, number>
   stackOpenCell?: GridPoint | null
+  strictMode?: boolean
   terrainSeed?: number
 }
 
@@ -79,7 +81,15 @@ const renderMap = (
       />
     </div>
   )
-  const view = render(mapView(options.focusTarget))
+  const renderedMapView = (
+    focusTarget: RenderMapOptions['focusTarget'],
+    activeTool: ConstructionTool | null = currentTool,
+    toolActivationId = currentToolActivationId,
+  ) => {
+    const content = mapView(focusTarget, activeTool, toolActivationId)
+    return options.strictMode ? <StrictMode>{content}</StrictMode> : content
+  }
+  const view = render(renderedMapView(options.focusTarget))
   const map = screen.getByRole('group', { name: /freeform construction grid/i })
   const scroll = view.container.querySelector<HTMLElement>('.construction-map-scroll')!
   const surface = view.container.querySelector<HTMLElement>('.construction-camera-surface')!
@@ -87,12 +97,12 @@ const renderMap = (
     `[data-construction-cell][data-grid-x="${x}"][data-grid-y="${y}"]`,
   )!
   const rerenderFocusTarget = (focusTarget: RenderMapOptions['focusTarget']) => {
-    view.rerender(mapView(focusTarget))
+    view.rerender(renderedMapView(focusTarget))
   }
   const rerenderSelectedTool = (activeTool: ConstructionTool | null) => {
     currentTool = activeTool
     currentToolActivationId += 1
-    view.rerender(mapView(options.focusTarget, currentTool, currentToolActivationId))
+    view.rerender(renderedMapView(options.focusTarget, currentTool, currentToolActivationId))
   }
   return {
     cell,
@@ -1705,6 +1715,41 @@ describe('ConstructionMap pan and zoom', () => {
     expect(screen.getByRole('button', { name: /center construction map/i })).toBeVisible()
     expect(map).toHaveAttribute('aria-keyshortcuts', expect.stringContaining('Space'))
     expect(map).toHaveAccessibleDescription(/hold space and left-drag.*every wheel input zooms/i)
+  })
+
+  it('centers the initial camera after StrictMode replays layout effects', () => {
+    let nextFrameId = 1
+    const scheduledFrames = new Map<number, FrameRequestCallback>()
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      const frameId = nextFrameId
+      nextFrameId += 1
+      scheduledFrames.set(frameId, callback)
+      return frameId
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((frameId) => {
+      scheduledFrames.delete(frameId)
+    })
+
+    const { map, scroll } = renderMap(null, { strictMode: true })
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 200 },
+      clientWidth: { configurable: true, value: 300 },
+    })
+    Object.defineProperties(map, {
+      offsetHeight: { configurable: true, value: 720 },
+      offsetLeft: { configurable: true, value: 200 },
+      offsetTop: { configurable: true, value: 120 },
+      offsetWidth: { configurable: true, value: 960 },
+    })
+
+    while (scheduledFrames.size > 0) {
+      const callbacks = [...scheduledFrames.values()]
+      scheduledFrames.clear()
+      act(() => callbacks.forEach((callback) => callback(performance.now())))
+    }
+
+    expect(scroll.scrollLeft).toBe(530)
+    expect(scroll.scrollTop).toBe(380)
   })
 
   it('temporarily pans with Space and left drag without parking or applying the active tool', () => {

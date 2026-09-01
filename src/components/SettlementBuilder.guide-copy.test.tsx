@@ -161,9 +161,9 @@ describe('SettlementBuilder first-shift guide', () => {
       name: 'Place Life support inside an enclosed room',
     })).not.toBeInTheDocument()
     const guide = screen.getByRole('button', {
-      name: 'Add an exterior door for colonist access',
+      name: 'Add an exterior airlock for suited colonist access',
     })
-    expect(guide).toHaveTextContent('First shift · Add exterior door')
+    expect(guide).toHaveTextContent('First shift · Add exterior airlock')
     expect(guide).toHaveTextContent('colonists and material can reach')
 
     fireEvent.click(guide)
@@ -225,7 +225,13 @@ describe('SettlementBuilder first-shift guide', () => {
     expect(guide).toHaveTextContent('First shift ready')
     expect(guide).toHaveTextContent('Expansion habitable')
 
-    fireEvent.click(guide)
+    const promotion = screen.getByRole('region', { name: 'Begin the first shift' })
+    expect(promotion).toHaveTextContent('2 rooms')
+    expect(promotion).toHaveTextContent('exterior airlock')
+    expect(promotion).toHaveTextContent('life support')
+    expect(promotion).toHaveTextContent('crew safely inside')
+
+    fireEvent.click(within(promotion).getByRole('button', { name: 'Begin operations' }))
 
     expect(useColonyStore.getState().settlement.phase).toBe('operations')
   })
@@ -285,7 +291,7 @@ describe('SettlementBuilder Copy action', () => {
     render(<SettlementBuilder />)
     pointAtCell({ x: 7, y: 9 })
 
-    const inspector = screen.getByRole('region', { name: 'Pressure door inspector' })
+    const inspector = screen.getByRole('region', { name: 'Exterior airlock inspector' })
     fireEvent.click(within(inspector).getByRole('button', { name: 'Copy' }))
 
     expect(screen.getByRole('button', { name: 'Return to Select mode from Door' })).toBeVisible()
@@ -312,7 +318,7 @@ describe('SettlementBuilder Copy action', () => {
     expect(screen.getByRole('button', { name: 'Rotate Bunk bed to 180°' })).toBeVisible()
     expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(0)
 
-    pointAtCell({ x: 9, y: 8 }, 83)
+    pointAtCell({ x: 4, y: 9 }, 83)
 
     expect(useColonyStore.getState().settlement.constructionOrders).toContainEqual(
       expect.objectContaining({

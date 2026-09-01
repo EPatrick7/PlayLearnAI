@@ -6,6 +6,7 @@ import {
   type GridPoint,
   type WorkstationPlacement,
 } from './construction'
+import { createStarterConstruction } from './constructionCatalog'
 import type { ConstructionOrder } from './constructionJobs'
 import {
   advanceConstructionWorkerRouting,
@@ -660,5 +661,56 @@ describe('construction worker routing', () => {
     expect(result.crewPositions[0].cell).toEqual({ x: 5, y: 5 })
     expect(result.orders[0].travelPhase).toBe('at_site')
     expect(JSON.stringify({ layout, order, positions })).toBe(before)
+  })
+
+  it('distinguishes an exterior order that is reachable only with EVA', () => {
+    const layout = createStarterConstruction()
+    const order = wallOrder('exterior-wall', { x: 10, y: 10 })
+    const input = {
+      layout,
+      orders: [order],
+      crewPositions: [{ crewId: 'builder', cell: { x: 6, y: 10 }, moveCredit: 0 }],
+      stockpile: { x: 8, y: 9 },
+      elapsed: 0,
+    }
+    const unsuited = advanceConstructionWorkerRouting({
+      ...input,
+      workers: [{ id: 'builder', hasEvaSuit: false }],
+    })
+
+    expect(unsuited.orders[0].assignedCrewId).toBeNull()
+    expect(unsuited.noPathOrderIds).toEqual(['exterior-wall'])
+    expect(unsuited.evaRequiredOrderIds).toEqual(['exterior-wall'])
+
+    const suited = advanceConstructionWorkerRouting({
+      ...input,
+      workers: [{ id: 'builder', hasEvaSuit: true }],
+    })
+    expect(suited.orders[0].assignedCrewId).toBe('builder')
+    expect(suited.evaRequiredOrderIds).toEqual([])
+  })
+
+  it('returns an idle suited worker from vacuum through the exterior airlock', () => {
+    const layout = createStarterConstruction()
+    const start = [{ crewId: 'builder', cell: { x: 8, y: 10 }, moveCredit: 0 }]
+    const suited = advanceConstructionWorkerRouting({
+      layout,
+      orders: [],
+      crewPositions: start,
+      workers: [{ id: 'builder', hasEvaSuit: true, movementRate: 1 }],
+      stockpile: { x: 8, y: 9 },
+      elapsed: 3,
+    })
+    expect(suited.crewPositions[0].cell).toEqual({ x: 6, y: 9 })
+
+    const unsuited = advanceConstructionWorkerRouting({
+      layout,
+      orders: [],
+      crewPositions: start,
+      workers: [{ id: 'builder', hasEvaSuit: false, movementRate: 1 }],
+      stockpile: { x: 8, y: 9 },
+      elapsed: 3,
+    })
+    expect(unsuited.crewPositions[0].cell).toEqual({ x: 8, y: 10 })
   })
 })

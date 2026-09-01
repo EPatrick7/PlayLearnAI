@@ -1,0 +1,200 @@
+{
+  "host": "Codex in-app Browser",
+  "origin": "http://127.0.0.1:4187",
+  "plan": {
+    "id": "operations-plan-001",
+    "title": "Laboratory recovery",
+    "status": "completed",
+    "revision": 31,
+    "basedOnWorldRevision": 162,
+    "objective": "restore_lab_and_research_sintering",
+    "constraints": {
+      "oxygenFloorHours": 13,
+      "protectedCrewIds": [
+        "crew-jonah-reed"
+      ]
+    },
+    "horizonHours": 12,
+    "stopCondition": {
+      "kind": "objective_complete"
+    },
+    "actions": [
+      {
+        "kind": "assign_crew",
+        "crewId": "crew-mateo-alvarez",
+        "workOrderId": "work-seal-lab",
+        "id": "plan-action-019"
+      },
+      {
+        "kind": "reserve_equipment",
+        "equipmentId": "equipment-eva-01",
+        "workOrderId": "work-seal-lab",
+        "id": "plan-action-020"
+      },
+      {
+        "kind": "reserve_equipment",
+        "equipmentId": "equipment-engineering-01",
+        "workOrderId": "work-seal-lab",
+        "id": "plan-action-021"
+      },
+      {
+        "kind": "assign_crew",
+        "crewId": "crew-soo-jin-park",
+        "workOrderId": "work-repressurize-lab",
+        "id": "plan-action-022"
+      },
+      {
+        "kind": "reserve_equipment",
+        "equipmentId": "equipment-eva-03",
+        "workOrderId": "work-repressurize-lab",
+        "id": "plan-action-023"
+      },
+      {
+        "kind": "reserve_equipment",
+        "equipmentId": "equipment-engineering-02",
+        "workOrderId": "work-repressurize-lab",
+        "id": "plan-action-024"
+      },
+      {
+        "kind": "assign_crew",
+        "crewId": "crew-leila-haddad",
+        "workOrderId": "work-research-sintering",
+        "id": "plan-action-025"
+      },
+      {
+        "kind": "assign_crew",
+        "crewId": "crew-nia-kimani",
+        "workOrderId": "work-clean-solar",
+        "id": "plan-action-026"
+      },
+      {
+        "kind": "reserve_equipment",
+        "equipmentId": "equipment-eva-02",
+        "workOrderId": "work-clean-solar",
+        "id": "plan-action-027"
+      },
+      {
+        "kind": "reserve_equipment",
+        "equipmentId": "equipment-rover-01",
+        "workOrderId": "work-clean-solar",
+        "id": "plan-action-028"
+      }
+    ],
+    "committedAtHour": 0,
+    "baseline": {
+      "worldRevision": 163,
+      "elapsedHours": 0,
+      "oxygenHours": 32,
+      "batteryKwh": 30,
+      "completedWorkOrderIds": []
+    }
+  },
+  "outcome": {
+    "ok": true,
+    "verification": {
+      "status": "success",
+      "objectiveMet": true,
+      "oxygenFloorMet": true,
+      "stopConditionRespected": true,
+      "checks": [
+        {
+          "id": "objective",
+          "label": "Objective achieved",
+          "passed": true,
+          "evidence": "Regolith Sintering is complete and its production job is unlocked."
+        },
+        {
+          "id": "oxygen_floor",
+          "label": "Oxygen floor protected",
+          "passed": true,
+          "evidence": "Minimum observed reserve 20.8h; plan floor 13h."
+        },
+        {
+          "id": "stop_condition",
+          "label": "Stop condition honored",
+          "passed": true,
+          "evidence": "Last bounded advance stopped on objective_complete."
+        },
+        {
+          "id": "lab_pressure",
+          "label": "Laboratory restored",
+          "passed": true,
+          "evidence": "Breach sealed; atmosphere yes."
+        },
+        {
+          "id": "power",
+          "label": "Power remains available",
+          "passed": true,
+          "evidence": "35.2 kWh battery; 20.4/18 kW generation/demand."
+        }
+      ],
+      "residualRisks": [],
+      "verifiedAtWorldRevision": 173,
+      "verifiedAtHour": 10,
+      "summary": "Verified: laboratory recovery succeeded within the oxygen, power, and stop-condition constraints."
+    },
+    "scenarioStatus": "objective_complete",
+    "workflow": {
+      "currentPhase": "ground",
+      "completedLoops": 1,
+      "achieved": {
+        "ground": true,
+        "plan": true,
+        "supervise": true,
+        "verify": true
+      },
+      "coaching": "Operating loop complete. Ground the next plan in the new world revision.",
+      "evidence": [
+        {
+          "id": "evidence-31-173-2",
+          "phase": "verify",
+          "actor": "agent",
+          "detail": "Verified: laboratory recovery succeeded within the oxygen, power, and stop-condition constraints.",
+          "worldRevision": 173,
+          "planRevision": 31,
+          "elapsedHours": 10
+        },
+        {
+          "id": "evidence-31-173-1",
+          "phase": "supervise",
+          "actor": "agent",
+          "detail": "Supervised 10 simulated hours; stopped on objective_complete.",
+          "worldRevision": 173,
+          "planRevision": 31,
+          "elapsedHours": 10
+        },
+        {
+          "id": "evidence-30-163-1",
+          "phase": "plan",
+          "actor": "agent",
+          "detail": "Committed a validated, revision-checked Operations Plan.",
+          "worldRevision": 163,
+          "planRevision": 30,
+          "elapsedHours": 0
+        },
+        {
+          "id": "evidence-1-162-2",
+          "phase": "ground",
+          "actor": "agent",
+          "detail": "Agent compared 6 crew and localized gear.",
+          "worldRevision": 162,
+          "planRevision": 1,
+          "elapsedHours": 0
+        },
+        {
+          "id": "evidence-1-162-1",
+          "phase": "ground",
+          "actor": "agent",
+          "detail": "Agent inspected the moonbase for: WebMCP end-to-end test: recover the lab, preserve reserves, complete research",
+          "worldRevision": 162,
+          "planRevision": 1,
+          "elapsedHours": 0
+        }
+      ]
+    },
+    "runId": "moonbase-run-b7fb938d13d34aae85c41bd516c1f39f",
+    "settlementPhase": "operations",
+    "worldRevision": 173,
+    "next": "The loop is verified; preserve the evidence or begin a new bounded objective."
+  }
+}

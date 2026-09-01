@@ -26,6 +26,11 @@ import {
   getBoundaryConnection,
   getBoundaryDoorAxis,
 } from '../game/boundaryConnections'
+import {
+  analyzeConstructionPressure,
+  constructionCellRequiresEva,
+  constructionDoorConnectionAt,
+} from '../game/pressureTopology'
 import type {
   CrewMember,
   Equipment,
@@ -179,6 +184,8 @@ function OperationsConstructionLayer({
   orders: readonly ConstructionOrder[]
   paused: boolean
 }) {
+  const completedPressure = analyzeConstructionPressure(completedLayout)
+  const plannedPressure = analyzeConstructionPressure(planningLayout)
   return orders.filter((order) => order.status !== 'complete').map((order) => {
     const progress = constructionOrderProgress(order)
     const activity = constructionOrderActivity(order, paused)
@@ -188,14 +195,21 @@ function OperationsConstructionLayer({
       const boundary = order.target.construct ?? order.target.deconstruct
       if (!boundary) return null
       const connectionLayout = order.target.construct ? planningLayout : completedLayout
+      const pressureTopology = order.target.construct ? plannedPressure : completedPressure
       const connection = getBoundaryConnection(connectionLayout, cell)
       const doorAxis = boundary.kind === 'door'
         ? getBoundaryDoorAxis(connection.mask)
         : null
+      const doorRole = doorAxis
+        ? constructionDoorConnectionAt(pressureTopology, cell)?.role ?? 'invalid'
+        : null
+      const doorClass = doorRole === 'pressure_door'
+        ? 'door-pressure'
+        : doorRole === 'exterior_airlock' ? 'door-airlock' : 'door-invalid'
       return (
         <span
           aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent`}
-          className={`operations-blueprint construction-blueprint construction-blueprint-boundary construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${doorAxis ? `door-airlock door-${doorAxis}` : ''}`}
+          className={`operations-blueprint construction-blueprint construction-blueprint-boundary construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${connection.className} ${doorAxis ? `${doorClass} door-${doorAxis}` : ''}`}
           data-boundary-connection={connection.name}
           data-boundary-mask={connection.mask}
           data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -205,7 +219,10 @@ function OperationsConstructionLayer({
           data-construction-order-id={order.id}
           data-construction-order-status={order.status}
           data-door-axis={doorAxis ?? undefined}
-          data-door-texture={doorAxis ? 'airlock' : undefined}
+          data-door-role={doorRole ?? undefined}
+          data-door-texture={doorRole === 'pressure_door'
+            ? 'pressure-door'
+            : doorRole === 'exterior_airlock' ? 'airlock' : 'invalid-hatch'}
           data-grid-x={cell.x}
           data-grid-y={cell.y}
           data-inspect-item-key={`blueprint:${order.id}`}
@@ -252,7 +269,8 @@ function OperationsConstructionLayer({
 }
 
 function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
-  const rooms = detectRooms(layout)
+  const pressureTopology = analyzeConstructionPressure(layout)
+  const rooms = pressureTopology.rooms
   return (
     <>
       {rooms.flatMap((room) => room.cells.map((cell) => (
@@ -272,10 +290,16 @@ function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
         const doorAxis = boundary.kind === 'door'
           ? getBoundaryDoorAxis(connection.mask)
           : null
+        const doorRole = doorAxis
+          ? constructionDoorConnectionAt(pressureTopology, boundary)?.role ?? 'invalid'
+          : null
+        const doorClass = doorRole === 'pressure_door'
+          ? 'door-pressure'
+          : doorRole === 'exterior_airlock' ? 'door-airlock' : 'door-invalid'
         return (
           <span
             aria-hidden="true"
-            className={`construction-boundary boundary-${boundary.kind} ${connection.className} ${doorAxis ? `door-airlock door-${doorAxis}` : ''}`}
+            className={`construction-boundary boundary-${boundary.kind} ${connection.className} ${doorAxis ? `${doorClass} door-${doorAxis}` : ''}`}
             data-boundary-connection={connection.name}
             data-boundary-mask={connection.mask}
             data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -283,7 +307,10 @@ function FreeformOperationsLayer({ layout }: { layout: ConstructionLayout }) {
             data-connect-south={connection.mask & BOUNDARY_CONNECTION_BITS.south ? 'true' : undefined}
             data-connect-west={connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
             data-door-axis={doorAxis ?? undefined}
-            data-door-texture={doorAxis ? 'airlock' : undefined}
+            data-door-role={doorRole ?? undefined}
+            data-door-texture={doorRole === 'pressure_door'
+              ? 'pressure-door'
+              : doorRole === 'exterior_airlock' ? 'airlock' : 'invalid-hatch'}
             data-freeform-boundary={boundary.kind}
             data-grid-x={boundary.x}
             data-grid-y={boundary.y}
@@ -681,6 +708,9 @@ export function MoonbaseMap({
   const constructionPlanningLayout = constructionLayout
     ? projectConstructionOrders(constructionLayout, constructionOrders).layout
     : null
+  const constructionPressureTopology = constructionLayout
+    ? analyzeConstructionPressure(constructionLayout)
+    : null
   const placementSummary = buildingLabel
     ? ` ${compatibleBuildSites.length} compatible build sockets.`
     : ''
@@ -1063,14 +1093,21 @@ export function MoonbaseMap({
           constructionOrder && !constructionPaused && !constructionOrder.block,
         )
         const cell = crewCells.get(member.id)
+        const requiresEva = Boolean(
+          module.atmosphere !== 'yes' ||
+          (cell && constructionLayout && constructionPressureTopology &&
+            constructionCellRequiresEva(constructionLayout, constructionPressureTopology, cell)),
+        )
+        const suited = Boolean(member.equippedEvaSuitId)
+        const exposed = requiresEva && !suited
         const inspectionTile = cell ? inspectionByCell.get(`${cell.x}:${cell.y}`) : null
         const inspectable = inspectionTile?.contents.find((candidate) => (
           candidate.kind === 'crew' && candidate.id === member.id
         )) ?? null
         const stacked = Boolean(inspectionTile && inspectionTile.contents.length > 1)
         const selectionLabel = constructionOrder
-          ? `Select ${member.name}, ${member.role}. ${constructionActivity}, ${constructionOrderLabel(constructionOrder)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} construction material` : ''}. Health ${member.health} percent, fatigue ${member.fatigue} percent.`
-          : `Select ${member.name}, ${member.role}. ${words(member.status)} in ${module.name}. Health ${member.health} percent, fatigue ${member.fatigue} percent.`
+          ? `Select ${member.name}, ${member.role}. ${constructionActivity}, ${constructionOrderLabel(constructionOrder)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} construction material` : ''}. ${suited ? 'EVA suit sealed.' : exposed ? 'Warning: no EVA suit in vacuum.' : 'Breathing room air.'} Health ${member.health} percent, fatigue ${member.fatigue} percent.`
+          : `Select ${member.name}, ${member.role}. ${words(member.status)} in ${module.name}. ${suited ? 'EVA suit sealed.' : exposed ? 'Warning: no EVA suit in vacuum.' : 'Breathing room air.'} Health ${member.health} percent, fatigue ${member.fatigue} percent.`
         return (
           <button
             aria-expanded={stacked ? stackPicker?.tile.key === inspectionTile?.key : undefined}
@@ -1085,6 +1122,8 @@ export function MoonbaseMap({
               constructionOrder ? 'operations-construction-worker' : '',
               constructionActivityClass ? `worker-${constructionActivityClass}` : '',
               carriedMaterial > 0 ? 'worker-carrying' : '',
+              suited ? 'crew-suited' : '',
+              exposed ? 'crew-exposed' : '',
               selected ? 'selected' : '',
             ].filter(Boolean).join(' ')}
             key={member.id}
@@ -1092,6 +1131,8 @@ export function MoonbaseMap({
             data-construction-worker-state={constructionActivityClass ?? undefined}
             data-grid-x={crewCells.get(member.id)?.x}
             data-grid-y={crewCells.get(member.id)?.y}
+            data-crew-breathing={suited ? 'eva' : exposed ? 'unsafe' : 'room'}
+            data-eva-suit-id={member.equippedEvaSuitId ?? undefined}
             data-order-id={constructionOrder?.id}
             onClick={(event) => {
               event.stopPropagation()
@@ -1110,8 +1151,11 @@ export function MoonbaseMap({
               initials={initials(member.name)}
               showStatusDot
               status={activelyConstructing ? 'working' : member.status}
+              suited={suited}
               variant={pawnVariants[index % pawnVariants.length]}
             />
+            {suited && <span aria-hidden="true" className="operations-eva-badge">EVA</span>}
+            {exposed && <span aria-hidden="true" className="operations-exposure-badge">NO O₂</span>}
             {constructionOrder && (
               <span aria-hidden="true" className="operations-worker-task">
                 <GameIcon name={constructionActivityIcon(constructionOrder)} />

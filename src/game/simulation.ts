@@ -5,7 +5,10 @@ import type {
   AdvanceResult,
   AlertState,
   CommitResult,
+  CrewMember,
   EquipmentType,
+  GroundingEvidenceKind,
+  LearningEvidenceOptions,
   LearningPhase,
   MoonbaseState,
   ObjectiveId,
@@ -24,8 +27,62 @@ import type {
   WorkOrder,
   WorkOrderId,
 } from './types'
+import {
+  analyzeConstructionPressure,
+  constructionEnvironmentAt,
+} from './pressureTopology'
 
 export const MAX_ADVANCE_HOURS = 12
+
+export interface StagePlanBatchInput {
+  expectedRunId: string
+  expectedWorldRevision: number
+  expectedPlanRevision: number
+  mode?: 'append' | 'replace'
+  brief?: PlanBriefInput
+  actions: PlanActionInput[]
+}
+
+export interface StagePlanBatchActionResult extends PlanEditResult {
+  actionIndex: number
+}
+
+export interface StagePlanBatchResult {
+  ok: boolean
+  code: 'staged' | 'stale_run' | 'stale_revision' | 'edit_failed'
+  worldRevision: number
+  planRevision: number
+  currentWorldRevision: number
+  currentPlanRevision: number
+  editResults: StagePlanBatchActionResult[]
+  replaceResult?: PlanEditResult
+  briefResult?: PlanEditResult
+  failedStage?: 'replace' | 'brief' | 'action'
+  failedActionIndex?: number
+  error?: string
+}
+
+export interface RemovePlanActionsBatchInput {
+  expectedRunId: string
+  expectedPlanRevision: number
+  actionIds: string[]
+}
+
+export interface RemovePlanActionsBatchFailure {
+  actionIndex: number
+  actionId: string
+  error: string
+}
+
+export interface RemovePlanActionsBatchResult {
+  ok: boolean
+  code: 'removed' | 'stale_run' | 'stale_plan' | 'edit_failed'
+  planRevision: number
+  currentPlanRevision: number
+  editResults: PlanEditResult[]
+  failures: RemovePlanActionsBatchFailure[]
+  error?: string
+}
 
 const OBJECTIVE_WORK_ORDER_IDS: WorkOrderId[] = [
   'work-seal-lab',
@@ -86,11 +143,14 @@ const addLearningEvidence = (
   phase: LearningPhase,
   detail: string,
   actor: 'manual' | 'agent',
+  completesPhase = true,
+  groundingKind?: GroundingEvidenceKind,
 ) => {
   const phases: LearningPhase[] = ['ground', 'plan', 'supervise', 'verify']
   if (phase === 'ground' && phases.every((candidate) => state.learning.achieved[candidate])) {
     state.learning.achieved = { ground: false, plan: false, supervise: false, verify: false }
   }
+  const loopWasComplete = phases.every((candidate) => state.learning.achieved[candidate])
 
   const evidencePrefix = `evidence-${state.operationsPlan.revision}-${state.worldRevision}`
   const evidenceSequence = state.learning.evidence.filter((entry) => entry.id.startsWith(evidencePrefix)).length + 1
@@ -102,11 +162,22 @@ const addLearningEvidence = (
     worldRevision: state.worldRevision,
     planRevision: state.operationsPlan.revision,
     elapsedHours: state.elapsedHours,
+    ...(groundingKind ? {
+      groundingKind,
+      learningLoop: state.learning.completedLoops,
+    } : {}),
   })
   state.learning.evidence = state.learning.evidence.slice(0, 24)
+  if (!completesPhase || state.learning.currentPhase !== phase) {
+    const currentPhase = state.learning.currentPhase
+    state.learning.coaching = currentPhase === 'supervise'
+      ? 'Inspect what changed after this checkpoint, then choose whether to continue, pause, or revise.'
+      : learningCopy[currentPhase]
+    return
+  }
   state.learning.achieved[phase] = true
 
-  if (phases.every((candidate) => state.learning.achieved[candidate])) {
+  if (!loopWasComplete && phases.every((candidate) => state.learning.achieved[candidate])) {
     state.learning.completedLoops += 1
     state.learning.currentPhase = 'ground'
     state.learning.coaching = 'Operating loop complete. Ground the next plan in the new world revision.'
@@ -122,9 +193,40 @@ export const recordLearningEvidence = (
   phase: LearningPhase,
   detail: string,
   actor: 'manual' | 'agent' = 'manual',
+  options: LearningEvidenceOptions = {},
 ): MoonbaseState => {
   const state = cloneState(source)
-  addLearningEvidence(state, phase, detail, actor)
+  const complementaryGroundingExists = options.groundingKind
+      ? state.learning.evidence.some((entry) => (
+        entry.phase === 'ground' &&
+        entry.learningLoop === state.learning.completedLoops &&
+        entry.groundingKind !== undefined &&
+        entry.groundingKind !== options.groundingKind
+      ))
+    : false
+  const completedLoop = (['ground', 'plan', 'supervise', 'verify'] as const).every(
+    (candidate) => state.learning.achieved[candidate],
+  )
+  const completesPhase = options.completesPhase ?? (
+    phase === 'ground'
+      ? options.groundingKind
+        ? (!completedLoop && state.learning.achieved.ground) || complementaryGroundingExists
+        : false
+      : true
+  )
+  addLearningEvidence(
+    state,
+    phase,
+    detail,
+    actor,
+    completesPhase,
+    options.groundingKind,
+  )
+  if (phase === 'ground' && options.groundingKind && !state.learning.achieved.ground) {
+    state.learning.coaching = options.groundingKind === 'incident_telemetry'
+      ? 'Now compare crew and equipment before staging the response.'
+      : 'Now inspect incident pressure, reserves, power, and work dependencies before staging the response.'
+  }
   const activityPhase = phase === 'ground' ? 'observed' : phase === 'plan' ? 'planned' : phase === 'verify' ? 'verified' : 'changed'
   addEvent(state, activityPhase, actor, detail)
   return state
@@ -136,11 +238,20 @@ const draftError = (state: MoonbaseState): PlanEditResult => ({
   error: 'The Operations Plan is already committed. Clear it to stage a new plan.',
 })
 
+const operationsAreAvailable = (state: MoonbaseState) => state.settlement.phase === 'operations'
+
+const operationsUnavailableError = (state: MoonbaseState): PlanEditResult => ({
+  ok: false,
+  planRevision: state.operationsPlan.revision,
+  error: `The Operations Plan is unavailable while the settlement phase is ${state.settlement.phase}. Complete base construction and begin operations first.`,
+})
+
 export const setPlanBrief = (
   source: MoonbaseState,
   input: PlanBriefInput,
   actor: 'manual' | 'agent' = 'manual',
 ): [MoonbaseState, PlanEditResult] => {
+  if (!operationsAreAvailable(source)) return [source, operationsUnavailableError(source)]
   const state = cloneState(source)
   if (state.operationsPlan.status !== 'draft') return [state, draftError(state)]
 
@@ -180,6 +291,7 @@ export const stagePlanAction = (
   input: PlanActionInput,
   actor: 'manual' | 'agent' = 'manual',
 ): [MoonbaseState, PlanEditResult] => {
+  if (!operationsAreAvailable(source)) return [source, operationsUnavailableError(source)]
   const state = cloneState(source)
   if (state.operationsPlan.status !== 'draft') return [state, draftError(state)]
 
@@ -197,6 +309,7 @@ export const removePlanAction = (
   actionId: string,
   actor: 'manual' | 'agent' = 'manual',
 ): [MoonbaseState, PlanEditResult] => {
+  if (!operationsAreAvailable(source)) return [source, operationsUnavailableError(source)]
   const state = cloneState(source)
   if (state.operationsPlan.status !== 'draft') return [state, draftError(state)]
   const existing = state.operationsPlan.actions.find((action) => action.id === actionId)
@@ -214,6 +327,7 @@ export const rebaseOperationsPlan = (
   source: MoonbaseState,
   actor: 'manual' | 'agent' = 'manual',
 ): [MoonbaseState, PlanEditResult] => {
+  if (!operationsAreAvailable(source)) return [source, operationsUnavailableError(source)]
   const state = cloneState(source)
   if (state.operationsPlan.status !== 'draft') return [state, draftError(state)]
   state.operationsPlan.basedOnWorldRevision = state.worldRevision
@@ -226,6 +340,25 @@ export const clearOperationsPlan = (
   source: MoonbaseState,
   actor: 'manual' | 'agent' = 'manual',
 ): [MoonbaseState, PlanEditResult] => {
+  if (!operationsAreAvailable(source)) return [source, operationsUnavailableError(source)]
+  const hasUnverifiedAdvance =
+    source.operationsPlan.baseline !== null &&
+    source.lastAdvance !== null &&
+    (
+      source.elapsedHours > source.operationsPlan.baseline.elapsedHours ||
+      source.operationsPlan.status === 'completed'
+    ) &&
+    !(
+      source.verification?.verifiedAtWorldRevision === source.worldRevision &&
+      source.verification.verifiedAtHour === source.elapsedHours
+    )
+  if (hasUnverifiedAdvance) {
+    return [source, {
+      ok: false,
+      planRevision: source.operationsPlan.revision,
+      error: 'Verify the supervised outcome before opening a new Operations Plan.',
+    }]
+  }
   const state = cloneState(source)
   const nextRevision = state.operationsPlan.revision + 1
   state.operationsPlan = {
@@ -234,13 +367,13 @@ export const clearOperationsPlan = (
     status: 'draft',
     revision: nextRevision,
     basedOnWorldRevision: state.worldRevision,
-    objective: null,
+    objective: state.objective.id,
     constraints: {
       oxygenFloorHours: state.objective.recommendedOxygenFloorHours,
       protectedCrewIds: [],
     },
     horizonHours: MAX_ADVANCE_HOURS,
-    stopCondition: null,
+    stopCondition: { kind: 'objective_complete' },
     actions: [],
     committedAtHour: null,
     baseline: null,
@@ -248,6 +381,179 @@ export const clearOperationsPlan = (
   state.verification = null
   addEvent(state, 'planned', actor, 'Cleared the Operations Plan and opened a fresh draft.', [state.operationsPlan.id])
   return [state, { ok: true, planRevision: nextRevision }]
+}
+
+/**
+ * Applies a complete plan-staging request to an isolated candidate state. The
+ * caller receives the original state object on any stale revision or edit
+ * failure, so a store can publish the candidate with one atomic write only
+ * after every requested edit succeeds.
+ */
+export const stageOperationsPlanBatch = (
+  source: MoonbaseState,
+  input: StagePlanBatchInput,
+  actor: 'manual' | 'agent' = 'manual',
+): [MoonbaseState, StagePlanBatchResult] => {
+  const result = (
+    values: Partial<StagePlanBatchResult>,
+  ): StagePlanBatchResult => ({
+    ok: false,
+    code: 'edit_failed',
+    worldRevision: source.worldRevision,
+    planRevision: source.operationsPlan.revision,
+    currentWorldRevision: source.worldRevision,
+    currentPlanRevision: source.operationsPlan.revision,
+    editResults: [],
+    ...values,
+  })
+
+  if (input.expectedRunId !== source.runId) {
+    return [source, result({ code: 'stale_run' })]
+  }
+  if (
+    input.expectedWorldRevision !== source.worldRevision ||
+    input.expectedPlanRevision !== source.operationsPlan.revision
+  ) {
+    return [source, result({ code: 'stale_revision' })]
+  }
+  if (!operationsAreAvailable(source)) {
+    const unavailable = operationsUnavailableError(source)
+    return [source, result({ error: unavailable.error })]
+  }
+
+  let candidate = source
+  let replaceResult: PlanEditResult | undefined
+  let briefResult: PlanEditResult | undefined
+  const editResults: StagePlanBatchActionResult[] = []
+
+  if (input.mode === 'replace') {
+    const [nextState, edit] = clearOperationsPlan(candidate, actor)
+    replaceResult = edit
+    if (!edit.ok) {
+      return [source, result({ replaceResult, failedStage: 'replace', error: edit.error })]
+    }
+    candidate = nextState
+  }
+
+  if (input.brief) {
+    const [nextState, edit] = setPlanBrief(candidate, input.brief, actor)
+    briefResult = edit
+    if (!edit.ok) {
+      return [source, result({
+        replaceResult,
+        briefResult,
+        failedStage: 'brief',
+        error: edit.error,
+      })]
+    }
+    candidate = nextState
+  }
+
+  for (const [actionIndex, action] of input.actions.entries()) {
+    const [nextState, edit] = stagePlanAction(candidate, action, actor)
+    const actionResult = { ...edit, actionIndex }
+    editResults.push(actionResult)
+    if (!edit.ok) {
+      return [source, result({
+        replaceResult,
+        briefResult,
+        editResults,
+        failedStage: 'action',
+        failedActionIndex: actionIndex,
+        error: edit.error,
+      })]
+    }
+    candidate = nextState
+  }
+
+  return [candidate, result({
+    ok: true,
+    code: 'staged',
+    planRevision: candidate.operationsPlan.revision,
+    currentPlanRevision: candidate.operationsPlan.revision,
+    replaceResult,
+    briefResult,
+    editResults,
+  })]
+}
+
+/**
+ * Removes a set of staged actions from an isolated candidate and publishes no
+ * intermediate plan. Any stale identity, missing action, or edit failure
+ * returns the original state object so callers cannot observe a partial batch.
+ */
+export const removePlanActionsBatch = (
+  source: MoonbaseState,
+  input: RemovePlanActionsBatchInput,
+  actor: 'manual' | 'agent' = 'manual',
+): [MoonbaseState, RemovePlanActionsBatchResult] => {
+  const result = (
+    values: Partial<RemovePlanActionsBatchResult>,
+  ): RemovePlanActionsBatchResult => ({
+    ok: false,
+    code: 'edit_failed',
+    planRevision: source.operationsPlan.revision,
+    currentPlanRevision: source.operationsPlan.revision,
+    editResults: [],
+    failures: [],
+    ...values,
+  })
+
+  if (input.expectedRunId !== source.runId) {
+    return [source, result({ code: 'stale_run' })]
+  }
+  if (input.expectedPlanRevision !== source.operationsPlan.revision) {
+    return [source, result({ code: 'stale_plan' })]
+  }
+  if (!operationsAreAvailable(source)) {
+    const unavailable = operationsUnavailableError(source)
+    return [source, result({ error: unavailable.error })]
+  }
+  if (source.operationsPlan.status !== 'draft') {
+    const error = draftError(source)
+    return [source, result({ error: error.error })]
+  }
+
+  const actionIds = unique(input.actionIds)
+  if (actionIds.length === 0) {
+    return [source, result({ error: 'Choose at least one staged action to remove.' })]
+  }
+
+  const stagedActionIds = new Set(source.operationsPlan.actions.map((action) => action.id))
+  const failures = actionIds.flatMap((actionId) => {
+    const actionIndex = input.actionIds.indexOf(actionId)
+    return stagedActionIds.has(actionId)
+      ? []
+      : [{ actionIndex, actionId, error: `Unknown plan action: ${actionId}` }]
+  })
+  if (failures.length > 0) {
+    return [source, result({
+      failures,
+      error: failures[0].error,
+    })]
+  }
+
+  let candidate = source
+  const editResults: PlanEditResult[] = []
+  for (const actionId of actionIds) {
+    const [nextState, edit] = removePlanAction(candidate, actionId, actor)
+    editResults.push(edit)
+    if (!edit.ok) {
+      return [source, result({
+        editResults,
+        error: edit.error,
+      })]
+    }
+    candidate = nextState
+  }
+
+  return [candidate, result({
+    ok: true,
+    code: 'removed',
+    planRevision: candidate.operationsPlan.revision,
+    currentPlanRevision: candidate.operationsPlan.revision,
+    editResults,
+  })]
 }
 
 const getOrder = (state: MoonbaseState, id: WorkOrderId) =>
@@ -298,6 +604,39 @@ const hasRequiredEquipment = (state: MoonbaseState, plan: OperationsPlan, order:
 const orderIsConfigured = (state: MoonbaseState, plan: OperationsPlan, order: WorkOrder) =>
   crewForOrder(state, plan, order.id).length > 0 && hasRequiredEquipment(state, plan, order)
 
+const incompleteOrderChain = (state: MoonbaseState, targetId: WorkOrderId) => {
+  const orderedIds: WorkOrderId[] = []
+  const visited = new Set<WorkOrderId>()
+
+  const visit = (id: WorkOrderId) => {
+    if (visited.has(id)) return
+    visited.add(id)
+    const order = getOrder(state, id)
+    if (!order) return
+    order.prerequisiteIds.forEach(visit)
+    if (order.status !== 'complete') orderedIds.push(order.id)
+  }
+
+  visit(targetId)
+  return orderedIds
+}
+
+const orderDependsOn = (
+  state: MoonbaseState,
+  candidateId: WorkOrderId,
+  prerequisiteId: WorkOrderId,
+) => {
+  const visited = new Set<WorkOrderId>()
+  const visit = (id: WorkOrderId): boolean => {
+    if (visited.has(id)) return false
+    visited.add(id)
+    const order = getOrder(state, id)
+    if (!order) return false
+    return order.prerequisiteIds.some((id) => id === prerequisiteId || visit(id))
+  }
+  return candidateId !== prerequisiteId && visit(candidateId)
+}
+
 const estimatedCompletionTimes = (state: MoonbaseState, plan: OperationsPlan) => {
   const memo = new Map<WorkOrderId, number | null>()
   const visiting = new Set<WorkOrderId>()
@@ -342,12 +681,16 @@ const estimatedCompletionTimes = (state: MoonbaseState, plan: OperationsPlan) =>
 const forecastPlan = (state: MoonbaseState, plan: OperationsPlan) => {
   const times = estimatedCompletionTimes(state, plan)
   const objectiveCompletion = times.get('work-research-sintering') ?? null
+  const milestoneTargetId = plan.stopCondition?.kind === 'work_order_complete'
+    ? plan.stopCondition.workOrderId
+    : null
   const affectedWorkOrderIds = unique(plan.actions.map((action) => action.workOrderId))
   const affectedTimes = affectedWorkOrderIds
     .map((id) => times.get(id))
     .filter((time): time is number => typeof time === 'number')
-  const estimatedCompletionHours =
-    plan.objective === 'restore_lab_and_research_sintering'
+  const estimatedCompletionHours = milestoneTargetId
+    ? times.get(milestoneTargetId) ?? null
+    : plan.objective === 'restore_lab_and_research_sintering'
       ? objectiveCompletion
       : affectedTimes.length > 0
         ? Math.max(...affectedTimes)
@@ -396,13 +739,23 @@ const validateStopCondition = (condition: StopCondition | null) => {
   if (!condition) return false
   if (condition.kind === 'oxygen_below') return Number.isFinite(condition.thresholdHours) && condition.thresholdHours >= 0
   if (condition.kind === 'battery_below') return Number.isFinite(condition.thresholdKwh) && condition.thresholdKwh >= 0
-  return true
+  if (condition.kind === 'work_order_complete') return typeof condition.workOrderId === 'string'
+  return condition.kind === 'objective_complete' || condition.kind === 'critical_alert'
 }
 
 export const validateOperationsPlan = (state: MoonbaseState): PlanValidation => {
   const plan = state.operationsPlan
   const issues: ValidationIssue[] = []
   const issue = (entry: ValidationIssue) => issues.push(entry)
+
+  if (!operationsAreAvailable(state)) {
+    issue({
+      code: 'operations_not_ready',
+      severity: 'error',
+      message: `Operations are unavailable while the settlement phase is ${state.settlement.phase}. Complete base construction and begin operations first.`,
+      targetId: plan.id,
+    })
+  }
 
   if (plan.objective !== 'restore_lab_and_research_sintering') {
     issue({ code: 'missing_objective', severity: 'error', message: 'Choose the laboratory recovery objective.' })
@@ -448,16 +801,23 @@ export const validateOperationsPlan = (state: MoonbaseState): PlanValidation => 
       })
     }
   }
-  if (
-    plan.stopCondition?.kind === 'work_order_complete' &&
-    !getOrder(state, plan.stopCondition.workOrderId)
-  ) {
-    issue({
-      code: 'unknown_work_order',
-      severity: 'error',
-      message: `Unknown stop-condition work order: ${plan.stopCondition.workOrderId}`,
-      targetId: plan.stopCondition.workOrderId,
-    })
+  if (plan.stopCondition?.kind === 'work_order_complete') {
+    const target = getOrder(state, plan.stopCondition.workOrderId)
+    if (!target) {
+      issue({
+        code: 'unknown_work_order',
+        severity: 'error',
+        message: `Unknown stop-condition work order: ${plan.stopCondition.workOrderId}`,
+        targetId: plan.stopCondition.workOrderId,
+      })
+    } else if (target.status === 'complete') {
+      issue({
+        code: 'closed_work_order',
+        severity: 'error',
+        message: `${target.label} is already complete; choose the next incomplete milestone.`,
+        targetId: target.id,
+      })
+    }
   }
 
   const crewAssignments = new Map<string, WorkOrderId[]>()
@@ -550,6 +910,21 @@ export const validateOperationsPlan = (state: MoonbaseState): PlanValidation => 
         continue
       }
       equipmentReservations.set(equipment.id, [...(equipmentReservations.get(equipment.id) ?? []), order.id])
+      if (
+        equipment.type === 'eva_suit' &&
+        equipment.status === 'deployed' &&
+        equipment.assignedCrewId &&
+        !equipment.reservedForWorkOrderId
+      ) {
+        const wearer = state.crew.find((candidate) => candidate.id === equipment.assignedCrewId)
+        issue({
+          code: 'equipment_conflict',
+          severity: 'error',
+          message: `${equipment.name} is currently worn by ${wearer?.name ?? equipment.assignedCrewId} for construction EVA. Bring that colonist inside before reserving it.`,
+          actionId: action.id,
+          targetId: equipment.id,
+        })
+      }
       if (equipment.reservedForWorkOrderId && equipment.reservedForWorkOrderId !== order.id) {
         issue({
           code: 'equipment_conflict',
@@ -602,9 +977,31 @@ export const validateOperationsPlan = (state: MoonbaseState): PlanValidation => 
   }
 
   const affected = unique(plan.actions.map((action) => action.workOrderId))
+  const milestoneTargetId = plan.stopCondition?.kind === 'work_order_complete'
+    ? plan.stopCondition.workOrderId
+    : null
+  if (milestoneTargetId && getOrder(state, milestoneTargetId)) {
+    for (const orderId of affected) {
+      if (!orderDependsOn(state, orderId, milestoneTargetId)) continue
+      const order = getOrder(state, orderId)
+      const target = getOrder(state, milestoneTargetId)
+      if (!order || !target) continue
+      issue({
+        code: 'milestone_scope',
+        severity: 'error',
+        message: `${order.label} occurs after the declared ${target.label} milestone and belongs in a later plan.`,
+        targetId: order.id,
+      })
+    }
+  }
+  const requiredObjectiveOrders = milestoneTargetId && getOrder(state, milestoneTargetId)
+    ? incompleteOrderChain(state, milestoneTargetId)
+    : plan.objective === 'restore_lab_and_research_sintering'
+      ? OBJECTIVE_WORK_ORDER_IDS
+      : []
   const ordersToConfigure = unique([
     ...affected,
-    ...(plan.objective === 'restore_lab_and_research_sintering' ? OBJECTIVE_WORK_ORDER_IDS : []),
+    ...requiredObjectiveOrders,
   ])
   for (const orderId of ordersToConfigure) {
     const order = getOrder(state, orderId)
@@ -630,6 +1027,20 @@ export const validateOperationsPlan = (state: MoonbaseState): PlanValidation => 
         })
       }
     }
+    const evaSuitCount = reservedTypes.filter((type) => type === 'eva_suit').length
+    const assignedCrewCount = crewForOrder(state, plan, order.id).length
+    if (
+      order.requiredEquipment.includes('eva_suit') &&
+      evaSuitCount > 0 &&
+      evaSuitCount < assignedCrewCount
+    ) {
+      issue({
+        code: 'missing_equipment',
+        severity: 'error',
+        message: `${order.label} needs one reserved EVA suit per exposed crew member (${assignedCrewCount} crew, ${evaSuitCount} suits).`,
+        targetId: order.id,
+      })
+    }
   }
 
   const preview = forecastPlan(state, plan)
@@ -652,10 +1063,11 @@ export const validateOperationsPlan = (state: MoonbaseState): PlanValidation => 
     })
   }
   if (preview.projectedBatteryKwh <= 0) {
+    const forecastTarget = milestoneTargetId ? 'the declared milestone' : 'the objective'
     issue({
       code: 'power_projection',
       severity: 'error',
-      message: 'The forecast exhausts the battery before the objective completes; mitigate the dust loss.',
+      message: `The forecast exhausts the battery before ${forecastTarget} completes; mitigate the dust loss.`,
       targetId: 'work-clean-solar',
     })
   } else if (preview.projectedBatteryKwh < 8) {
@@ -695,6 +1107,18 @@ export const commitOperationsPlan = (
   expectedPlanRevision: number,
   actor: 'manual' | 'agent' = 'manual',
 ): [MoonbaseState, CommitResult] => {
+  if (!operationsAreAvailable(source)) {
+    return [
+      source,
+      {
+        ok: false,
+        code: 'invalid_plan',
+        worldRevision: source.worldRevision,
+        planRevision: source.operationsPlan.revision,
+        validation: validateOperationsPlan(source),
+      },
+    ]
+  }
   const state = cloneState(source)
   const validation = validateOperationsPlan(state)
   const result = (code: CommitResult['code']): [MoonbaseState, CommitResult] => [
@@ -739,9 +1163,13 @@ export const commitOperationsPlan = (
     if (order.assignedCrewIds.length === 0) continue
     order.logisticsHoursRemaining = calculateLogisticsHours(state, order)
     order.status = orderPrerequisitesComplete(state, order) ? 'queued' : 'blocked'
+    const evaSuitCrewIds = [...order.assignedCrewIds]
     for (const equipmentId of order.reservedEquipmentIds) {
       const equipment = state.equipment.find((candidate) => candidate.id === equipmentId)
-      if (equipment) equipment.assignedCrewId = order.assignedCrewIds[0] ?? null
+      if (!equipment) continue
+      equipment.assignedCrewId = equipment.type === 'eva_suit'
+        ? evaSuitCrewIds.shift() ?? null
+        : order.assignedCrewIds[0] ?? null
     }
   }
 
@@ -791,9 +1219,11 @@ const syncLaboratoryModule = (state: MoonbaseState) => {
 }
 
 const releaseCompletedOrder = (state: MoonbaseState, order: WorkOrder) => {
+  const returnedThroughAirlock = order.hazard !== 'indoor'
   for (const equipmentId of order.reservedEquipmentIds) {
     const equipment = state.equipment.find((candidate) => candidate.id === equipmentId)
     if (!equipment || equipment.reservedForWorkOrderId !== order.id) continue
+    if (returnedThroughAirlock) equipment.location = 'airlock'
     equipment.status = 'available'
     equipment.reservedForWorkOrderId = null
     equipment.assignedCrewId = null
@@ -802,9 +1232,12 @@ const releaseCompletedOrder = (state: MoonbaseState, order: WorkOrder) => {
   for (const crewId of order.assignedCrewIds) {
     const member = state.crew.find((candidate) => candidate.id === crewId)
     if (!member || member.taskId !== order.id) continue
+    if (returnedThroughAirlock) member.location = 'airlock'
+    member.equippedEvaSuitId = null
     member.taskId = null
     member.status = member.fatigue >= 75 ? 'resting' : 'idle'
   }
+  return returnedThroughAirlock
 }
 
 const completeOrder = (state: MoonbaseState, order: WorkOrder) => {
@@ -834,8 +1267,17 @@ const completeOrder = (state: MoonbaseState, order: WorkOrder) => {
     state.research.unlocks = ['production-microwave-sintering']
   }
 
-  releaseCompletedOrder(state, order)
+  const returnedThroughAirlock = releaseCompletedOrder(state, order)
   syncLaboratoryModule(state)
+  if (returnedThroughAirlock) {
+    addEvent(
+      state,
+      'changed',
+      'simulation',
+      `Crew returned through South Airlock and doffed EVA gear after ${order.label}.`,
+      [order.id, 'module-airlock'],
+    )
+  }
   addEvent(state, 'changed', 'simulation', `Completed: ${order.label}.`, [order.id])
 }
 
@@ -843,15 +1285,40 @@ const equipmentSatisfied = (state: MoonbaseState, order: WorkOrder) => {
   const reserved = order.reservedEquipmentIds
     .map((id) => state.equipment.find((item) => item.id === id))
     .filter((item) => Boolean(item))
-  return order.requiredEquipment.every((type) =>
+  const requiredTypesPresent = order.requiredEquipment.every((type) =>
     reserved.some((item) => item?.type === type && item.reservedForWorkOrderId === order.id),
   )
+  if (!requiredTypesPresent) return false
+  if (!order.requiredEquipment.includes('eva_suit')) return true
+  return reserved.filter((item) => (
+    item?.type === 'eva_suit' && item.reservedForWorkOrderId === order.id
+  )).length >= order.assignedCrewIds.length
+}
+
+const atmosphereAtCrewLocation = (state: MoonbaseState, member: CrewMember) => (
+  state.modules.find((module) => module.location === member.location)?.atmosphere ?? 'no'
+)
+
+const constructionCrewOutsidePressure = (state: MoonbaseState) => {
+  const pressure = analyzeConstructionPressure(state.settlement.layout)
+  return new Set(state.settlement.constructionCrew.flatMap((position) => (
+    constructionEnvironmentAt(
+      state.settlement.layout,
+      pressure,
+      position.cell,
+    ) === 'pressurized'
+      ? []
+      : [position.crewId]
+  )))
 }
 
 const prepareOrdersForHour = (state: MoonbaseState) => {
   const eligible = new Set<WorkOrderId>()
 
   for (const member of state.crew) {
+    if (!member.taskId && atmosphereAtCrewLocation(state, member) === 'yes') {
+      member.equippedEvaSuitId = null
+    }
     if (member.taskId) member.status = 'assigned'
     else if (member.status !== 'resting') member.status = 'idle'
   }
@@ -888,7 +1355,15 @@ const prepareOrdersForHour = (state: MoonbaseState) => {
       if (order.logisticsHoursRemaining === 0) {
         for (const crewId of order.assignedCrewIds) {
           const member = state.crew.find((candidate) => candidate.id === crewId)
-          if (member) member.location = order.location
+          if (member) {
+            member.location = order.location
+            const suit = order.reservedEquipmentIds
+              .map((equipmentId) => state.equipment.find((candidate) => candidate.id === equipmentId))
+              .find((equipment) => (
+                equipment?.type === 'eva_suit' && equipment.assignedCrewId === member.id
+              ))
+            member.equippedEvaSuitId = suit?.id ?? null
+          }
         }
         for (const equipmentId of order.reservedEquipmentIds) {
           const equipment = state.equipment.find((candidate) => candidate.id === equipmentId)
@@ -897,7 +1372,12 @@ const prepareOrdersForHour = (state: MoonbaseState) => {
             equipment.status = 'deployed'
           }
         }
-        addEvent(state, 'changed', 'simulation', `Equipment and crew reached ${order.label}.`, [order.id])
+        const transit = order.location === 'solar-skid' || order.location === 'landing-pad'
+          ? 'Crew cycled South Airlock in EVA suits and reached'
+          : order.requiredEquipment.includes('eva_suit')
+            ? 'Crew crossed the pressure boundary in EVA suits and reached'
+            : 'Equipment and crew reached'
+        addEvent(state, 'changed', 'simulation', `${transit} ${order.label}.`, [order.id])
       }
       continue
     }
@@ -905,6 +1385,20 @@ const prepareOrdersForHour = (state: MoonbaseState) => {
     for (const equipmentId of order.reservedEquipmentIds) {
       const equipment = state.equipment.find((candidate) => candidate.id === equipmentId)
       if (equipment) equipment.status = 'deployed'
+    }
+    for (const crewId of order.assignedCrewIds) {
+      const member = state.crew.find((candidate) => candidate.id === crewId)
+      if (!member) continue
+      const suit = order.reservedEquipmentIds
+        .map((equipmentId) => state.equipment.find((candidate) => candidate.id === equipmentId))
+        .find((equipment) => (
+          equipment?.type === 'eva_suit' && equipment.assignedCrewId === member.id
+        ))
+      member.equippedEvaSuitId = suit?.id ?? (
+        atmosphereAtCrewLocation(state, member) === 'yes'
+          ? null
+          : member.equippedEvaSuitId ?? null
+      )
     }
     eligible.add(order.id)
   }
@@ -975,7 +1469,15 @@ const progressOrders = (state: MoonbaseState, eligible: Set<WorkOrderId>, powerS
 }
 
 const updateCrewCondition = (state: MoonbaseState) => {
+  const constructionExposedCrewIds = constructionCrewOutsidePressure(state)
   for (const member of state.crew) {
+    if (
+      (atmosphereAtCrewLocation(state, member) !== 'yes' ||
+        constructionExposedCrewIds.has(member.id)) &&
+      !member.equippedEvaSuitId
+    ) {
+      member.health = Math.max(0, member.health - 35)
+    }
     if (member.status === 'working') member.fatigue = Math.min(100, member.fatigue + 3)
     else if (member.status === 'assigned') member.fatigue = Math.min(100, member.fatigue + 1)
     else member.fatigue = Math.max(0, member.fatigue - 2)
@@ -984,6 +1486,20 @@ const updateCrewCondition = (state: MoonbaseState) => {
 
 export const deriveAlerts = (state: MoonbaseState): AlertState[] => {
   const alerts: AlertState[] = []
+  const constructionExposedCrewIds = constructionCrewOutsidePressure(state)
+  const exposedCrew = state.crew.filter((member) => (
+    (atmosphereAtCrewLocation(state, member) !== 'yes' ||
+      constructionExposedCrewIds.has(member.id)) &&
+    !member.equippedEvaSuitId
+  ))
+  if (exposedCrew.length > 0) {
+    alerts.push({
+      id: 'alert-unprotected-crew',
+      severity: 'critical',
+      title: 'Unprotected crew in vacuum',
+      detail: `${exposedCrew.map((member) => member.name).join(', ')} ${exposedCrew.length === 1 ? 'is' : 'are'} outside breathable atmosphere without a sealed EVA suit.`,
+    })
+  }
   const effectiveGeneration = state.power.solarGenerationKw * (1 - state.power.dustDeratePercent / 100)
   if (state.lab.breached) {
     alerts.push({
@@ -1020,8 +1536,8 @@ export const deriveAlerts = (state: MoonbaseState): AlertState[] => {
     alerts.push({
       id: 'alert-dust-active',
       severity: 'warning',
-      title: 'Dust derate: 50%',
-      detail: 'The base is drawing its battery down while priority solar surfaces remain obscured.',
+      title: `Dust derate: ${round(state.power.dustDeratePercent)}%`,
+      detail: `${round(effectiveGeneration)} kW solar output is carrying ${state.power.demandKw} kW demand while priority surfaces remain obscured.`,
     })
   }
 
@@ -1159,13 +1675,42 @@ export const advanceSimulation = (
   input: AdvanceInput | number,
   actor: 'manual' | 'agent' = 'manual',
 ): [MoonbaseState, AdvanceResult] => {
-  let state = cloneState(source)
   const requestedHours = typeof input === 'number' ? input : input.hours
   const requestedStop = typeof input === 'number' ? undefined : input.stopCondition
   const roundedHours = Math.round(boundedNumber(requestedHours, 1))
   const boundedHours = Math.max(1, Math.min(MAX_ADVANCE_HOURS, roundedHours))
+  if (source.operationsPlan.status === 'completed') {
+    return [
+      source,
+      {
+        requestedHours,
+        boundedHours,
+        advancedHours: 0,
+        stopped: true,
+        stopReason: source.lastAdvance?.stopReason ?? 'horizon_reached',
+        worldRevision: source.worldRevision,
+        completedWorkOrderIds: source.lastAdvance?.completedWorkOrderIds ?? [],
+      },
+    ]
+  }
+  if (!operationsAreAvailable(source)) {
+    return [
+      source,
+      {
+        requestedHours,
+        boundedHours,
+        advancedHours: 0,
+        stopped: true,
+        stopReason: 'operations_not_ready',
+        worldRevision: source.worldRevision,
+        completedWorkOrderIds: [],
+      },
+    ]
+  }
+
+  let state = cloneState(source)
   const plan = state.operationsPlan
-  const stopCondition = requestedStop ?? (plan.status !== 'draft' ? plan.stopCondition ?? undefined : undefined)
+  const committedStop = plan.status !== 'draft' ? plan.stopCondition ?? undefined : undefined
   const initialCriticalIds = new Set(
     state.alerts.filter((alert) => alert.severity === 'critical').map((alert) => alert.id),
   )
@@ -1173,19 +1718,40 @@ export const advanceSimulation = (
     state.workOrders.filter((order) => order.status === 'complete').map((order) => order.id),
   )
   const completedWorkOrderIds: WorkOrderId[] = []
+  const declaredMilestoneComplete =
+    committedStop?.kind === 'work_order_complete' &&
+    getOrder(state, committedStop.workOrderId)?.status === 'complete'
+  const requestedMilestoneComplete =
+    requestedStop?.kind === 'work_order_complete' &&
+    getOrder(state, requestedStop.workOrderId)?.status === 'complete'
+  const committedStopAtStart = declaredMilestoneComplete
+    ? 'work_order_complete' as const
+    : explicitStopReason(state, committedStop ?? null, [], initialCriticalIds)
+  const requestedStopAtStart = requestedMilestoneComplete
+    ? 'work_order_complete' as const
+    : explicitStopReason(state, requestedStop ?? null, [], initialCriticalIds)
   let advancedHours = 0
+  let terminalPlanStop =
+    plan.status === 'committed' && (
+      state.scenarioStatus === 'objective_complete' ||
+      state.scenarioStatus === 'failed' ||
+      committedStopAtStart !== null
+    )
   let stopReason: StopReason | null =
     state.scenarioStatus === 'objective_complete'
       ? 'objective_complete'
       : state.scenarioStatus === 'failed'
         ? 'base_failed'
-        : null
+        : committedStopAtStart ?? requestedStopAtStart
 
   const planHoursAlreadyUsed =
     plan.status !== 'draft' && plan.committedAtHour !== null ? state.elapsedHours - plan.committedAtHour : 0
   const planHoursRemaining = plan.status !== 'draft' ? Math.max(0, plan.horizonHours - planHoursAlreadyUsed) : boundedHours
   const hoursToAttempt = Math.min(boundedHours, planHoursRemaining)
-  if (hoursToAttempt === 0 && plan.status !== 'draft') stopReason = 'horizon_reached'
+  if (hoursToAttempt === 0 && plan.status !== 'draft') {
+    if (!terminalPlanStop) stopReason = 'horizon_reached'
+    terminalPlanStop = true
+  }
 
   for (let step = 0; step < hoursToAttempt && !stopReason; step += 1) {
     const candidate = stepOneHour(state)
@@ -1193,6 +1759,7 @@ export const advanceSimulation = (
       plan.status !== 'draft' ? plan.constraints.oxygenFloorHours : requestedStop?.kind === 'oxygen_below' ? 0 : null
     if (oxygenFloor !== null && candidate.reserves.oxygenHours < oxygenFloor) {
       stopReason = 'oxygen_floor'
+      terminalPlanStop = plan.status === 'committed'
       addEvent(
         state,
         'changed',
@@ -1211,12 +1778,34 @@ export const advanceSimulation = (
       }
     }
 
-    if (state.scenarioStatus === 'failed') stopReason = 'base_failed'
-    else if (state.scenarioStatus === 'objective_complete') stopReason = 'objective_complete'
-    else stopReason = explicitStopReason(state, stopCondition ?? null, completedWorkOrderIds, initialCriticalIds)
+    if (state.scenarioStatus === 'failed') {
+      stopReason = 'base_failed'
+      terminalPlanStop = plan.status === 'committed'
+    } else if (state.scenarioStatus === 'objective_complete') {
+      stopReason = 'objective_complete'
+      terminalPlanStop = plan.status === 'committed'
+    } else {
+      const committedStopReason = explicitStopReason(
+        state,
+        committedStop ?? null,
+        completedWorkOrderIds,
+        initialCriticalIds,
+      )
+      const requestedStopReason = explicitStopReason(
+        state,
+        requestedStop ?? null,
+        completedWorkOrderIds,
+        initialCriticalIds,
+      )
+      stopReason = committedStopReason ?? requestedStopReason
+      if (committedStopReason) terminalPlanStop = plan.status === 'committed'
+    }
 
     const usedAfterStep = planHoursAlreadyUsed + advancedHours
-    if (!stopReason && plan.status !== 'draft' && usedAfterStep >= plan.horizonHours) stopReason = 'horizon_reached'
+    if (plan.status !== 'draft' && usedAfterStep >= plan.horizonHours && !terminalPlanStop) {
+      stopReason = 'horizon_reached'
+      terminalPlanStop = plan.status === 'committed'
+    }
   }
 
   const result: AdvanceResult = {
@@ -1228,13 +1817,21 @@ export const advanceSimulation = (
     worldRevision: state.worldRevision,
     completedWorkOrderIds,
   }
+  if (terminalPlanStop && state.operationsPlan.status === 'committed') {
+    state.operationsPlan.status = 'completed'
+    state.operationsPlan.revision += 1
+  }
   state.lastAdvance = result
-  if (advancedHours > 0) {
+  if (advancedHours > 0 || terminalPlanStop) state.verification = null
+  if (advancedHours > 0 || terminalPlanStop) {
     addLearningEvidence(
       state,
       'supervise',
-      `Supervised ${advancedHours} simulated ${advancedHours === 1 ? 'hour' : 'hours'}${stopReason ? `; stopped on ${stopReason}` : ''}.`,
+      advancedHours > 0
+        ? `Supervised ${advancedHours} simulated ${advancedHours === 1 ? 'hour' : 'hours'}${stopReason ? `; stopped on ${stopReason}` : '; checkpoint reached'}.`
+        : `Supervised the committed safeguards; execution stopped on ${stopReason} before time advanced.`,
       actor,
+      terminalPlanStop,
     )
     addEvent(
       state,
@@ -1269,21 +1866,40 @@ const stopConditionWasRespected = (state: MoonbaseState) => {
 
 const verificationFor = (state: MoonbaseState): VerificationResult => {
   const plan = state.operationsPlan
-  const ready = plan.baseline !== null && plan.status !== 'draft'
+  const ready =
+    operationsAreAvailable(state) &&
+    plan.baseline !== null &&
+    plan.status !== 'draft' &&
+    state.lastAdvance !== null &&
+    (state.elapsedHours > plan.baseline.elapsedHours || plan.status === 'completed')
   const objectiveMet = state.lab.atmosphere === 'yes' && state.research.status === 'complete'
+  const milestoneOrder = plan.stopCondition?.kind === 'work_order_complete'
+    ? getOrder(state, plan.stopCondition.workOrderId)
+    : null
+  const milestoneMet = milestoneOrder?.status === 'complete'
   const oxygenFloorMet = state.reserves.minimumOxygenHours >= plan.constraints.oxygenFloorHours
   const stopConditionRespected = stopConditionWasRespected(state)
   const powerStable = state.power.status !== 'critical'
   const effectiveGeneration = state.power.solarGenerationKw * (1 - state.power.dustDeratePercent / 100)
+  const outcomeCheck: VerificationCheck = milestoneOrder
+    ? {
+        id: 'milestone',
+        label: 'Declared milestone achieved',
+        passed: milestoneMet,
+        evidence: milestoneMet
+          ? `${milestoneOrder.label} completed at elapsed hour ${milestoneOrder.completedAtHour}.`
+          : `${milestoneOrder.label} status is ${milestoneOrder.status}.`,
+      }
+    : {
+        id: 'objective',
+        label: 'Objective achieved',
+        passed: objectiveMet,
+        evidence: objectiveMet
+          ? 'Regolith Sintering is complete and its production job is unlocked.'
+          : `Research status is ${state.research.status}.`,
+      }
   const checks: VerificationCheck[] = [
-    {
-      id: 'objective',
-      label: 'Objective achieved',
-      passed: objectiveMet,
-      evidence: objectiveMet
-        ? 'Regolith Sintering is complete and its production job is unlocked.'
-        : `Research status is ${state.research.status}.`,
-    },
+    outcomeCheck,
     {
       id: 'oxygen_floor',
       label: 'Oxygen floor protected',
@@ -1296,12 +1912,14 @@ const verificationFor = (state: MoonbaseState): VerificationResult => {
       passed: stopConditionRespected,
       evidence: `Last bounded advance stopped on ${state.lastAdvance?.stopReason ?? 'no trigger'}.`,
     },
-    {
-      id: 'lab_pressure',
-      label: 'Laboratory restored',
-      passed: state.lab.sealed && state.lab.atmosphere === 'yes',
-      evidence: `Breach ${state.lab.sealed ? 'sealed' : 'open'}; atmosphere ${state.lab.atmosphere}.`,
-    },
+    ...(!milestoneOrder
+      ? [{
+          id: 'lab_pressure' as const,
+          label: 'Laboratory restored',
+          passed: state.lab.sealed && state.lab.atmosphere === 'yes',
+          evidence: `Breach ${state.lab.sealed ? 'sealed' : 'open'}; atmosphere ${state.lab.atmosphere}.`,
+        }]
+      : []),
     {
       id: 'power',
       label: 'Power remains available',
@@ -1315,7 +1933,13 @@ const verificationFor = (state: MoonbaseState): VerificationResult => {
   if (state.reserves.oxygenHours - plan.constraints.oxygenFloorHours < 3) {
     residualRisks.push('Oxygen has less than three hours of margin above the declared floor.')
   }
-  if (!objectiveMet) residualRisks.push('The laboratory recovery research objective is incomplete.')
+  if (!objectiveMet) {
+    residualRisks.push(
+      milestoneMet
+        ? 'Overall recovery continues: the laboratory recovery research objective is still incomplete.'
+        : 'The laboratory recovery research objective is incomplete.',
+    )
+  }
 
   const success = ready && checks.every((check) => check.passed)
   return {
@@ -1330,7 +1954,9 @@ const verificationFor = (state: MoonbaseState): VerificationResult => {
     summary: !ready
       ? 'Commit and supervise an Operations Plan before verifying it.'
       : success
-        ? 'Verified: laboratory recovery succeeded within the oxygen, power, and stop-condition constraints.'
+        ? milestoneOrder && !objectiveMet
+          ? `Verified milestone: ${milestoneOrder.label} completed safely; the overall laboratory recovery continues.`
+          : 'Verified: laboratory recovery succeeded within the oxygen, power, and stop-condition constraints.'
         : 'Verification found unmet objective or safety checks; inspect the evidence before replanning.',
   }
 }
@@ -1339,16 +1965,27 @@ export const verifyOperationsPlan = (
   source: MoonbaseState,
   actor: 'manual' | 'agent' = 'manual',
 ): [MoonbaseState, VerificationResult] => {
+  if (
+    source.verification?.verifiedAtWorldRevision === source.worldRevision &&
+    source.verification.verifiedAtHour === source.elapsedHours
+  ) {
+    return [source, source.verification]
+  }
+  const verification = verificationFor(source)
+  if (verification.status === 'not_ready') return [source, verification]
+
   const state = cloneState(source)
-  const verification = verificationFor(state)
   state.verification = verification
   addLearningEvidence(state, 'verify', verification.summary, actor)
+  const verificationTargets = source.operationsPlan.stopCondition?.kind === 'work_order_complete'
+    ? [source.operationsPlan.id, source.operationsPlan.stopCondition.workOrderId]
+    : [source.operationsPlan.id, 'module-laboratory', 'research-regolith-sintering']
   addEvent(
     state,
     'verified',
     actor,
     verification.summary,
-    ['operations-plan-001', 'module-laboratory', 'research-regolith-sintering'],
+    verificationTargets,
   )
   return [state, verification]
 }

@@ -161,6 +161,8 @@ export interface CrewMember {
   morale: number
   location: LocationId
   taskId: WorkOrderId | null
+  /** EVA gear currently sealed around this colonist while outside breathable space. */
+  equippedEvaSuitId?: string | null
   skills: Record<SkillKey, number>
 }
 
@@ -317,6 +319,7 @@ export interface OperationsPlan {
 }
 
 export type ValidationCode =
+  | 'operations_not_ready'
   | 'missing_objective'
   | 'missing_stop_condition'
   | 'invalid_horizon'
@@ -335,6 +338,7 @@ export type ValidationCode =
   | 'wrong_equipment_type'
   | 'missing_crew'
   | 'missing_equipment'
+  | 'milestone_scope'
   | 'oxygen_projection'
   | 'power_projection'
 
@@ -384,6 +388,7 @@ export interface AdvanceInput {
 }
 
 export type StopReason =
+  | 'operations_not_ready'
   | 'objective_complete'
   | 'oxygen_floor'
   | 'oxygen_below'
@@ -404,7 +409,7 @@ export interface AdvanceResult {
 }
 
 export interface VerificationCheck {
-  id: 'objective' | 'oxygen_floor' | 'stop_condition' | 'lab_pressure' | 'power'
+  id: 'objective' | 'milestone' | 'oxygen_floor' | 'stop_condition' | 'lab_pressure' | 'power'
   label: string
   passed: boolean
   evidence: string
@@ -450,6 +455,17 @@ export interface LearningEvidenceEntry {
   worldRevision: number
   planRevision: number
   elapsedHours: number
+  groundingKind?: GroundingEvidenceKind
+  learningLoop?: number
+}
+
+export type GroundingEvidenceKind = 'incident_telemetry' | 'crew_equipment_comparison'
+
+export interface LearningEvidenceOptions {
+  /** Ground advances only after both grounding evidence kinds exist for this loop. */
+  groundingKind?: GroundingEvidenceKind
+  /** Records an observation without completing its phase. Defaults to true. */
+  completesPhase?: boolean
 }
 
 export interface LearningState {
@@ -463,6 +479,8 @@ export interface LearningState {
 export interface MoonbaseState {
   baseName: string
   seed: number
+  runSequence: number
+  runId: string
   missionDay: number
   hour: number
   elapsedHours: number

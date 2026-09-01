@@ -300,7 +300,9 @@ export const advanceConstructionWorkerSimulation = (
     order.status = 'blocked'
     order.block = {
       kind: 'no_path',
-      message: 'No walkable route from an available builder to this construction site.',
+      message: routing.evaRequiredOrderIds.includes(order.id)
+        ? 'A sealed EVA suit is required to cycle the airlock and reach this construction site.'
+        : 'No walkable route from an available builder to this construction site.',
     }
     const carrierId = carriedConstructionMaterial(order) > 0
       ? order.materials.carriedByCrewId ?? null

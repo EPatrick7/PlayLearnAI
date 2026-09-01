@@ -12,7 +12,6 @@ import {
 import {
   boundaryAt,
   cellsOnConstructionLine,
-  detectRooms,
   eraseLine,
   getWorkstationCells,
   getWorkstationFootprintSize,
@@ -47,6 +46,12 @@ import {
   getBoundaryConnection,
   getBoundaryDoorAxis,
 } from '../game/boundaryConnections'
+import {
+  analyzeConstructionPressure,
+  constructionCellRequiresEva,
+  constructionDoorConnectionAt,
+  type ConstructionPressureTopology,
+} from '../game/pressureTopology'
 import { GameIcon } from './GameIcon'
 import {
   constructionOrderActivity,
@@ -165,6 +170,28 @@ const workerVariants = ['umber', 'gold', 'olive', 'rose', 'copper', 'slate'] as 
 const workerAccents = ['#a75b4c', '#527b7d', '#68805f', '#8a6378', '#9a7046', '#596f7c']
 
 const keyFor = (point: GridPoint) => `${point.x}:${point.y}`
+
+const doorPressurePresentation = (
+  topology: ConstructionPressureTopology,
+  cell: GridPoint,
+) => {
+  const door = constructionDoorConnectionAt(topology, cell)
+  const role = door?.role ?? 'invalid'
+  if (role === 'invalid') {
+    return {
+      className: 'door-invalid',
+      label: 'Unsealed hatch',
+      role,
+      texture: 'invalid-hatch',
+    }
+  }
+  return {
+    className: role === 'pressure_door' ? 'door-pressure' : 'door-airlock',
+    label: role === 'pressure_door' ? 'Interior pressure door' : 'Exterior airlock',
+    role,
+    texture: role === 'pressure_door' ? 'pressure-door' : 'airlock',
+  }
+}
 
 const materialAmount = (value: number) => {
   const rounded = Math.round(value * 10) / 10
@@ -297,8 +324,13 @@ export function ConstructionMap({
   const overlappingCell = (cells: readonly GridPoint[]) => cells.find(
     (cell) => (overlapCounts.get(keyFor(cell)) ?? 0) > 1,
   ) ?? null
-  const rooms = useMemo(() => detectRooms(layout), [layout])
-  const plannedRooms = useMemo(() => detectRooms(planningLayout), [planningLayout])
+  const pressureTopology = useMemo(() => analyzeConstructionPressure(layout), [layout])
+  const plannedPressureTopology = useMemo(
+    () => analyzeConstructionPressure(planningLayout),
+    [planningLayout],
+  )
+  const rooms = pressureTopology.rooms
+  const plannedRooms = plannedPressureTopology.rooms
 
   const roomByCell = useMemo(() => {
     const map = new Map<string, (typeof rooms)[number]>()
@@ -776,10 +808,11 @@ export function ConstructionMap({
 
   useLayoutEffect(() => {
     if (cameraInitializedRef.current) return
-    cameraInitializedRef.current = true
     if (handledFocusRequestRef.current !== null) return
     const frame = requestAnimationFrame(() => {
-      if (handledFocusRequestRef.current === null) centerMapInViewport()
+      if (handledFocusRequestRef.current !== null) return
+      cameraInitializedRef.current = true
+      centerMapInViewport()
     })
     return () => cancelAnimationFrame(frame)
   }, [centerMapInViewport])
@@ -922,7 +955,7 @@ export function ConstructionMap({
       return {
         cells: [point],
         valid,
-        label: `Door · 1 tile · ${BOUNDARY_SPECS.door.materialCost} material`,
+        label: `${BOUNDARY_SPECS.door.label} · 1 tile · ${BOUNDARY_SPECS.door.materialCost} material`,
         warning: null,
         error: valid ? null : 'Door needs an existing wall tile.',
       }
@@ -956,6 +989,10 @@ export function ConstructionMap({
       .forEach((cell) => boundaries.set(keyFor(cell), { ...cell, kind: selectedTool }))
     return { ...planningLayout, boundaries: [...boundaries.values()] }
   }, [planningLayout, preview, selectedTool])
+  const previewPressureTopology = useMemo(
+    () => previewBoundaryLayout ? analyzeConstructionPressure(previewBoundaryLayout) : null,
+    [previewBoundaryLayout],
+  )
 
   const commitAt = (point: GridPoint) => {
     if (!selectedTool) return false
@@ -973,7 +1010,7 @@ export function ConstructionMap({
     }
     if (selectedTool === 'door') {
       const result = paintBoundaryCell(planningLayout, point, 'door')
-      onApply(result, 'Door')
+      onApply(result, BOUNDARY_SPECS.door.label)
       return result.ok
     }
 
@@ -1566,10 +1603,13 @@ export function ConstructionMap({
           const doorAxis = boundary.kind === 'door'
             ? getBoundaryDoorAxis(connection.mask)
             : null
+          const doorPresentation = doorAxis
+            ? doorPressurePresentation(pressureTopology, boundary)
+            : null
           return (
             <span
               aria-hidden="true"
-              className={`construction-boundary construction-inspect-target boundary-${boundary.kind} ${connection.className} ${doorAxis ? `door-airlock door-${doorAxis}` : ''}`}
+              className={`construction-boundary construction-inspect-target boundary-${boundary.kind} ${connection.className} ${doorAxis ? `${doorPresentation!.className} door-${doorAxis}` : ''}`}
               data-boundary-connection={connection.name}
               data-boundary-mask={connection.mask}
               data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -1577,7 +1617,9 @@ export function ConstructionMap({
               data-connect-south={connection.mask & BOUNDARY_CONNECTION_BITS.south ? 'true' : undefined}
               data-connect-west={connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
               data-door-axis={doorAxis ?? undefined}
-              data-door-texture={doorAxis ? 'airlock' : undefined}
+              data-door-role={doorPresentation?.role}
+              data-door-texture={doorPresentation?.texture}
+              data-door-label={doorPresentation?.label}
               data-grid-x={boundary.x}
               data-grid-y={boundary.y}
               data-inspect-item-key={`boundary:${keyFor(boundary)}`}
@@ -1655,9 +1697,15 @@ export function ConstructionMap({
             const boundary = order.target.construct ?? order.target.deconstruct
             if (!boundary) return null
             const connectionLayout = order.target.construct ? planningLayout : layout
+            const connectionTopology = order.target.construct
+              ? plannedPressureTopology
+              : pressureTopology
             const connection = getBoundaryConnection(connectionLayout, cell)
             const doorAxis = boundary.kind === 'door'
               ? getBoundaryDoorAxis(connection.mask)
+              : null
+            const doorPresentation = doorAxis
+              ? doorPressurePresentation(connectionTopology, cell)
               : null
             const stackCount = overlapCounts.get(keyFor(cell)) ?? 0
             return (
@@ -1665,7 +1713,7 @@ export function ConstructionMap({
                 aria-expanded={stackCount > 1 ? stackOpenCellKey === keyFor(cell) : undefined}
                 aria-haspopup={stackCount > 1 ? 'dialog' : undefined}
                 aria-label={`${constructionOrderLabel(order)} blueprint, ${activity}, ${progress} percent${stackCount > 1 ? `, ${stackCount} things share this tile; activate to choose` : ''}`}
-                className={`construction-blueprint construction-blueprint-boundary construction-inspect-target construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${order.forcedCrewId ? 'manual-priority' : ''} ${connection.className} ${doorAxis ? `door-airlock door-${doorAxis}` : ''}`}
+                className={`construction-blueprint construction-blueprint-boundary construction-inspect-target construction-boundary boundary-${boundary.kind} blueprint-${order.operation} status-${order.status} ${order.forcedCrewId ? 'manual-priority' : ''} ${connection.className} ${doorAxis ? `${doorPresentation!.className} door-${doorAxis}` : ''}`}
                 data-boundary-connection={connection.name}
                 data-boundary-mask={connection.mask}
                 data-connect-east={connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -1675,7 +1723,9 @@ export function ConstructionMap({
                 data-construction-order-id={order.id}
                 data-construction-order-status={order.status}
                 data-door-axis={doorAxis ?? undefined}
-                data-door-texture={doorAxis ? 'airlock' : undefined}
+                data-door-label={doorPresentation?.label}
+                data-door-role={doorPresentation?.role}
+                data-door-texture={doorPresentation?.texture}
                 data-forced-crew-id={order.forcedCrewId ?? undefined}
                 data-grid-x={cell.x}
                 data-grid-y={cell.y}
@@ -1738,6 +1788,9 @@ export function ConstructionMap({
           const showWorkerTask = Boolean(order && (workerActive || order.block))
           const cell = crewCells.get(member.id)
           if (!cell) return null
+          const requiresEva = constructionCellRequiresEva(layout, pressureTopology, cell)
+          const suited = Boolean(member.equippedEvaSuitId)
+          const exposed = requiresEva && !suited
           const name = member.name
           const workerInitials = name.split(' ').map((part) => part[0]).join('').slice(0, 2)
           const stackCount = overlapCounts.get(keyFor(cell)) ?? 0
@@ -1747,11 +1800,13 @@ export function ConstructionMap({
               aria-haspopup={stackCount > 1 ? 'dialog' : undefined}
               aria-label={`${order
                 ? `${name}, ${activity}, ${constructionOrderLabel(order)}${carriedMaterial > 0 ? `, carrying ${materialAmount(carriedMaterial)} material` : ''}`
-                : `${name}, ${member.status}`}${stackCount > 1 ? `, ${stackCount} things share this tile; activate to choose` : ''}`}
-              className={`construction-pawn construction-inspect-target ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'} ${order?.forcedCrewId === member.id ? 'manual-priority-worker' : ''} ${carriedMaterial > 0 ? 'worker-carrying' : ''}`}
+                : `${name}, ${member.status}`}, ${suited ? `sealed EVA suit ${member.equippedEvaSuitId}` : exposed ? 'WARNING: unprotected in vacuum' : 'breathing room air'}${stackCount > 1 ? `, ${stackCount} things share this tile; activate to choose` : ''}`}
+              className={`construction-pawn construction-inspect-target ${order ? `construction-worker worker-${activityClass}` : 'construction-idle-pawn'} ${order?.forcedCrewId === member.id ? 'manual-priority-worker' : ''} ${carriedMaterial > 0 ? 'worker-carrying' : ''} ${exposed ? 'construction-pawn--exposed' : ''}`}
               data-construction-worker-id={order ? member.id : undefined}
               data-construction-worker-state={order ? activityClass : undefined}
               data-crew-id={member.id}
+              data-crew-breathing={suited ? 'eva' : exposed ? 'unsafe' : 'room'}
+              data-crew-eva-suit-id={member.equippedEvaSuitId ?? undefined}
               data-grid-x={cell.x}
               data-grid-y={cell.y}
               data-inspect-item-key={`crew:${member.id}`}
@@ -1770,8 +1825,11 @@ export function ConstructionMap({
                 showStatusDot={!order || workerActive}
                 size="compact"
                 status={workerActive ? 'working' : member.status}
+                suited={suited}
                 variant={workerVariants[memberIndex % workerVariants.length]}
               />
+              {suited && <span aria-hidden="true" className="construction-eva-badge">EVA</span>}
+              {exposed && <span aria-hidden="true" className="construction-eva-badge construction-eva-badge--unsafe">NO O₂</span>}
               {order && showWorkerTask && (
                 <span className="construction-worker-task">
                   <GameIcon name={constructionActivityIcon(order)} />
@@ -1811,10 +1869,13 @@ export function ConstructionMap({
             const doorAxis = boundaryPreview && selectedTool === 'door'
               ? getBoundaryDoorAxis(connection.mask)
               : null
+            const doorPresentation = doorAxis && previewPressureTopology
+              ? doorPressurePresentation(previewPressureTopology, cell)
+              : null
             return (
               <span
                 aria-hidden="true"
-                className={`construction-preview ${preview.valid ? 'valid' : 'invalid'} ${preview.warning ? 'warning' : ''} preview-${selectedTool} ${boundaryPreview ? `construction-boundary boundary-${selectedTool} ${connection.className} ${doorAxis ? `door-airlock door-${doorAxis}` : ''}` : ''}`}
+                className={`construction-preview ${preview.valid ? 'valid' : 'invalid'} ${preview.warning ? 'warning' : ''} preview-${selectedTool} ${boundaryPreview ? `construction-boundary boundary-${selectedTool} ${connection.className} ${doorAxis ? `${doorPresentation!.className} door-${doorAxis}` : ''}` : ''}`}
                 data-boundary-connection={connection?.name}
                 data-boundary-mask={connection?.mask}
                 data-connect-east={connection && connection.mask & BOUNDARY_CONNECTION_BITS.east ? 'true' : undefined}
@@ -1822,7 +1883,9 @@ export function ConstructionMap({
                 data-connect-south={connection && connection.mask & BOUNDARY_CONNECTION_BITS.south ? 'true' : undefined}
                 data-connect-west={connection && connection.mask & BOUNDARY_CONNECTION_BITS.west ? 'true' : undefined}
                 data-door-axis={doorAxis ?? undefined}
-                data-door-texture={doorAxis ? 'airlock' : undefined}
+                data-door-label={doorPresentation?.label}
+                data-door-role={doorPresentation?.role}
+                data-door-texture={doorPresentation?.texture}
                 data-grid-x={cell.x}
                 data-grid-y={cell.y}
                 data-preview-kind={selectedTool}

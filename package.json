@@ -4,18 +4,21 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "audio:generate": "node scripts/generate-bgm.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:webmcp": "vitest run src/webmcp",
     "test:watch": "vitest",
     "preview": "vite preview"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "ajv": "^8.20.0",
     "react": "latest",
     "react-dom": "latest",
+    "vite": "latest",
     "zustand": "latest"
   },
   "devDependencies": {

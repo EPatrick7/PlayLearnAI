@@ -25,6 +25,8 @@ export type GameIconName =
   | 'minus'
   | 'pause'
   | 'play'
+  | 'music'
+  | 'musicOff'
   | 'fastForward'
   | 'verify'
   | 'map'
@@ -206,6 +208,24 @@ function IconArtwork({ name }: { name: GameIconName }) {
       )
     case 'play':
       return <path d="m7 4 12 8-12 8V4Z" />
+    case 'music':
+      return (
+        <>
+          <path d="M9 18V6.5L19 4v11.5" />
+          <path d="M9 9l10-2.5" />
+          <ellipse cx="6.5" cy="18" rx="2.5" ry="2" />
+          <ellipse cx="16.5" cy="15.5" rx="2.5" ry="2" />
+        </>
+      )
+    case 'musicOff':
+      return (
+        <>
+          <path d="M9 15.5v-9L19 4v8" />
+          <path d="M9 9l7.5-1.9" />
+          <ellipse cx="6.5" cy="18" rx="2.5" ry="2" />
+          <path d="m4 4 16 16" />
+        </>
+      )
     case 'fastForward':
       return (
         <>

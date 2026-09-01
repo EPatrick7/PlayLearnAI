@@ -158,9 +158,9 @@ const starterWorkstations = (): WorkstationPlacement[] => [
     id: 'starter-bunk-mateo',
     type: 'bed',
     label: 'Mateo bunk',
-    origin: { x: 6, y: 8 },
+    origin: { x: 5, y: 8 },
     size: { width: 1, height: 2 },
-    rotation: 0,
+    rotation: 90,
   },
 ]
 

@@ -5,6 +5,13 @@ import {
   type GridPoint,
 } from './construction'
 import type { ConstructionOrder } from './constructionJobs'
+import {
+  analyzeConstructionPressure,
+  constructionCellIsPressureBreach,
+  constructionEnvironmentAt,
+  constructionPressureStepAllowed,
+  type ConstructionPressureTopology,
+} from './pressureTopology'
 
 export interface ConstructionRoute {
   /** The shortest route, including both the start and destination cells. */
@@ -26,6 +33,13 @@ export interface ConstructionPathfindingOptions {
    * step off it so older saves and simultaneous assignments can recover.
    */
   transientBlockedCells?: readonly GridPoint[]
+  /**
+   * Explicit false forbids airlock/vacuum occupancy. Undefined preserves the
+   * structural-route behavior used by generic planning and legacy callers.
+   */
+  hasEvaSuit?: boolean
+  /** Reuses a topology analysis across the several route legs in one update. */
+  pressureTopology?: ConstructionPressureTopology
 }
 
 const cardinalDirections: readonly GridPoint[] = [
@@ -75,13 +89,27 @@ const blockedCellKeys = (layout: ConstructionLayout) => {
 const routeBlockedCellKeys = (
   layout: ConstructionLayout,
   transientBlockedCells: readonly GridPoint[] | undefined,
+  pressureTopology: ConstructionPressureTopology,
 ) => {
   const blocked = blockedCellKeys(layout)
+  pressureTopology.breachCells.forEach((cell) => blocked.add(pointKey(cell)))
   transientBlockedCells?.forEach((cell) => {
     if (isInConstructionBounds(cell, layout)) blocked.add(pointKey(cell))
   })
   return blocked
 }
+
+const topologyFor = (
+  layout: ConstructionLayout,
+  options: ConstructionPathfindingOptions,
+) => options.pressureTopology ?? analyzeConstructionPressure(layout)
+
+const suitAllowsCell = (
+  layout: ConstructionLayout,
+  topology: ConstructionPressureTopology,
+  cell: GridPoint,
+  hasEvaSuit: boolean | undefined,
+) => hasEvaSuit !== false || constructionEnvironmentAt(layout, topology, cell) === 'pressurized'
 
 const visitLimit = (
   layout: ConstructionLayout,
@@ -129,7 +157,12 @@ export const getConstructionApproachCells = (
 ): GridPoint[] => {
   const normalizedTargets = uniqueSortedInBoundsPoints(layout, targetCells)
   const targetKeys = new Set(normalizedTargets.map(pointKey))
-  const blocked = routeBlockedCellKeys(layout, options.transientBlockedCells)
+  const pressureTopology = topologyFor(layout, options)
+  const blocked = routeBlockedCellKeys(
+    layout,
+    options.transientBlockedCells,
+    pressureTopology,
+  )
   const approaches = new Map<string, GridPoint>()
 
   normalizedTargets.forEach((target) => {
@@ -142,7 +175,8 @@ export const getConstructionApproachCells = (
       if (
         isInConstructionBounds(candidate, layout) &&
         !targetKeys.has(key) &&
-        !blocked.has(key)
+        !blocked.has(key) &&
+        suitAllowsCell(layout, pressureTopology, candidate, options.hasEvaSuit)
       ) {
         approaches.set(key, candidate)
       }
@@ -163,12 +197,20 @@ export const findConstructionPath = (
   destinations: readonly GridPoint[],
   options: ConstructionPathfindingOptions = {},
 ): ConstructionRoute | null => {
+  const pressureTopology = topologyFor(layout, options)
   const physicallyBlocked = blockedCellKeys(layout)
-  const blocked = routeBlockedCellKeys(layout, options.transientBlockedCells)
+  const blocked = routeBlockedCellKeys(
+    layout,
+    options.transientBlockedCells,
+    pressureTopology,
+  )
   const startKey = pointKey(start)
   const destinationKeys = new Set(
     uniqueSortedInBoundsPoints(layout, destinations)
-      .filter((point) => !blocked.has(pointKey(point)))
+      .filter((point) => (
+        !blocked.has(pointKey(point)) &&
+        suitAllowsCell(layout, pressureTopology, point, options.hasEvaSuit)
+      ))
       .map(pointKey),
   )
   const limit = visitLimit(layout, options.maxVisitedCells)
@@ -177,6 +219,8 @@ export const findConstructionPath = (
     limit === 0 ||
     !isInConstructionBounds(start, layout) ||
     physicallyBlocked.has(startKey) ||
+    constructionCellIsPressureBreach(pressureTopology, start) ||
+    !suitAllowsCell(layout, pressureTopology, start, options.hasEvaSuit) ||
     destinationKeys.size === 0
   ) return null
 
@@ -207,7 +251,9 @@ export const findConstructionPath = (
       if (
         !parentByKey.has(neighborKey) &&
         isInConstructionBounds(neighbor, layout) &&
-        !blocked.has(neighborKey)
+        !blocked.has(neighborKey) &&
+        suitAllowsCell(layout, pressureTopology, neighbor, options.hasEvaSuit) &&
+        constructionPressureStepAllowed(layout, pressureTopology, current, neighbor)
       ) {
         parentByKey.set(neighborKey, clonePoint(current))
         queue.push(neighbor)
@@ -236,3 +282,18 @@ export const findConstructionOrderApproachPath = (
   order: Pick<ConstructionOrder, 'target'>,
   options: ConstructionPathfindingOptions = {},
 ) => findConstructionApproachPath(layout, start, order.target.cells, options)
+
+/** Finds the nearest topology-valid route from EVA back into breathable space. */
+export const findConstructionPressureReturnPath = (
+  layout: ConstructionLayout,
+  start: GridPoint,
+  options: ConstructionPathfindingOptions = {},
+) => {
+  const pressureTopology = topologyFor(layout, options)
+  return findConstructionPath(
+    layout,
+    start,
+    pressureTopology.rooms.flatMap((room) => room.cells),
+    { ...options, pressureTopology, hasEvaSuit: true },
+  )
+}

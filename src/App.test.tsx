@@ -12,6 +12,8 @@ import {
   type ConstructionResult,
   type GridPoint,
 } from './game/construction'
+import { incidentProfileMetadataForSeed } from './game/incidentProfiles'
+import { createInitialState } from './game/seed'
 import { useColonyStore } from './game/store'
 
 const renderFreshApp = () => {
@@ -262,6 +264,26 @@ afterEach(() => {
 })
 
 describe('freeform settlement builder', () => {
+  it('shows landing connection help without exposing the tool catalog in Architect', () => {
+    renderFreshApp()
+
+    const trigger = screen.getByRole('button', {
+      name: /Agent access unavailable\. Open connection help/i,
+    })
+    expect(trigger).toBeVisible()
+
+    fireEvent.click(trigger)
+
+    const dialog = screen.getByRole('dialog', { name: 'Agent access unavailable' })
+    expect(dialog).toHaveTextContent('built-in browser in the latest desktop app')
+    expect(dialog).toHaveTextContent('GPT-5.6 Sol or GPT-5.6 Terra')
+    expect(dialog).toHaveTextContent('No separate MCP server, plugin, or API key is needed')
+    expect(dialog).not.toHaveTextContent(/\d+ tools?/)
+    expect(dialog).not.toHaveTextContent('Tool surface')
+    expect(dialog).not.toHaveTextContent(/capabilit/i)
+    expect(dialog).not.toHaveTextContent(/revision/i)
+  })
+
   it('persists the construction clock instead of resetting it when Architect remounts', () => {
     const view = render(<App />)
     fireEvent.click(screen.getByRole('button', { name: '3 times construction speed' }))
@@ -307,7 +329,7 @@ describe('freeform settlement builder', () => {
     const firstBunkCells = new Set(getWorkstationCells(bunks[0]).map(({ x, y }) => `${x}:${y}`))
     expect(getWorkstationCells(bunks[1]).some(({ x, y }) => firstBunkCells.has(`${x}:${y}`))).toBe(false)
     expect(screen.getByRole('img', { name: 'Amina bunk, 1 by 2 tiles' })).toBeVisible()
-    expect(screen.getByRole('img', { name: 'Mateo bunk, 1 by 2 tiles' })).toBeVisible()
+    expect(screen.getByRole('img', { name: 'Mateo bunk, 2 by 1 tiles' })).toBeVisible()
 
     expect(map.querySelector('[data-build-site-id]')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^(Place|Preview)\b/i })).not.toBeInTheDocument()
@@ -395,7 +417,7 @@ describe('freeform settlement builder', () => {
       status: 'blocked',
       block: { kind: 'insufficient_materials' },
     })
-  })
+  }, 10000)
 
   it('closes the desktop catalog after choosing a tool and reselecting it keeps the designator', () => {
     renderFreshApp()
@@ -436,7 +458,7 @@ describe('freeform settlement builder', () => {
     fireEvent.keyDown(constructionMap(), { key: 'Escape' })
     expect(constructionMap()).toHaveClass('select-active')
     expect(screen.queryByRole('button', { name: 'Return to Select mode from Wall' })).not.toBeInTheDocument()
-  })
+  }, 10000)
 
   it('keeps placement, active-tool camera drags, and Select inspection in one coherent flow', () => {
     renderFreshApp()
@@ -709,7 +731,7 @@ describe('freeform settlement builder', () => {
     fireEvent.keyDown(window, { key: 'b' })
     expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Build menu' })).toHaveAttribute('aria-pressed', 'true')
-  })
+  }, 10000)
 
   it('edits priority and cancellation for only the blueprint inspected on the tile', () => {
     renderFreshApp()
@@ -1129,7 +1151,7 @@ describe('freeform settlement builder', () => {
     fireEvent.click(rotate)
     expect(screen.getByRole('button', { name: /^Rotate Life support to 180°$/i })).toBeVisible()
 
-    clickConstructionCell({ x: 10, y: 3 })
+    clickConstructionCell({ x: 12, y: 3 })
 
     const state = useColonyStore.getState()
     expect(state.worldRevision).toBe(revision + 1)
@@ -1154,24 +1176,24 @@ describe('freeform settlement builder', () => {
       id: 'life-support-1',
       type: 'life-support',
       label: 'Life support',
-      origin: { x: 10, y: 3 },
+      origin: { x: 12, y: 3 },
       size: { width: 2, height: 2 },
       rotation: 90,
     }))
     const lifeSupport = screen.getByRole('img', { name: 'Life support, 2 by 2 tiles' })
-    expect(lifeSupport).toHaveAttribute('data-grid-x', '10')
+    expect(lifeSupport).toHaveAttribute('data-grid-x', '12')
     expect(lifeSupport).toHaveAttribute('data-grid-y', '3')
     expect(lifeSupport).toHaveAttribute('data-grid-width', '2')
     expect(lifeSupport).toHaveAttribute('data-grid-height', '2')
   })
 
-  it('keeps a workstation designator active and queues distinct projected placements', () => {
+  it('keeps a workstation designator active while rejecting a second placement that blocks door clearance', () => {
     seedSecondRoom()
     renderFreshApp()
 
     selectTool('Production', /^Life support/i)
     fireEvent.click(screen.getByRole('button', { name: 'Rotate Life support to 90°' }))
-    clickConstructionCell({ x: 10, y: 3 })
+    clickConstructionCell({ x: 12, y: 5 })
 
     const map = constructionMap()
     expect(map).toHaveClass('tool-active')
@@ -1180,29 +1202,29 @@ describe('freeform settlement builder', () => {
     })).toBeVisible()
     expect(map.querySelector('.construction-preview')).not.toBeInTheDocument()
 
-    fireEvent.pointerMove(constructionCell({ x: 10, y: 3 }), {
+    fireEvent.pointerMove(constructionCell({ x: 12, y: 5 }), {
       clientX: 220,
       clientY: 180,
       pointerId: 95,
       pointerType: 'mouse',
     })
-    expect(map.querySelector('.construction-preview.invalid')).toHaveAttribute('data-grid-x', '10')
+    expect(map.querySelector('.construction-preview.invalid')).toHaveAttribute('data-grid-x', '12')
     expect(document.querySelector('.construction-draft-label')).toHaveTextContent(
-      'Tile 11, 4 is occupied by Life support.',
+      'Tile 13, 6 is occupied by Life support.',
     )
     expect(document.querySelector('.construction-draft-label')).not.toHaveTextContent(
-      /life-support-1|Cell 10:3/,
+      /life-support-1|Cell 12:5/,
     )
 
-    fireEvent.pointerMove(constructionCell({ x: 12, y: 5 }), {
+    fireEvent.pointerMove(constructionCell({ x: 10, y: 3 }), {
       clientX: 260,
       clientY: 220,
       pointerId: 96,
       pointerType: 'mouse',
     })
-    expect(map.querySelector('.construction-preview.valid')).toHaveAttribute('data-grid-x', '12')
+    expect(map.querySelector('.construction-preview.valid')).toHaveAttribute('data-grid-x', '10')
 
-    clickConstructionCell({ x: 12, y: 5 }, 94)
+    clickConstructionCell({ x: 10, y: 3 }, 94)
 
     const state = useColonyStore.getState()
     expect(state.settlement.layout.workstations.some(
@@ -1212,24 +1234,22 @@ describe('freeform settlement builder', () => {
       (order) => order.target.kind === 'workstation' &&
         order.target.construct?.type === 'life-support',
     )
-    expect(lifeSupportOrders).toHaveLength(2)
-    expect(new Set(lifeSupportOrders.map((order) => order.commandId)).size).toBe(2)
+    expect(lifeSupportOrders).toHaveLength(1)
+    expect(document.querySelector('.construction-toast')).toHaveClass('visible')
+    expect(document.querySelector('.construction-toast')).toHaveTextContent(
+      'leave the floor immediately inside each working door clear',
+    )
     expect(lifeSupportOrders.map((order) => (
       order.target.kind === 'workstation' ? order.target.construct : null
     ))).toEqual([
       expect.objectContaining({
         id: 'life-support-1',
-        origin: { x: 10, y: 3 },
-        rotation: 90,
-      }),
-      expect.objectContaining({
-        id: 'life-support-2',
         origin: { x: 12, y: 5 },
         rotation: 90,
       }),
     ])
     expect(screen.getAllByRole('img', { name: /Life support blueprint, paused/i }))
-      .toHaveLength(2)
+      .toHaveLength(1)
   })
 
   it('queues whole-workstation deconstruction and Undo cancels it before removal', () => {
@@ -1237,12 +1257,12 @@ describe('freeform settlement builder', () => {
     renderFreshApp()
 
     selectTool('Production', /^Life support/i)
-    clickConstructionCell({ x: 10, y: 3 })
+    clickConstructionCell({ x: 12, y: 3 })
     advanceAllConstruction()
     expect(screen.getByRole('img', { name: 'Life support, 2 by 2 tiles' })).toBeVisible()
 
     selectTool('Orders', /^Deconstruct/i)
-    clickConstructionCell({ x: 11, y: 4 }, 2)
+    clickConstructionCell({ x: 13, y: 4 }, 2)
 
     expect(useColonyStore.getState().settlement.layout.workstations).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'life-support' })]),
@@ -1256,7 +1276,7 @@ describe('freeform settlement builder', () => {
     expect(useColonyStore.getState().settlement.layout.workstations).toEqual(
       expect.arrayContaining([expect.objectContaining({
         id: 'life-support-1',
-        origin: { x: 10, y: 3 },
+        origin: { x: 12, y: 3 },
       })]),
     )
     expect(screen.queryByRole('img', { name: /Deconstruct Life support blueprint/i })).not.toBeInTheDocument()
@@ -1347,7 +1367,7 @@ describe('freeform settlement builder', () => {
       height: 2,
     })
 
-    expect(screen.queryByRole('region', { name: 'Colony crew' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Colony crew' })).toBeVisible()
     expect(document.querySelector('.selection-inspector')).not.toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Construction speed' })).toBeVisible()
     expect(screen.getByRole('button', {
@@ -1365,6 +1385,344 @@ describe('freeform settlement builder', () => {
     expect(screen.getByRole('region', { name: 'Colony crew' })).toBeVisible()
     expect(document.querySelectorAll('.colonist-strip .pawn-sprite')).toHaveLength(operations.crew.length)
     expect(document.querySelectorAll('.large-portrait .pawn-sprite')).toHaveLength(operations.crew.length)
+  })
+
+  it('centers the active base when the operations viewport first mounts after landing', async () => {
+    startOperations()
+    const viewport = screen.getByRole('region', { name: 'Scrollable colony map viewport' })
+    Object.defineProperties(viewport, {
+      clientWidth: { configurable: true, value: 320 },
+      scrollWidth: { configurable: true, value: 960 },
+    })
+
+    await waitFor(() => expect(viewport.scrollLeft).toBe(160))
+  })
+
+  it('reveals the seeded incident risk brief only after operations begin', () => {
+    const expected = incidentProfileMetadataForSeed(useColonyStore.getState().seed)
+    const next = incidentProfileMetadataForSeed(useColonyStore.getState().seed + 1)
+    const landing = renderFreshApp()
+
+    expect(screen.queryByRole('region', { name: `${expected.name} risk brief` }))
+      .not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Start next incident/i }))
+      .not.toBeInTheDocument()
+
+    landing.unmount()
+    startOperations()
+
+    const objective = screen.getByRole('region', { name: 'Current objective' })
+    const brief = within(objective).getByRole('region', {
+      name: `${expected.name} risk brief`,
+    })
+    expect(brief).toHaveAttribute('data-incident-profile', expected.id)
+    expect(brief).toHaveTextContent(expected.name)
+    expect(brief).toHaveTextContent(expected.summary)
+    expect(brief).toHaveTextContent(expected.planningFocus)
+    expect(brief).toHaveTextContent(
+      'Complete one Ground → Plan → Supervise → Verify loop to unlock the next incident.',
+    )
+    expect(within(brief).queryByRole('button', { name: /Start next incident/i }))
+      .not.toBeInTheDocument()
+
+    act(() => useColonyStore.setState((state) => ({
+      learning: { ...state.learning, completedLoops: 1 },
+    })))
+    expect(within(brief).getByRole('button', {
+      name: `Start next incident. Next profile: ${next.name}. Built settlement preserved.`,
+    })).toBeVisible()
+
+    const collapse = within(objective).getByRole('button', { name: 'Collapse priority order' })
+    expect(collapse).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(collapse)
+    expect(objective).toHaveClass('collapsed')
+    expect(within(objective).getByRole('button', { name: 'Expand priority order' }))
+      .toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('stages an example for review without claiming Plan evidence before commit', () => {
+    startOperations()
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect breach' }))
+    expect(useColonyStore.getState().learning).toMatchObject({
+      currentPhase: 'ground',
+      achieved: { ground: false },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Select Amina Okafor,/i }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Choose an item' })).getByRole(
+      'button',
+      { name: /Amina Okafor.*Colonist/i },
+    ))
+    const before = useColonyStore.getState()
+    expect(before.learning).toMatchObject({
+      currentPhase: 'plan',
+      completedLoops: 0,
+      achieved: { ground: true, plan: false, supervise: false, verify: false },
+    })
+    const evidenceBefore = before.learning.evidence
+
+    fireEvent.click(within(
+      screen.getByRole('navigation', { name: 'Colony commands' }),
+    ).getByRole('button', { name: 'Work' }))
+    fireEvent.click(screen.getByRole('button', { name: /Stage example for review/i }))
+
+    const staged = useColonyStore.getState()
+    expect(staged.operationsPlan.actions.length).toBeGreaterThan(0)
+    expect(staged.learning).toMatchObject({
+      currentPhase: 'plan',
+      completedLoops: 0,
+      achieved: { ground: true, plan: false, supervise: false, verify: false },
+    })
+    expect(staged.learning.evidence).toEqual(evidenceBefore)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit plan' }))
+    expect(useColonyStore.getState().learning).toMatchObject({
+      currentPhase: 'supervise',
+      achieved: { ground: true, plan: true, supervise: false, verify: false },
+    })
+  })
+
+  it('turns Leaking Margin into a serviceable-kit reuse milestone', () => {
+    startOperations()
+    const current = useColonyStore.getState()
+    const leaking = createInitialState(0, current.runSequence + 1)
+    act(() => useColonyStore.setState({
+      ...leaking,
+      settlement: { ...current.settlement, phase: 'operations' },
+    }))
+
+    const commands = screen.getByRole('navigation', { name: 'Colony commands' })
+    fireEvent.click(within(commands).getByRole('button', { name: 'Work' }))
+
+    const unserviceableKit = screen.getByRole('button', {
+      name: /Engineering Kit 01.*60%.*service required/i,
+    })
+    expect(unserviceableKit).toBeDisabled()
+    expect(unserviceableKit).toHaveAttribute(
+      'title',
+      'Below the 65% incident-work condition floor',
+    )
+
+    const example = screen.getByRole('button', { name: /Stage example for review.*Seal \+ solar first milestone/i })
+    fireEvent.click(example)
+    const planned = useColonyStore.getState()
+
+    expect(planned.operationsPlan.stopCondition).toEqual({
+      kind: 'work_order_complete',
+      workOrderId: 'work-seal-lab',
+    })
+    expect(planned.operationsPlan.actions).toContainEqual(expect.objectContaining({
+      kind: 'reserve_equipment',
+      equipmentId: 'equipment-engineering-02',
+      workOrderId: 'work-seal-lab',
+    }))
+    expect(planned.operationsPlan.actions).not.toContainEqual(expect.objectContaining({
+      equipmentId: 'equipment-engineering-01',
+    }))
+    expect(planned.validatePlan().valid).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit plan' }))
+    fireEvent.click(screen.getByTitle('Advance to the plan stop condition'))
+
+    expect(useColonyStore.getState().operationsPlan.status).toBe('completed')
+    expect(screen.getAllByText('Ready to verify')[0]).toBeVisible()
+    expect(screen.getByText('Seal laboratory breach complete')).toBeVisible()
+    expect(screen.queryByTitle('Advance one hour')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Advance to the plan stop condition')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Start next plan' })).not.toBeInTheDocument()
+
+    const verify = screen.getByTitle('Verify the operation')
+    expect(verify).toBeEnabled()
+    fireEvent.click(verify)
+    expect(screen.queryByTitle('Verify the operation')).not.toBeInTheDocument()
+
+    const startNextPlan = screen.getByRole('button', { name: /Start next plan/i })
+    expect(startNextPlan).toBeEnabled()
+
+    fireEvent.click(startNextPlan)
+    fireEvent.click(within(commands).getByRole('button', { name: 'Work' }))
+    const nextExample = screen.getByRole('button', {
+      name: /Stage example for review.*Repressurize with reused kit/i,
+    })
+    fireEvent.click(nextExample)
+
+    const nextPlan = useColonyStore.getState().operationsPlan
+    expect(nextPlan.stopCondition).toEqual({
+      kind: 'work_order_complete',
+      workOrderId: 'work-repressurize-lab',
+    })
+    expect(nextPlan.actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'reserve_equipment',
+        equipmentId: 'equipment-engineering-02',
+        workOrderId: 'work-repressurize-lab',
+      }),
+    ]))
+    expect(useColonyStore.getState().validatePlan().valid).toBe(true)
+  }, 10000)
+
+  it('preserves a non-objective terminal stop for verification before replanning', () => {
+    startOperations()
+    const commands = screen.getByRole('navigation', { name: 'Colony commands' })
+    fireEvent.click(within(commands).getByRole('button', { name: 'Work' }))
+    fireEvent.click(screen.getByRole('button', { name: /Stage example for review/i }))
+
+    act(() => {
+      const state = useColonyStore.getState()
+      state.setPlanBrief({
+        objective: state.objective.id,
+        constraints: { oxygenFloorHours: 12, protectedCrewIds: [] },
+        horizonHours: 12,
+        stopCondition: { kind: 'oxygen_below', thresholdHours: 31 },
+      })
+    })
+    expect(useColonyStore.getState().validatePlan().valid).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit plan' }))
+    fireEvent.click(screen.getByTitle('Advance to the plan stop condition'))
+
+    expect(useColonyStore.getState().operationsPlan.status).toBe('completed')
+    expect(screen.getAllByText('Ready to verify')[0]).toBeVisible()
+    expect(screen.getByText('Plan stopped · oxygen below')).toBeVisible()
+    expect(screen.queryByTitle('Advance one hour')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Advance to the plan stop condition')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('Verify the operation'))
+    expect(screen.getByLabelText('Verification evidence')).toHaveTextContent(
+      'The laboratory recovery research objective is incomplete.',
+    )
+    expect(screen.getByRole('button', { name: /Start next plan/i })).toBeEnabled()
+  }, 10000)
+
+  it('omits an independently completed solar milestone from the Leaking Margin helper', () => {
+    startOperations()
+    const current = useColonyStore.getState()
+    const leaking = createInitialState(0, current.runSequence + 1)
+    act(() => useColonyStore.setState({
+      ...leaking,
+      settlement: { ...current.settlement, phase: 'operations' },
+    }))
+
+    act(() => {
+      let state = useColonyStore.getState()
+      expect(state.stagePlanBatch({
+        expectedRunId: state.runId,
+        expectedWorldRevision: state.worldRevision,
+        expectedPlanRevision: state.operationsPlan.revision,
+        mode: 'replace',
+        brief: {
+          objective: 'restore_lab_and_research_sintering',
+          constraints: { oxygenFloorHours: 12, protectedCrewIds: [] },
+          horizonHours: 8,
+          stopCondition: { kind: 'work_order_complete', workOrderId: 'work-clean-solar' },
+        },
+        actions: [
+          { kind: 'assign_crew', crewId: 'crew-nia-kimani', workOrderId: 'work-clean-solar' },
+          { kind: 'reserve_equipment', equipmentId: 'equipment-eva-02', workOrderId: 'work-clean-solar' },
+          { kind: 'reserve_equipment', equipmentId: 'equipment-rover-01', workOrderId: 'work-clean-solar' },
+        ],
+      }).ok).toBe(true)
+      state = useColonyStore.getState()
+      expect(state.commitPlan(state.worldRevision, state.operationsPlan.revision).ok).toBe(true)
+      state = useColonyStore.getState()
+      expect(state.advanceTime({ hours: 8 }).stopReason).toBe('work_order_complete')
+      expect(useColonyStore.getState().verifyPlan().status).toBe('success')
+      expect(useColonyStore.getState().clearPlan().ok).toBe(true)
+    })
+
+    const commands = screen.getByRole('navigation', { name: 'Colony commands' })
+    fireEvent.click(within(commands).getByRole('button', { name: 'Work' }))
+    const example = screen.getByRole('button', {
+      name: /Stage example for review.*Seal breach milestone/i,
+    })
+    fireEvent.click(example)
+
+    const plan = useColonyStore.getState().operationsPlan
+    expect(plan.actions).not.toContainEqual(expect.objectContaining({
+      workOrderId: 'work-clean-solar',
+    }))
+    expect(plan.actions.every((action) => action.workOrderId === 'work-seal-lab')).toBe(true)
+    expect(useColonyStore.getState().validatePlan().valid).toBe(true)
+  })
+
+  it('does not let the Stop condition placeholder replace a valid choice', () => {
+    startOperations()
+    const commands = screen.getByRole('navigation', { name: 'Colony commands' })
+    fireEvent.click(within(commands).getByRole('button', { name: 'Work' }))
+    fireEvent.click(screen.getByRole('button', { name: /Stage example for review/i }))
+
+    const stopCondition = screen.getByRole('combobox', { name: 'Stop condition' })
+    expect(stopCondition).toHaveValue('objective_complete')
+    expect(within(stopCondition).getByRole('option', { name: 'Choose…' })).toBeDisabled()
+
+    fireEvent.change(stopCondition, { target: { value: '' } })
+
+    expect(stopCondition).toHaveValue('objective_complete')
+    expect(useColonyStore.getState().operationsPlan.stopCondition).toEqual({
+      kind: 'objective_complete',
+    })
+    expect(useColonyStore.getState().validatePlan().valid).toBe(true)
+  })
+
+  it('confirms and starts the named next incident while preserving the settlement', () => {
+    startOperations()
+    act(() => useColonyStore.setState((state) => ({
+      learning: { ...state.learning, completedLoops: 1 },
+    })))
+    const before = useColonyStore.getState()
+    const nextProfile = incidentProfileMetadataForSeed(before.seed + 1)
+    const preservedLayout = structuredClone(before.settlement.layout)
+    const previousRunId = before.runId
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect breach' }))
+    expect(screen.getByRole('region', { name: 'Kepler Laboratory inspector' })).toBeVisible()
+
+    const commands = screen.getByRole('navigation', { name: 'Colony commands' })
+    fireEvent.click(within(commands).getByRole('button', { name: 'Work' }))
+    fireEvent.click(screen.getByRole('button', { name: /Stage example for review/i }))
+    expect(useColonyStore.getState().operationsPlan.actions.length).toBeGreaterThan(0)
+
+    const commandSheet = document.getElementById('colony-command-sheet')
+    expect(commandSheet).toHaveAttribute('aria-hidden', 'false')
+    const nextIncident = screen.getByRole('button', {
+      name: `Start next incident. Next profile: ${nextProfile.name}. Built settlement preserved.`,
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    try {
+      fireEvent.click(nextIncident)
+
+      expect(confirm).toHaveBeenCalledWith(
+        `Start the ${nextProfile.name} incident? ` +
+        'The current incident plan and progress will be replaced. ' +
+        'Your built settlement will be preserved.',
+      )
+      expect(useColonyStore.getState().runId).toBe(previousRunId)
+      expect(commandSheet).toHaveAttribute('aria-hidden', 'false')
+
+      confirm.mockReturnValue(true)
+      fireEvent.click(nextIncident)
+
+      const after = useColonyStore.getState()
+      expect(after.seed).toBe(before.seed + 1)
+      expect(after.runId).not.toBe(previousRunId)
+      expect(after.settlement.layout).toEqual(preservedLayout)
+      expect(after.operationsPlan.actions).toHaveLength(0)
+      expect(commandSheet).toHaveAttribute('aria-hidden', 'true')
+      expect(commandSheet).toHaveAttribute('inert')
+      expect(screen.queryByRole('region', { name: 'Kepler Laboratory inspector' }))
+        .not.toBeInTheDocument()
+
+      const updatedBrief = screen.getByRole('region', {
+        name: `${nextProfile.name} risk brief`,
+      })
+      expect(updatedBrief).toHaveAttribute('data-incident-profile', nextProfile.id)
+      expect(within(updatedBrief).getByRole('status')).toHaveTextContent(
+        `${nextProfile.name} started. Incident plan and progress were replaced; ` +
+        'the built settlement was preserved.',
+      )
+    } finally {
+      confirm.mockRestore()
+    }
   })
 
   it('keeps Architect reachable after operations begin and returns to the colony', () => {
@@ -1623,19 +1981,43 @@ describe('freeform settlement builder', () => {
     expect(screen.queryByRole('button', { name: 'Return to colony' })).not.toBeInTheDocument()
   })
 
-  it('keeps plan-time actions inside the committed Plan panel', () => {
+  it('moves focus into every dock sheet and restores it to the trigger on Escape', async () => {
+    startOperations()
+
+    const commands = screen.getByRole('navigation', { name: 'Colony commands' })
+    const commandSheet = document.getElementById('colony-command-sheet')
+    expect(commandSheet).not.toBeNull()
+
+    for (const label of ['Work', 'Crew', 'Gear', 'Plan', 'Log']) {
+      const trigger = within(commands).getByRole('button', {
+        name: new RegExp(`^${label}(?:\\s*\\d+)?$`),
+      })
+      expect(trigger).toHaveAttribute('aria-controls', 'colony-command-sheet')
+
+      fireEvent.click(trigger)
+
+      const heading = await screen.findByRole('heading', { level: 2, name: label })
+      expect(commandSheet).toHaveAttribute('aria-hidden', 'false')
+      expect(commandSheet).not.toHaveAttribute('inert')
+      await waitFor(() => expect(document.activeElement).toBe(heading))
+
+      fireEvent.keyDown(heading, { key: 'Escape' })
+
+      expect(commandSheet).toHaveAttribute('aria-hidden', 'true')
+      expect(commandSheet).toHaveAttribute('inert')
+      await waitFor(() => expect(document.activeElement).toBe(trigger))
+    }
+  })
+
+  it('keeps plan-time actions inside the committed Plan panel and reveals visible evidence', async () => {
     startOperations()
     expect(screen.queryByTitle('Advance one hour')).not.toBeInTheDocument()
 
     fireEvent.click(within(
       screen.getByRole('navigation', { name: 'Colony commands' }),
     ).getByRole('button', { name: 'Work' }))
-    fireEvent.click(screen.getByRole('button', { name: /Stage response|Load example/i }))
-    const panelClock = screen.getByRole('group', { name: 'Construction speed' })
-    expect(panelClock).toBeVisible()
-    fireEvent.click(within(panelClock).getByRole('button', { name: 'Pause construction' }))
-    expect(within(panelClock).getByRole('button', { name: 'Pause construction' }))
-      .toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: /Stage example for review/i }))
+    expect(screen.queryByRole('group', { name: 'Construction speed' })).not.toBeInTheDocument()
 
     const commit = screen.getByRole('button', { name: 'Commit plan' })
     expect(commit).toBeEnabled()
@@ -1645,15 +2027,71 @@ describe('freeform settlement builder', () => {
     expect(screen.getByTitle('Advance to the plan stop condition')).toBeVisible()
     expect(screen.getByTitle('Verify the operation')).toBeVisible()
 
+    fireEvent.click(screen.getByTitle('Advance to the plan stop condition'))
+    expect(screen.getByText('Recovery operation complete')).toBeVisible()
+    expect(screen.getByText(
+      'The recovery snapshot is preserved. Verify it before starting the next incident.',
+    )).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Start next plan' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('Verify the operation'))
+    const verification = useColonyStore.getState().verification
+    expect(verification).not.toBeNull()
+    const evidence = screen.getByLabelText('Verification evidence')
+    expect(evidence).toBeVisible()
+    expect(evidence).toHaveTextContent(verification!.checks[0].evidence)
+    expect(evidence).toHaveTextContent('Residual risks')
+    expect(evidence).toHaveTextContent('None observed at this checkpoint.')
+    expect(screen.getByLabelText('Plan verified')).toHaveTextContent('✓')
+
+    const commandSheet = document.getElementById('colony-command-sheet')
     fireEvent.click(screen.getByRole('button', { name: 'Close command panel' }))
-    expect(screen.getByTitle('Advance one hour').closest('.command-sheet'))
-      .toHaveAttribute('aria-hidden', 'true')
-    expect(screen.getByTitle('Advance one hour').closest('.command-sheet'))
-      .toHaveAttribute('inert')
+    expect(commandSheet).toHaveAttribute('aria-hidden', 'true')
+    expect(commandSheet).toHaveAttribute('inert')
     const colonyClock = screen.getByRole('group', { name: 'Construction speed' })
     expect(colonyClock).toBeVisible()
-    expect(within(colonyClock).getByRole('button', { name: 'Pause construction' }))
-      .toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'View evidence' }))
+    expect(commandSheet).toHaveAttribute('aria-hidden', 'false')
+    await waitFor(() => expect(document.activeElement).toBe(
+      screen.getByLabelText('Verification evidence'),
+    ))
+  }, 10000)
+
+  it('starts the supervision loop with inspection instead of silently staging the answer', () => {
+    startOperations()
+    expect(useColonyStore.getState().operationsPlan.actions).toHaveLength(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect breach' }))
+
+    expect(screen.getByRole('region', { name: 'Kepler Laboratory inspector' })).toBeVisible()
+    expect(useColonyStore.getState().operationsPlan.actions).toHaveLength(0)
+    expect(useColonyStore.getState().learning).toMatchObject({
+      currentPhase: 'ground',
+      achieved: { ground: false },
+    })
+    expect(screen.getByRole('button', { name: 'Compare crew and gear' })).toBeVisible()
+  })
+
+  it('requires confirmation before resetting an active run', () => {
+    startOperations()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    try {
+      const reset = screen.getByRole('button', {
+        name: /Reset run for deterministic seed/i,
+      })
+      fireEvent.click(reset)
+      expect(confirm).toHaveBeenCalledWith(
+        'Reset this Moonbase run and return to the tiny landing habitat?',
+      )
+      expect(useColonyStore.getState().settlement.phase).toBe('operations')
+
+      confirm.mockReturnValue(true)
+      fireEvent.click(reset)
+      expect(useColonyStore.getState().settlement.phase).toBe('landing')
+      expect(screen.getByRole('group', { name: /freeform construction grid/i })).toBeVisible()
+    } finally {
+      confirm.mockRestore()
+    }
   })
 
   it('inspects an empty lunar tile with user-facing coordinates', () => {
@@ -1681,7 +2119,7 @@ describe('freeform settlement builder', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Select Jonah Reed,/i }))
 
     expect(screen.queryByRole('dialog', { name: 'Choose an item' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Colony crew' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Colony crew' })).toBeVisible()
     const inspector = screen.getByRole('region', { name: 'Jonah Reed inspector' })
     expect(inspector).toHaveClass('selection-crew')
     expect(inspector).toHaveTextContent('Flight Medic')

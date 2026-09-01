@@ -1,12 +1,18 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { createInitialState } from './seed'
+import {
+  createInitialState,
+  createRunId,
+  isOpaqueRunId,
+  MOONBASE_SEED,
+  nextIncidentSeed,
+} from './seed'
 import {
   isConstructionLayout,
   type ConstructionResult,
   type GridPoint,
 } from './construction'
-import { createStarterConstruction } from './constructionCatalog'
+import { createStarterConstruction, WORKSTATION_SPECS } from './constructionCatalog'
 import {
   cancelConstructionCommand as cancelConstructionCommandInState,
   cancelConstructionOrder as cancelConstructionOrderInState,
@@ -22,10 +28,19 @@ import {
   type ConstructionOrderTarget,
 } from './constructionJobs'
 import {
+  findConstructionOrderApproachPath,
+  findConstructionPath,
+  isConstructionCellWalkable,
+} from './constructionPathfinding'
+import {
   normalizeConstructionStockpile,
   normalizePersistedConstructionCrewPositions,
 } from './constructionWorkerRouting'
 import { advanceConstructionWorkerSimulationFixedStep } from './constructionWorkerSimulation'
+import {
+  analyzeConstructionPressure,
+  constructionEnvironmentAt,
+} from './pressureTopology'
 import { beginOperations as beginOperationsInState } from './settlement'
 import {
   advanceSimulation,
@@ -34,8 +49,14 @@ import {
   rebaseOperationsPlan,
   recordLearningEvidence as recordLearningEvidenceInState,
   removePlanAction as removePlanActionFromState,
+  removePlanActionsBatch as removePlanActionsBatchFromState,
   setPlanBrief as setPlanBriefInState,
+  stageOperationsPlanBatch,
+  type RemovePlanActionsBatchInput,
+  type RemovePlanActionsBatchResult,
   stagePlanAction as stagePlanActionInState,
+  type StagePlanBatchInput,
+  type StagePlanBatchResult,
   validateOperationsPlan,
   verifyOperationsPlan,
 } from './simulation'
@@ -46,6 +67,7 @@ import type {
   CommitResult,
   ConstructionSpeed,
   LearningPhase,
+  LearningEvidenceOptions,
   MoonbaseState,
   PlanActionInput,
   PlanBriefInput,
@@ -56,6 +78,11 @@ import type {
 } from './types'
 
 type InteractiveActor = 'manual' | 'agent'
+
+const PHASE_SAFE_PERSISTENCE_VERSION = 10
+const RUN_ID_PERSISTENCE_VERSION = 12
+const PERSISTENCE_VERSION = 13
+const EVA_SAFE_PERSISTENCE_VERSION = 13
 
 export interface QueueConstructionResult {
   ok: boolean
@@ -81,6 +108,7 @@ export interface ConstructionBuilderAssignmentResult {
 export interface MoonbaseActions {
   resetColony: () => void
   resetMoonbase: () => void
+  startNextIncident: () => boolean
   setConstructionSpeed: (speed: ConstructionSpeed) => boolean
   queueConstruction: (result: ConstructionResult) => QueueConstructionResult
   cancelConstructionCommand: (commandId: string) => string[]
@@ -95,7 +123,12 @@ export interface MoonbaseActions {
   beginOperations: (actor?: InteractiveActor) => BuildResult
   setPlanBrief: (input: PlanBriefInput, actor?: InteractiveActor) => PlanEditResult
   stagePlanAction: (input: PlanActionInput, actor?: InteractiveActor) => PlanEditResult
+  stagePlanBatch: (input: StagePlanBatchInput, actor?: InteractiveActor) => StagePlanBatchResult
   removePlanAction: (actionId: string, actor?: InteractiveActor) => PlanEditResult
+  removePlanActionsBatch: (
+    input: RemovePlanActionsBatchInput,
+    actor?: InteractiveActor,
+  ) => RemovePlanActionsBatchResult
   rebasePlan: (actor?: InteractiveActor) => PlanEditResult
   clearPlan: (actor?: InteractiveActor) => PlanEditResult
   validatePlan: () => PlanValidation
@@ -111,6 +144,7 @@ export interface MoonbaseActions {
     phase: LearningPhase,
     detail: string,
     actor?: InteractiveActor,
+    options?: LearningEvidenceOptions,
   ) => void
 }
 
@@ -174,7 +208,7 @@ const visibleConstructionCrew = (state: MoonbaseState) => (
   state.settlement.phase === 'landing' ? state.crew.slice(0, 2) : state.crew
 )
 
-const constructionCrewUnavailableReason = (
+export const constructionCrewUnavailableReason = (
   state: MoonbaseState,
   crewId: string,
 ) => {
@@ -226,6 +260,7 @@ const spatialConstructionWorkers = (state: MoonbaseState) => {
       !constructionCrewUnavailableReason(state, member.id)
     return {
       id: member.id,
+      hasEvaSuit: Boolean(member.equippedEvaSuitId),
       canConstruct: Boolean(eligible || manuallyEligible),
       canHaul: availableCrewIds.has(member.id),
       dispatchPriority: eligible?.dispatchPriority ?? 0,
@@ -238,20 +273,136 @@ const spatialConstructionWorkers = (state: MoonbaseState) => {
   })
 }
 
+const constructionSuitForCrew = (state: MoonbaseState, crewId: string) => {
+  const member = state.crew.find((candidate) => candidate.id === crewId)
+  if (!member?.equippedEvaSuitId) return null
+  const suit = state.equipment.find((candidate) => (
+    candidate.id === member.equippedEvaSuitId &&
+    candidate.type === 'eva_suit' &&
+    candidate.assignedCrewId === crewId
+  ))
+  return suit?.reservedForWorkOrderId ? null : suit ?? null
+}
+
+const equipConstructionWorkers = (
+  state: MoonbaseState,
+  workers: ReturnType<typeof spatialConstructionWorkers>,
+) => {
+  if (!state.settlement.constructionOrders.some((order) => order.status !== 'complete')) return
+  const forcedCrewIds = new Set(state.settlement.constructionOrders.flatMap((order) => (
+    order.status !== 'complete' && order.forcedCrewId ? [order.forcedCrewId] : []
+  )))
+  const assignedCrewIds = new Set(state.settlement.constructionOrders.flatMap((order) => (
+    order.status !== 'complete' && order.assignedCrewId ? [order.assignedCrewId] : []
+  )))
+  const projectedLayout = projectConstructionOrders(
+    state.settlement.layout,
+    state.settlement.constructionOrders,
+  ).layout
+  const projectedPressure = analyzeConstructionPressure(projectedLayout)
+  const positionByCrewId = new Map(
+    state.settlement.constructionCrew.map((position) => [position.crewId, position]),
+  )
+  const projectedExposedCrewIds = new Set(workers.flatMap((worker) => {
+    const position = positionByCrewId.get(worker.id)
+    return position && constructionEnvironmentAt(
+      projectedLayout,
+      projectedPressure,
+      position.cell,
+    ) !== 'pressurized'
+      ? [worker.id]
+      : []
+  }))
+  const candidates = [...workers]
+    .filter((worker) => worker.canConstruct || worker.canHaul)
+    .sort((left, right) =>
+      Number(projectedExposedCrewIds.has(right.id)) - Number(projectedExposedCrewIds.has(left.id)) ||
+      Number(forcedCrewIds.has(right.id)) - Number(forcedCrewIds.has(left.id)) ||
+      Number(assignedCrewIds.has(right.id)) - Number(assignedCrewIds.has(left.id)) ||
+      (right.dispatchPriority ?? 0) - (left.dispatchPriority ?? 0) ||
+      left.id.localeCompare(right.id),
+    )
+  const claimedSuitIds = new Set(
+    state.crew.flatMap((member) => member.equippedEvaSuitId ? [member.equippedEvaSuitId] : []),
+  )
+  const availableSuits = state.equipment
+    .filter((item) => (
+      item.type === 'eva_suit' &&
+      item.condition >= 65 &&
+      !item.reservedForWorkOrderId &&
+      (!item.assignedCrewId || constructionSuitForCrew(state, item.assignedCrewId)?.id === item.id)
+    ))
+    .sort((left, right) => left.id.localeCompare(right.id))
+
+  for (const worker of candidates) {
+    if (constructionSuitForCrew(state, worker.id)) continue
+    const member = state.crew.find((candidate) => candidate.id === worker.id)
+    const suit = availableSuits.find((candidate) => !claimedSuitIds.has(candidate.id))
+    if (!member || !suit) continue
+    claimedSuitIds.add(suit.id)
+    member.equippedEvaSuitId = suit.id
+    suit.status = 'deployed'
+    suit.location = 'airlock'
+    suit.assignedCrewId = member.id
+    suit.reservedForWorkOrderId = null
+  }
+}
+
+const returnAndDoffConstructionCrew = (state: MoonbaseState) => {
+  if (state.settlement.constructionOrders.some((order) => order.status !== 'complete')) return
+  const layout = state.settlement.layout
+  const pressure = analyzeConstructionPressure(layout)
+  const occupied = new Set(state.settlement.constructionCrew.map((position) => (
+    `${position.cell.x}:${position.cell.y}`
+  )))
+  const pressurizedGoals = pressure.rooms
+    .flatMap((room) => room.cells)
+    .filter((cell) => isConstructionCellWalkable(layout, cell))
+    .sort((left, right) => left.y - right.y || left.x - right.x)
+
+  for (const position of state.settlement.constructionCrew) {
+    const member = state.crew.find((candidate) => candidate.id === position.crewId)
+    const suit = constructionSuitForCrew(state, position.crewId)
+    if (!member || !suit) continue
+    if (constructionEnvironmentAt(layout, pressure, position.cell) !== 'pressurized') {
+      const goals = pressurizedGoals.filter((cell) => (
+        !occupied.has(`${cell.x}:${cell.y}`) ||
+        (cell.x === position.cell.x && cell.y === position.cell.y)
+      ))
+      const route = findConstructionPath(layout, position.cell, goals, { hasEvaSuit: true })
+      const destination = route?.path.at(-1)
+      if (!destination) continue
+      occupied.delete(`${position.cell.x}:${position.cell.y}`)
+      position.cell = { ...destination }
+      position.moveCredit = 0
+      occupied.add(`${destination.x}:${destination.y}`)
+    }
+    if (constructionEnvironmentAt(layout, pressure, position.cell) !== 'pressurized') continue
+    member.equippedEvaSuitId = null
+    suit.status = 'available'
+    suit.location = 'airlock'
+    suit.assignedCrewId = null
+  }
+}
+
 const advanceConstructionInState = (
   state: MoonbaseState,
   elapsed: number,
 ): ConstructionAdvanceSummary => {
   if (!state.settlement.constructionOrders.some((order) => order.status !== 'complete')) {
+    returnAndDoffConstructionCrew(state)
     return { completedOrderIds: [], blockedOrderIds: [] }
   }
+  let workers = spatialConstructionWorkers(state)
+  equipConstructionWorkers(state, workers)
+  workers = spatialConstructionWorkers(state)
   const advanced = advanceConstructionWorkerSimulationFixedStep({
     layout: state.settlement.layout,
     orders: state.settlement.constructionOrders,
     constructionStock: state.reserves.constructionStock,
     stockpile: state.settlement.constructionStockpile,
     crewPositions: state.settlement.constructionCrew,
-    workers: spatialConstructionWorkers(state),
+    workers,
     elapsed,
   })
   state.settlement = {
@@ -265,6 +416,7 @@ const advanceConstructionInState = (
     ...state.reserves,
     constructionStock: advanced.constructionStock,
   }
+  returnAndDoffConstructionCrew(state)
   return {
     completedOrderIds: advanced.completedOrderIds,
     blockedOrderIds: advanced.blockedOrderIds,
@@ -274,6 +426,8 @@ const advanceConstructionInState = (
 const domainSnapshot = (state: MoonbaseStore): MoonbaseState => ({
   baseName: state.baseName,
   seed: state.seed,
+  runSequence: state.runSequence,
+  runId: state.runId,
   missionDay: state.missionDay,
   hour: state.hour,
   elapsedHours: state.elapsedHours,
@@ -303,6 +457,52 @@ const normalizedConstructionStock = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isFinite(value)
     ? Math.max(0, value)
     : fallback
+
+const reconciledEquipment = (
+  source: unknown,
+  templates: MoonbaseState['equipment'],
+): MoonbaseState['equipment'] => {
+  const persistedById = new Map(
+    (Array.isArray(source) ? source : [])
+      .filter((value): value is MoonbaseState['equipment'][number] => Boolean(
+        value && typeof value === 'object' && typeof value.id === 'string',
+      ))
+      .map((item) => [item.id, item]),
+  )
+  return templates.map((template) => ({
+    ...template,
+    ...(persistedById.get(template.id) ?? {}),
+    id: template.id,
+    name: template.name,
+    type: template.type,
+  }))
+}
+
+const reconciledWorkOrders = (
+  source: unknown,
+  templates: MoonbaseState['workOrders'],
+): MoonbaseState['workOrders'] => {
+  const persistedById = new Map(
+    (Array.isArray(source) ? source : [])
+      .filter((value): value is MoonbaseState['workOrders'][number] => Boolean(
+        value && typeof value === 'object' && typeof value.id === 'string',
+      ))
+      .map((order) => [order.id, order]),
+  )
+  return templates.map((template) => ({
+    ...template,
+    ...(persistedById.get(template.id) ?? {}),
+    detail: template.detail,
+    hazard: template.hazard,
+    requiredEquipment: [...template.requiredEquipment],
+  }))
+}
+
+const normalizedRunSequence = (value: unknown, fallback = 1) => (
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+    ? value
+    : fallback
+)
 
 const normalizedConstructionSpeed = (
   value: unknown,
@@ -359,6 +559,235 @@ const resetLegacyTravelAssignments = (
   })
 }
 
+const constructionPointKey = ({ x, y }: GridPoint) => `${x}:${y}`
+
+const relocateLegacyEstablishmentCrew = (
+  state: MoonbaseState,
+  initialState: MoonbaseState,
+): MoonbaseState => {
+  if (state.settlement.phase === 'operations') return state
+
+  const layout = state.settlement.layout
+  const pressure = analyzeConstructionPressure(layout)
+  const safeCells = pressure.rooms
+    .flatMap((room) => room.cells)
+    .filter((cell) => isConstructionCellWalkable(layout, cell))
+    .sort((left, right) => left.y - right.y || left.x - right.x)
+  if (safeCells.length === 0) return state
+
+  const safeCellKeys = new Set(safeCells.map(constructionPointKey))
+  const starterCellByCrewId = new Map(
+    initialState.settlement.constructionCrew.map((position) => [position.crewId, position.cell]),
+  )
+  const constructionCrew = state.settlement.constructionCrew.map((position, index) => {
+    if (constructionEnvironmentAt(layout, pressure, position.cell) === 'pressurized') {
+      return position
+    }
+    const starterCell = starterCellByCrewId.get(position.crewId)
+    const cell = starterCell && safeCellKeys.has(constructionPointKey(starterCell))
+      ? starterCell
+      : safeCells[index % safeCells.length]
+    return {
+      ...position,
+      cell: { ...cell },
+      moveCredit: 0,
+    }
+  })
+
+  return {
+    ...state,
+    settlement: {
+      ...state.settlement,
+      constructionCrew,
+    },
+  }
+}
+
+const crewLocationRequiresEva = (state: MoonbaseState, crewId: string) => {
+  const member = state.crew.find((candidate) => candidate.id === crewId)
+  if (!member) return true
+  if (member.location === 'laboratory') return state.lab.atmosphere !== 'yes'
+  return state.modules.find((module) => module.location === member.location)?.atmosphere !== 'yes'
+}
+
+const reopenLegacyEvaPlan = (source: MoonbaseState): MoonbaseState => {
+  const state = structuredClone(source)
+  const incompleteOrderIds = new Set(
+    state.workOrders
+      .filter((order) => order.status !== 'complete')
+      .map((order) => order.id),
+  )
+  const completedOrderIds = new Set(
+    state.workOrders
+      .filter((order) => order.status === 'complete')
+      .map((order) => order.id),
+  )
+
+  state.crew.forEach((member) => {
+    if (member.taskId && incompleteOrderIds.has(member.taskId)) {
+      member.taskId = null
+      member.status = member.fatigue >= 75 ? 'resting' : 'idle'
+    }
+    if (crewLocationRequiresEva(state, member.id)) member.location = 'airlock'
+    member.equippedEvaSuitId = null
+  })
+
+  state.equipment.forEach((item) => {
+    if (!item.reservedForWorkOrderId || !incompleteOrderIds.has(item.reservedForWorkOrderId)) return
+    const order = state.workOrders.find((candidate) => candidate.id === item.reservedForWorkOrderId)
+    if (order?.hazard !== 'indoor') item.location = 'airlock'
+    item.status = 'available'
+    item.reservedForWorkOrderId = null
+    item.assignedCrewId = null
+  })
+
+  state.workOrders.forEach((order) => {
+    if (order.status === 'complete') return
+    order.assignedCrewIds = []
+    order.reservedEquipmentIds = []
+    order.logisticsHoursRemaining = 0
+    order.status = order.prerequisiteIds.every((id) => completedOrderIds.has(id))
+      ? 'ready'
+      : 'blocked'
+  })
+
+  state.operationsPlan = {
+    ...state.operationsPlan,
+    status: 'draft',
+    revision: Math.max(1, state.operationsPlan.revision + 1),
+    basedOnWorldRevision: state.worldRevision,
+    actions: [],
+    committedAtHour: null,
+    baseline: null,
+  }
+  state.research.assignedResearcherId = null
+  if (state.research.status !== 'complete') {
+    state.research.status = state.lab.atmosphere === 'yes' ? 'available' : 'blocked'
+  }
+  state.lastAdvance = null
+  state.verification = null
+  return state
+}
+
+const hardenLegacyEvaState = (
+  source: MoonbaseState,
+  initialState: MoonbaseState,
+): MoonbaseState => {
+  const state = relocateLegacyEstablishmentCrew(structuredClone(source), initialState)
+  state.crew.forEach((member) => {
+    member.equippedEvaSuitId = null
+  })
+  if (state.settlement.phase !== 'operations') return state
+
+  const crewById = new Map(state.crew.map((member) => [member.id, member]))
+  const equipmentById = new Map(state.equipment.map((item) => [item.id, item]))
+  const evaSuits = state.equipment
+    .filter((item) => item.type === 'eva_suit' && item.condition >= 65)
+    .sort((left, right) => left.id.localeCompare(right.id))
+  const claimedSuitIds = new Set<string>()
+  let missingSuit = false
+  let planChanged = false
+
+  state.workOrders.forEach((order) => {
+    if (order.status === 'complete' || !order.requiredEquipment.includes('eva_suit')) return
+    order.assignedCrewIds = [...new Set(order.assignedCrewIds)].filter((id) => crewById.has(id))
+    order.reservedEquipmentIds = [...new Set(order.reservedEquipmentIds)].filter(
+      (id) => equipmentById.has(id),
+    )
+
+    order.assignedCrewIds.forEach((crewId) => {
+      const member = crewById.get(crewId)!
+      const reservedForCrew = evaSuits.find((suit) => (
+        !claimedSuitIds.has(suit.id) &&
+        suit.reservedForWorkOrderId === order.id &&
+        suit.assignedCrewId === crewId
+      ))
+      const reservedForOrder = evaSuits.find((suit) => (
+        !claimedSuitIds.has(suit.id) &&
+        suit.reservedForWorkOrderId === order.id &&
+        !suit.assignedCrewId
+      ))
+      const available = evaSuits
+        .filter((suit) => (
+          !claimedSuitIds.has(suit.id) &&
+          !suit.reservedForWorkOrderId &&
+          !suit.assignedCrewId &&
+          suit.status === 'available'
+        ))
+        .sort((left, right) => (
+          Number(left.location !== member.location) - Number(right.location !== member.location) ||
+          left.id.localeCompare(right.id)
+        ))[0]
+      const suit = reservedForCrew ?? reservedForOrder ?? available
+      if (!suit) {
+        missingSuit = true
+        return
+      }
+
+      claimedSuitIds.add(suit.id)
+      const newlyReserved = suit.reservedForWorkOrderId !== order.id
+      suit.reservedForWorkOrderId = order.id
+      suit.assignedCrewId = crewId
+      if (!order.reservedEquipmentIds.includes(suit.id)) {
+        order.reservedEquipmentIds.push(suit.id)
+      }
+
+      const exposed = crewLocationRequiresEva(state, crewId)
+      if (exposed && suit.location === member.location) {
+        suit.status = 'deployed'
+        member.equippedEvaSuitId = suit.id
+      } else if (exposed) {
+        member.location = 'airlock'
+        member.equippedEvaSuitId = null
+        suit.status = 'reserved'
+        order.logisticsHoursRemaining = Math.max(1, order.logisticsHoursRemaining)
+        if (order.status === 'active') order.status = 'queued'
+      } else {
+        member.equippedEvaSuitId = null
+        if (newlyReserved) suit.status = 'reserved'
+      }
+
+      if (newlyReserved && !state.operationsPlan.actions.some((action) => (
+        action.kind === 'reserve_equipment' &&
+        action.equipmentId === suit.id &&
+        action.workOrderId === order.id
+      ))) {
+        state.operationsPlan.actions.push({
+          id: `plan-action-migrated-${suit.id}`,
+          kind: 'reserve_equipment',
+          equipmentId: suit.id,
+          workOrderId: order.id,
+        })
+        planChanged = true
+      }
+    })
+  })
+
+  if (missingSuit) return reopenLegacyEvaPlan(state)
+
+  state.crew.forEach((member) => {
+    if (!crewLocationRequiresEva(state, member.id)) return
+    const suit = member.equippedEvaSuitId
+      ? equipmentById.get(member.equippedEvaSuitId)
+      : null
+    if (
+      suit?.type === 'eva_suit' &&
+      suit.assignedCrewId === member.id &&
+      suit.location === member.location
+    ) return
+    member.location = 'airlock'
+    member.equippedEvaSuitId = null
+    if (!member.taskId) return
+    const order = state.workOrders.find((candidate) => candidate.id === member.taskId)
+    if (!order || order.status === 'complete') return
+    order.logisticsHoursRemaining = Math.max(1, order.logisticsHoursRemaining)
+    if (order.status === 'active') order.status = 'queued'
+  })
+
+  if (planChanged) state.operationsPlan.revision += 1
+  return state
+}
+
 const repairedConstructionSequence = (
   orders: readonly ConstructionOrder[],
   persistedSequence: unknown,
@@ -376,18 +805,114 @@ const repairedConstructionSequence = (
   return Math.max(highestSequence + 1, requestedSequence)
 }
 
+const isPersistedModulePosition = (value: unknown): value is MoonbaseState['modules'][number]['position'] => {
+  if (!value || typeof value !== 'object') return false
+  const position = value as Record<string, unknown>
+  return ['x', 'y', 'width', 'height'].every((key) => (
+    typeof position[key] === 'number' && Number.isFinite(position[key])
+  )) && Number(position.width) > 0 && Number(position.height) > 0
+}
+
+/**
+ * Versions before v10 allowed incident commands to run during establishment.
+ * Keep the player's physical construction work, but rebuild the hidden incident
+ * from the deterministic seed so a landing save cannot carry an already staged,
+ * committed, or advanced operation across the new phase boundary.
+ */
+const resetLegacyEstablishmentIncident = (
+  state: MoonbaseState,
+  initialState: MoonbaseState,
+): MoonbaseState => {
+  const worldRevision = Number.isSafeInteger(state.worldRevision) && state.worldRevision > 0
+    ? state.worldRevision
+    : initialState.worldRevision
+  const persistedModules = new Map(
+    (Array.isArray(state.modules) ? state.modules : []).map((module) => [module.id, module]),
+  )
+  const modules = initialState.modules.map((module) => {
+    const persistedPosition = persistedModules.get(module.id)?.position
+    return isPersistedModulePosition(persistedPosition)
+      ? { ...module, position: { ...persistedPosition } }
+      : module
+  })
+  const settlementEvents = (Array.isArray(state.events) ? state.events : [])
+    .filter((event) => event.id.startsWith('event-settlement-'))
+
+  return {
+    ...initialState,
+    worldRevision,
+    settlement: state.settlement,
+    reserves: {
+      ...initialState.reserves,
+      constructionStock: state.reserves.constructionStock,
+    },
+    modules,
+    events: [...settlementEvents, ...initialState.events].slice(0, 40),
+    operationsPlan: {
+      ...initialState.operationsPlan,
+      basedOnWorldRevision: worldRevision,
+    },
+  }
+}
+
 export const useColonyStore = create<MoonbaseStore>()(
   persist(
     (set, get) => ({
       ...createInitialState(),
-      resetColony: () => set(createInitialState()),
-      resetMoonbase: () => set(createInitialState()),
+      resetColony: () => set((state) => createInitialState(
+        MOONBASE_SEED,
+        normalizedRunSequence(state.runSequence) + 1,
+      )),
+      resetMoonbase: () => set((state) => createInitialState(
+        MOONBASE_SEED,
+        normalizedRunSequence(state.runSequence) + 1,
+      )),
+      startNextIncident: () => {
+        const state = get()
+        if (state.settlement.phase !== 'operations' || state.learning.completedLoops <= 0) {
+          return false
+        }
+
+        const seed = nextIncidentSeed(state.seed)
+        const runSequence = normalizedRunSequence(state.runSequence) + 1
+        const fresh = createInitialState(seed, runSequence)
+        const worldRevision = Math.max(fresh.worldRevision, state.worldRevision + 1)
+        const currentPositions = new Map(
+          state.modules.map((module) => [module.id, module.position]),
+        )
+        const modules = fresh.modules.map((module) => {
+          const position = currentPositions.get(module.id)
+          return position ? { ...module, position: { ...position } } : module
+        })
+
+        set({
+          ...fresh,
+          worldRevision,
+          settlement: { ...state.settlement, phase: 'operations' },
+          reserves: {
+            ...fresh.reserves,
+            constructionStock: state.reserves.constructionStock,
+          },
+          modules,
+          events: fresh.events.map((event) => ({
+            ...event,
+            worldRevision,
+            planRevision: fresh.operationsPlan.revision,
+          })),
+          operationsPlan: {
+            ...fresh.operationsPlan,
+            basedOnWorldRevision: worldRevision,
+          },
+        })
+        return true
+      },
       setConstructionSpeed: (speed) => {
         if (speed !== 0 && speed !== 1 && speed !== 2 && speed !== 3) return false
         const state = get()
         if (state.settlement.constructionSpeed === speed) return false
         set({
           settlement: { ...state.settlement, constructionSpeed: speed },
+          worldRevision: state.worldRevision + 1,
         })
         return true
       },
@@ -453,6 +978,118 @@ export const useColonyStore = create<MoonbaseStore>()(
           ...(cancelled?.orders ?? state.settlement.constructionOrders),
           ...derived.filter((order) => !skippedNewIds.has(order.id)),
         ]
+        const nextProjection = projectConstructionOrders(
+          state.settlement.layout,
+          nextOrders,
+        )
+        const indoorWorkstationOutsideRoom = nextProjection.valid
+          ? derived.find((order) => {
+              if (
+                skippedNewIds.has(order.id) ||
+                order.status === 'complete' ||
+                order.target.kind !== 'workstation' ||
+                !order.target.construct
+              ) return false
+              const spec = WORKSTATION_SPECS[
+                order.target.construct.type as keyof typeof WORKSTATION_SPECS
+              ]
+              if (!spec.indoor) return false
+              const topology = analyzeConstructionPressure(nextProjection.layout)
+              const rooms = new Set(order.target.cells.map((cell) => (
+                topology.roomByCell.get(`${cell.x}:${cell.y}`)?.id
+              )))
+              if (rooms.size !== 1 || rooms.has(undefined)) return true
+              const roomId = [...rooms][0]
+              const targetKeys = new Set(order.target.cells.map((cell) => `${cell.x}:${cell.y}`))
+              return topology.doors.some((door) => (
+                door.role !== 'invalid' &&
+                door.roomIds.includes(roomId!) &&
+                door.passageCells.some((cell) => targetKeys.has(`${cell.x}:${cell.y}`))
+              ))
+            })
+          : undefined
+        if (indoorWorkstationOutsideRoom) {
+          return {
+            ok: false,
+            orderIds: [],
+            error: 'Place this workstation inside one enclosed room and leave the floor immediately inside each working door clear.',
+          }
+        }
+        const inaccessibleWorkstation = nextProjection.valid
+          ? derived.find((order) => (
+              !skippedNewIds.has(order.id) &&
+              order.status !== 'complete' &&
+              order.target.kind === 'workstation' &&
+              Boolean(order.target.construct) &&
+              order.materials.required > 0 &&
+              !findConstructionOrderApproachPath(
+                nextProjection.layout,
+                stockpile,
+                order,
+              )
+            ))
+          : undefined
+        if (inaccessibleWorkstation) {
+          return {
+            ok: false,
+            orderIds: [],
+            error: 'That workstation blocks its construction access. Leave a clear walkable path from the construction pallet through a valid door to at least one floor tile beside the fixture.',
+          }
+        }
+        if (state.settlement.phase === 'operations') {
+          const pressure = nextProjection.valid
+            ? analyzeConstructionPressure(nextProjection.layout)
+            : null
+          const keepsExteriorAirlock = pressure?.doors.some((door) => (
+            door.role === 'exterior_airlock' && door.roomIds.length === 1
+          ))
+          if (!keepsExteriorAirlock) {
+            return {
+              ok: false,
+              orderIds: [],
+              error: 'Operations need at least one usable exterior airlock. Build a replacement before removing the last one.',
+            }
+          }
+        }
+        if (nextProjection.valid) {
+          const currentPressure = analyzeConstructionPressure(state.settlement.layout)
+          const nextPressure = analyzeConstructionPressure(nextProjection.layout)
+          const deployedCrewIds = new Set(visibleConstructionCrew(state).map((member) => member.id))
+          const newlyExposedCrewIds = state.settlement.constructionCrew
+            .filter((position) => deployedCrewIds.has(position.crewId))
+            .filter((position) => (
+              constructionEnvironmentAt(
+                state.settlement.layout,
+                currentPressure,
+                position.cell,
+              ) === 'pressurized' &&
+              constructionEnvironmentAt(
+                nextProjection.layout,
+                nextPressure,
+                position.cell,
+              ) !== 'pressurized'
+            ))
+            .map((position) => position.crewId)
+          const unprotectedCrewIds = newlyExposedCrewIds.filter((crewId) => (
+            !constructionSuitForCrew(state, crewId)
+          ))
+          const availableSuitCount = state.equipment.filter((item) => (
+            item.type === 'eva_suit' &&
+            item.condition >= 65 &&
+            !item.reservedForWorkOrderId &&
+            !item.assignedCrewId
+          )).length
+          const unavailableCrew = unprotectedCrewIds.find((crewId) => (
+            Boolean(constructionCrewUnavailableReason(state, crewId))
+          ))
+          if (unavailableCrew || unprotectedCrewIds.length > availableSuitCount) {
+            return {
+              ok: false,
+              orderIds: [],
+              error: 'That change would vent occupied space before every colonist can seal an EVA suit. Move the crew or free enough suits first.',
+            }
+          }
+        }
         const returnedMaterials = cancelled?.returnedMaterials ?? 0
         const constructionStock = state.reserves.constructionStock + returnedMaterials
         const reservation = reserveConstructionMaterials(nextOrders, constructionStock)
@@ -702,7 +1339,9 @@ export const useColonyStore = create<MoonbaseStore>()(
           JSON.stringify(state.settlement.constructionCrew) !==
             JSON.stringify(before.settlement.constructionCrew) ||
           JSON.stringify(state.settlement.constructionStockpile) !==
-            JSON.stringify(before.settlement.constructionStockpile)
+            JSON.stringify(before.settlement.constructionStockpile) ||
+          JSON.stringify(state.crew) !== JSON.stringify(before.crew) ||
+          JSON.stringify(state.equipment) !== JSON.stringify(before.equipment)
         ) {
           state.worldRevision += 1
           set(state)
@@ -724,8 +1363,18 @@ export const useColonyStore = create<MoonbaseStore>()(
         if (result.ok) set(nextState)
         return result
       },
+      stagePlanBatch: (input, actor = 'manual') => {
+        const [nextState, result] = stageOperationsPlanBatch(get(), input, actor)
+        if (result.ok) set(nextState)
+        return result
+      },
       removePlanAction: (actionId, actor = 'manual') => {
         const [nextState, result] = removePlanActionFromState(get(), actionId, actor)
+        if (result.ok) set(nextState)
+        return result
+      },
+      removePlanActionsBatch: (input, actor = 'manual') => {
+        const [nextState, result] = removePlanActionsBatchFromState(get(), input, actor)
         if (result.ok) set(nextState)
         return result
       },
@@ -761,23 +1410,25 @@ export const useColonyStore = create<MoonbaseStore>()(
         return result
       },
       verifyPlan: (actor = 'manual') => {
-        const [nextState, result] = verifyOperationsPlan(get(), actor)
-        set(nextState)
+        const current = get()
+        const [nextState, result] = verifyOperationsPlan(current, actor)
+        if (nextState !== current) set(nextState)
         return result
       },
-      recordLearningEvidence: (phase, detail, actor = 'manual') => {
-        set(recordLearningEvidenceInState(get(), phase, detail, actor))
+      recordLearningEvidence: (phase, detail, actor = 'manual', options = {}) => {
+        set(recordLearningEvidenceInState(get(), phase, detail, actor, options))
       },
     }),
     {
       name: 'playlearnai-moonbase-poc-v1',
-      version: 10,
+      version: PERSISTENCE_VERSION,
       partialize: domainSnapshot,
       migrate: (persistedState, version) => {
         const initialState = createInitialState()
-        if (version > 10) return initialState
+        if (version > PERSISTENCE_VERSION) return initialState
         const state = persistedState as Partial<MoonbaseState>
         if (!state.settlement) return initialState
+        const runSequence = normalizedRunSequence(state.runSequence)
         const layout = version < 4
           ? createStarterConstruction()
           : state.settlement.layout
@@ -827,9 +1478,15 @@ export const useColonyStore = create<MoonbaseStore>()(
           constructionStockpile,
           constructionOrders,
         )
-        return {
+        const migratedState = {
           ...state,
+          runSequence,
+          runId: version >= RUN_ID_PERSISTENCE_VERSION && isOpaqueRunId(state.runId)
+            ? state.runId
+            : createRunId(),
           reserves: { ...state.reserves, constructionStock },
+          equipment: reconciledEquipment(state.equipment, initialState.equipment),
+          workOrders: reconciledWorkOrders(state.workOrders, initialState.workOrders),
           settlement: {
             ...state.settlement,
             layout,
@@ -843,6 +1500,14 @@ export const useColonyStore = create<MoonbaseStore>()(
             ),
           },
         } as MoonbaseState
+        const evaSafeState = version < EVA_SAFE_PERSISTENCE_VERSION &&
+          version >= RUN_ID_PERSISTENCE_VERSION
+          ? hardenLegacyEvaState(migratedState, initialState)
+          : migratedState
+        return version < PHASE_SAFE_PERSISTENCE_VERSION &&
+          evaSafeState.settlement.phase !== 'operations'
+          ? resetLegacyEstablishmentIncident(evaSafeState, initialState)
+          : evaSafeState
       },
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<MoonbaseState>
@@ -881,14 +1546,24 @@ export const useColonyStore = create<MoonbaseStore>()(
           constructionStockpile,
           repairedOrders,
         )
+        const runSequence = normalizedRunSequence(
+          persisted.runSequence,
+          currentState.runSequence,
+        )
         return {
           ...currentState,
           ...persisted,
+          runSequence,
+          runId: isOpaqueRunId(persisted.runId)
+            ? persisted.runId
+            : currentState.runId,
           reserves: {
             ...currentState.reserves,
             ...persisted.reserves,
             constructionStock,
           },
+          equipment: reconciledEquipment(persisted.equipment, currentState.equipment),
+          workOrders: reconciledWorkOrders(persisted.workOrders, currentState.workOrders),
           settlement: {
             ...currentState.settlement,
             ...persisted.settlement,

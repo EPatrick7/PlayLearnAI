@@ -1,0 +1,1336 @@
+/*
+ * Sintered Frontier
+ *
+ * A warm, tactile colony-console layer shared by Operations and Architect.
+ * The world stays cold and desaturated; every human-made control uses the
+ * same graphite, bone, brass, teal, and enamel material language.
+ */
+
+:root {
+  --void: #10130f;
+  --iron: #191c18;
+  --plate: #272b24;
+  --plate-raised: #34382f;
+  --plate-low: #141713;
+  --bevel-lit: #646b59;
+  --bevel-deep: #090b09;
+  --bone: #e7dcc3;
+  --bone-bright: #f4ead3;
+  --ash: #aaa18d;
+  --ash-low: #77796d;
+  --brass: #c39a4a;
+  --brass-hot: #e0bd69;
+  --blueprint: #75aebe;
+  --oxygen: #72a393;
+  --success: #88a967;
+  --danger: #bd5a4d;
+  --font-ui: "Noto Sans", "Liberation Sans", ui-sans-serif, sans-serif;
+  --font-condensed: "Nimbus Sans Narrow", "Arial Narrow", "Noto Sans", sans-serif;
+  --font-readout: "Nimbus Mono PS", "Liberation Mono", ui-monospace, monospace;
+
+  --ink: var(--bone);
+  --ink-soft: #d3c9b4;
+  --muted: var(--ash);
+  --faint: var(--ash-low);
+  --night: var(--void);
+  --panel: rgba(39, 43, 36, 0.985);
+  --panel-solid: var(--plate);
+  --panel-raised: var(--plate-raised);
+  --panel-light: #3f4439;
+  --line: rgba(212, 194, 154, 0.17);
+  --line-strong: rgba(224, 193, 116, 0.42);
+  --cream: var(--bone);
+  --blue: #628f9a;
+  --blue-bright: var(--blueprint);
+  --teal: var(--oxygen);
+  --mint: var(--success);
+  --amber: var(--brass);
+  --amber-soft: var(--brass-hot);
+  --red: var(--danger);
+  --red-soft: #dc7667;
+
+  color: var(--bone);
+  background: var(--void);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+button,
+input,
+select {
+  font-family: var(--font-ui);
+}
+
+.game-shell {
+  color: var(--bone);
+  background: var(--void);
+  font-family: var(--font-ui);
+}
+
+.game-shell small,
+.game-shell .resource-chip,
+.game-shell .clock-value,
+.game-shell .construction-status,
+.game-shell .command-dock,
+.game-shell .learning-loop,
+.game-shell .selection-stats,
+.game-shell .condition-meter,
+.game-shell .vital-bars,
+.game-shell .event-time {
+  font-family: var(--font-condensed);
+  font-variant-numeric: tabular-nums;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--blueprint);
+  outline-offset: 2px;
+}
+
+.game-topbar button,
+.incident-card button,
+.selection-inspector button,
+.command-sheet button,
+.command-dock button,
+.time-controls button,
+.construction-topbar button,
+.construction-job-hud button,
+.construction-controls button {
+  transition:
+    color 110ms ease,
+    background-color 110ms ease,
+    border-color 110ms ease,
+    box-shadow 110ms ease,
+    transform 80ms ease;
+}
+
+.game-topbar button:active,
+.incident-card button:active,
+.selection-inspector button:active,
+.command-sheet button:active,
+.command-dock button:active,
+.time-controls button:active,
+.construction-topbar button:active,
+.construction-job-hud button:active,
+.construction-controls button:active {
+  transform: translateY(1px);
+}
+
+/* Shared forged plates. */
+.incident-card,
+.selection-inspector,
+.time-controls,
+.command-sheet,
+.command-dock,
+.outcome-banner,
+.colonist-strip,
+.construction-job-hud,
+.construction-queue-popover,
+.construction-controls,
+.settlement-guide,
+.blueprint-tray {
+  border: 1px solid var(--bevel-deep);
+  border-radius: 2px;
+  color: var(--bone);
+  background:
+    linear-gradient(180deg, rgba(255, 244, 215, 0.045), transparent 18px),
+    var(--plate);
+  box-shadow:
+    0 0 0 1px rgba(207, 190, 148, 0.2) inset,
+    0 2px 0 rgba(255, 247, 220, 0.045) inset,
+    0 -2px 0 rgba(0, 0, 0, 0.24) inset,
+    0 10px 28px rgba(0, 0, 0, 0.52);
+  backdrop-filter: none;
+}
+
+/* Operations header: a continuous equipment rail, not a dashboard row. */
+.game-topbar {
+  height: 62px;
+  padding: 0 12px;
+  gap: 10px;
+  border-bottom: 2px solid #080a08;
+  color: var(--bone);
+  background:
+    linear-gradient(90deg, transparent 0 34%, rgba(195, 154, 74, 0.035) 49%, transparent 66%),
+    linear-gradient(180deg, #30342c 0, #23271f 54%, #191c18 100%);
+  box-shadow:
+    0 1px 0 rgba(238, 222, 184, 0.16) inset,
+    0 -1px 0 rgba(195, 154, 74, 0.32) inset,
+    0 5px 18px rgba(0, 0, 0, 0.48);
+}
+
+.game-topbar::after,
+.construction-topbar::after {
+  position: absolute;
+  right: 12px;
+  bottom: -2px;
+  left: 12px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(224, 189, 105, 0.66) 16%, rgba(224, 189, 105, 0.12) 64%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.brand-lockup {
+  gap: 11px;
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  border: 1px solid #0b0d0b;
+  border-radius: 0;
+  clip-path: polygon(16% 0, 84% 0, 100% 16%, 100% 84%, 84% 100%, 16% 100%, 0 84%, 0 16%);
+  color: var(--bone-bright);
+  background:
+    radial-gradient(circle at 50% 58%, #40483e 0 34%, transparent 35%),
+    linear-gradient(135deg, #586055, #20251f 55%, #11140f);
+  box-shadow:
+    0 0 0 2px rgba(214, 192, 142, 0.34) inset,
+    0 2px 0 rgba(255, 255, 255, 0.12) inset,
+    0 -3px 0 rgba(0, 0, 0, 0.34) inset;
+  font: 900 10px/1 var(--font-readout);
+  letter-spacing: 0.08em;
+}
+
+.brand-mark::before {
+  inset: 7px;
+  border: 1px solid rgba(224, 189, 105, 0.5);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(9, 11, 9, 0.56);
+}
+
+.brand-mark::after {
+  right: 5px;
+  left: 5px;
+  top: 21px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--brass-hot) 18% 82%, transparent);
+}
+
+.brand-mark i {
+  right: 6px;
+  top: 7px;
+  width: 4px;
+  height: 4px;
+  background: var(--oxygen);
+  box-shadow: 0 0 0 1px #10130f, 0 0 5px rgba(114, 163, 147, 0.75);
+}
+
+.brand-lockup small {
+  margin-bottom: 3px;
+  color: #b7a26f;
+  font: 800 9px/1 var(--font-condensed);
+  letter-spacing: 0.16em;
+}
+
+.brand-lockup strong {
+  color: var(--bone-bright);
+  font: 750 17px/1.05 var(--font-condensed);
+  letter-spacing: 0.025em;
+}
+
+.resource-rack {
+  border-right: 1px solid rgba(218, 199, 157, 0.1);
+  border-left: 1px solid rgba(5, 7, 5, 0.78);
+  background: rgba(8, 10, 8, 0.09);
+}
+
+.resource-chip {
+  position: relative;
+  padding: 0 12px;
+  border-left-color: rgba(218, 199, 157, 0.1);
+  color: #c8bea9;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(0, 0, 0, 0.06));
+}
+
+.resource-chip::before {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  width: 24px;
+  height: 2px;
+  background: #67695f;
+  content: "";
+}
+
+.resource-chip.nominal::before,
+.resource-chip.surplus::before { background: var(--oxygen); }
+.resource-chip.warning::before,
+.resource-chip.battery::before { background: var(--brass-hot); }
+.resource-chip.critical::before { background: var(--danger); }
+
+.resource-chip > .game-icon {
+  width: 18px;
+  height: 18px;
+  color: #b5ad9b;
+  stroke-width: 2.15;
+}
+
+.resource-chip small,
+.mission-time small {
+  color: #999381;
+  font: 800 9px/1 var(--font-condensed);
+  letter-spacing: 0.12em;
+}
+
+.resource-chip strong,
+.mission-time strong,
+.clock-value {
+  color: var(--bone-bright);
+  font-family: var(--font-readout);
+  font-variant-numeric: tabular-nums;
+}
+
+.resource-chip strong { font-size: 13px; }
+
+.clock-value,
+.icon-button,
+div.agent-link-panel > button.agent-link-trigger {
+  border: 1px solid #0c0e0b;
+  border-radius: 2px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 50%),
+    #1b1f1a;
+  box-shadow:
+    0 0 0 1px rgba(197, 180, 139, 0.16) inset,
+    0 1px 0 rgba(255, 255, 255, 0.05) inset;
+}
+
+.clock-value {
+  min-width: 66px;
+  padding: 8px 9px;
+  color: #f0dfb5;
+  font-size: 14px;
+}
+
+div.agent-link-panel > button.agent-link-trigger {
+  min-width: 88px;
+  color: #bdb5a4;
+  font: 800 9px/1 var(--font-condensed);
+  letter-spacing: 0.07em;
+}
+
+.agent-link-trigger-label { color: #aaa390; }
+.agent-link-trigger-state { font-size: 9px; }
+
+/* Cold world, warm habitat: one large texture field with restrained optical grit. */
+.world-stage:not(.settlement-stage),
+.construction-stage,
+.settlement-map-scroll {
+  background:
+    linear-gradient(rgba(24, 28, 25, 0.11), rgba(8, 10, 8, 0.31)),
+    url("./assets/lunar-regolith.webp") center / cover no-repeat;
+}
+
+.world-stage::before,
+.construction-stage::before {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 48% 48%, transparent 22%, rgba(9, 11, 9, 0.08) 66%, rgba(5, 6, 5, 0.3) 100%),
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(232, 220, 190, 0.012) 3px 4px);
+  content: "";
+  pointer-events: none;
+}
+
+.operations-map-scroll,
+.construction-map-scroll,
+.construction-camera-surface,
+.settlement-map-scroll {
+  z-index: 1;
+}
+
+.moonbase-map {
+  filter: saturate(0.82) contrast(1.04);
+}
+
+.module-tile.tile-wall > .tile-surface {
+  border-color: #2f352f;
+  box-shadow:
+    0 2px 0 rgba(244, 236, 211, 0.28) inset,
+    0 -4px 0 rgba(13, 16, 14, 0.38) inset,
+    3px 0 0 rgba(235, 226, 201, 0.07) inset,
+    3px 5px 5px rgba(8, 10, 8, 0.24);
+}
+
+.module-tile.tile-floor > .tile-surface {
+  border-color: #3a413a;
+  box-shadow:
+    1px 1px 0 rgba(226, 220, 198, 0.14) inset,
+    -2px -2px 0 rgba(12, 15, 13, 0.21) inset;
+}
+
+/* Persistent colonist rail: the people, not the dashboard, anchor the world. */
+.colonist-strip {
+  z-index: 30;
+  top: 10px;
+  max-width: min(520px, calc(100% - 720px));
+  height: 58px;
+  padding: 4px 5px;
+  gap: 3px;
+  border-bottom-color: #050705;
+  background:
+    linear-gradient(180deg, rgba(244, 228, 189, 0.055), transparent 18px),
+    #252921;
+}
+
+.colonist-strip::before,
+.command-dock::before {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  width: 42%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(224, 189, 105, 0.72), transparent);
+  content: "";
+  transform: translateX(-50%);
+}
+
+.colonist-card {
+  min-width: 50px;
+  height: 48px;
+  padding: 2px 4px;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 1px;
+  background: #1c201a;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.035) inset;
+}
+
+.colonist-card > span:last-child { display: none; }
+
+.colonist-strip.expanded .colonist-card {
+  min-width: 78px;
+  justify-content: flex-start;
+}
+
+.colonist-strip.expanded .colonist-card > span:last-child { display: grid; }
+
+.colonist-card:hover,
+.colonist-card.selected {
+  border-color: rgba(224, 189, 105, 0.68);
+  color: var(--bone-bright);
+  background:
+    linear-gradient(90deg, rgba(195, 154, 74, 0.2), transparent 74%),
+    #2d3028;
+  box-shadow:
+    0 0 0 1px rgba(224, 189, 105, 0.12) inset,
+    0 -2px 0 rgba(0, 0, 0, 0.22) inset;
+}
+
+.colonist-card .portrait {
+  width: 38px;
+  height: 44px;
+  border-radius: 2px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(0, 0, 0, 0.08)),
+    conic-gradient(var(--oxygen) var(--health), #4a4e43 0);
+}
+
+.colonist-card strong {
+  color: var(--bone);
+  font: 750 12px/1 var(--font-condensed);
+}
+
+.colonist-card small {
+  color: var(--ash);
+  font-size: 9px;
+}
+
+/* Priority order: compact command plaque with optional evidence detail. */
+.incident-card,
+.colonist-strip + .incident-card {
+  top: 16px;
+  left: 16px;
+  width: min(332px, calc(100% - 32px));
+  padding: 10px;
+  clip-path: polygon(0 0, calc(100% - 15px) 0, 100% 15px, 100% 100%, 0 100%);
+  border-color: #090b09;
+  background:
+    radial-gradient(circle at 7px 7px, #7f7358 0 1px, #10120e 1.5px 2.5px, transparent 3px),
+    linear-gradient(180deg, rgba(255, 244, 215, 0.045), transparent 18px),
+    #272b24;
+}
+
+.incident-card::before {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  background: linear-gradient(var(--danger), #71362e);
+  content: "";
+}
+
+.incident-card.objective_complete::before {
+  background: linear-gradient(var(--success), #53683f);
+}
+
+.incident-card.objective_complete {
+  border-color: #0a0c09;
+}
+
+.incident-heading {
+  grid-template-columns: 38px minmax(0, 1fr) auto 30px;
+  gap: 8px;
+}
+
+.incident-icon,
+.selection-kind {
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(189, 90, 77, 0.58);
+  border-radius: 2px;
+  color: #e08777;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 48%),
+    rgba(119, 47, 39, 0.25);
+  box-shadow: 0 0 0 1px rgba(7, 9, 7, 0.62) inset;
+}
+
+.incident-card.objective_complete .incident-icon {
+  color: #afca87;
+  border-color: rgba(136, 169, 103, 0.5);
+  background: rgba(86, 112, 65, 0.22);
+}
+
+.incident-heading small,
+.selection-heading small {
+  color: #a89a79;
+  font: 800 9px/1 var(--font-condensed);
+  letter-spacing: 0.12em;
+}
+
+.incident-heading strong,
+.selection-heading strong,
+.sheet-title,
+.work-focus header strong,
+.roster-copy strong,
+.inventory-card strong,
+.brief-controls > header strong,
+.construction-queue-heading strong {
+  color: var(--bone-bright);
+  font-family: var(--font-condensed);
+  font-weight: 750;
+  letter-spacing: 0.015em;
+}
+
+.incident-heading strong { font-size: 16px; }
+.incident-heading > b {
+  color: var(--brass-hot);
+  font: 850 12px/1 var(--font-readout);
+}
+
+.incident-toggle {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(214, 195, 151, 0.16);
+  border-radius: 1px;
+  color: #aaa18d;
+  background: #1b1f19;
+}
+
+.incident-toggle:hover {
+  border-color: rgba(224, 189, 105, 0.52);
+  color: var(--brass-hot);
+  background: #32342a;
+}
+
+.incident-toggle .game-icon {
+  width: 14px;
+  height: 14px;
+  transform: rotate(-90deg);
+  transition: transform 130ms ease;
+}
+
+.incident-card.collapsed .incident-toggle .game-icon { transform: rotate(90deg); }
+.incident-card.collapsed .incident-details { display: none; }
+
+.objective-progress {
+  height: 5px;
+  margin: 9px 0 8px;
+  border: 1px solid #11140f;
+  border-radius: 0;
+  background: #161914;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.035) inset;
+}
+
+.objective-progress i {
+  border-radius: 0;
+  background: linear-gradient(90deg, var(--brass) 0 58%, var(--success));
+  box-shadow: 1px 0 0 #f2d78d;
+}
+
+.incident-profile-brief {
+  margin: 0 0 8px;
+  padding: 8px 9px;
+  gap: 6px;
+  border: 1px solid #141712;
+  border-left: 2px solid #5d756d;
+  border-radius: 0;
+  background:
+    linear-gradient(90deg, rgba(117, 174, 190, 0.065), transparent 72%),
+    #1c201a;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+}
+
+.incident-profile-brief > header small,
+.incident-profile-focus small {
+  color: #a79a7e;
+  font: 800 9px/1 var(--font-condensed);
+}
+
+.incident-profile-brief > header strong {
+  color: #a9ced0;
+  font: 850 10px/1 var(--font-condensed);
+  letter-spacing: 0.07em;
+}
+
+.incident-profile-brief > p,
+.incident-card > .incident-details > p {
+  color: #c5bca8;
+  font: 500 10px/1.38 var(--font-ui);
+}
+
+.incident-profile-next,
+.text-action,
+.incident-alerts button {
+  border-radius: 1px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.045) inset,
+    0 -2px 0 rgba(0, 0, 0, 0.16) inset;
+}
+
+.incident-profile-next {
+  min-height: 40px;
+  border-color: rgba(117, 174, 190, 0.32);
+  color: #c5d7d4;
+  background: #242c27;
+}
+
+.incident-profile-next strong,
+.text-action {
+  font: 850 10px/1 var(--font-condensed);
+  letter-spacing: 0.07em;
+}
+
+.incident-profile-next small { font-size: 8px; }
+
+.learning-loop { gap: 3px; }
+.learning-loop > span {
+  min-height: 31px;
+  border: 1px solid #11140f;
+  border-radius: 1px;
+  background: #1c201a;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.035) inset;
+}
+.learning-loop > span > small { font-size: 8px; }
+.learning-loop > span.current {
+  border-color: rgba(195, 154, 74, 0.58);
+  color: var(--brass-hot);
+  background: rgba(132, 94, 37, 0.2);
+}
+.learning-loop > span.complete {
+  border-color: rgba(136, 169, 103, 0.36);
+  color: #a7c580;
+}
+
+.text-action {
+  min-height: 38px;
+  border-color: rgba(195, 154, 74, 0.44);
+  color: var(--brass-hot);
+  background: #312b1e;
+}
+
+.text-action:hover {
+  border-color: rgba(224, 189, 105, 0.72);
+  background: #423823;
+}
+
+.incident-alerts button {
+  min-height: 36px;
+  border-color: rgba(195, 154, 74, 0.28);
+  background: #2e291d;
+}
+
+.incident-alerts button.critical {
+  border-color: rgba(189, 90, 77, 0.46);
+  background: #34201c;
+}
+
+.incident-alerts button span {
+  font: 750 11px/1.1 var(--font-condensed);
+}
+
+/* Context inspector: a dense instrument readout. */
+.selection-inspector {
+  left: 16px;
+  bottom: 78px;
+  width: min(432px, calc(100vw - 32px));
+  padding: 9px;
+  clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 0 100%);
+  background:
+    linear-gradient(90deg, rgba(195, 154, 74, 0.045), transparent 58%),
+    #272b24;
+}
+
+.selection-inspector::before {
+  width: 3px;
+  top: 8px;
+  bottom: 8px;
+  background: var(--brass);
+  box-shadow: none;
+}
+
+.selection-heading { grid-template-columns: 40px minmax(0, 1fr) 34px; }
+.selection-kind {
+  width: 38px;
+  height: 38px;
+  color: var(--brass-hot);
+  border-color: rgba(195, 154, 74, 0.48);
+  background: #28271f;
+}
+.selection-heading strong { font-size: 16px; }
+.selection-context {
+  border: 1px solid #141712;
+  border-radius: 0;
+  color: #c5bca8;
+  background: #1b1f19;
+  font: 500 10px/1.3 var(--font-ui);
+}
+.selection-stats {
+  gap: 1px;
+  border-color: #10120f;
+  background: #10120f;
+}
+.selection-stats > span {
+  min-height: 44px;
+  background: #30342b;
+}
+.selection-stats small { color: #9d9582; font-size: 8px; }
+.selection-stats strong { color: var(--bone-bright); font: 800 11px/1.1 var(--font-readout); }
+.selection-details dt { color: #918a79; font-size: 8px; }
+.selection-details dd { color: #d6cdb9; font: 600 10px/1.15 var(--font-ui); }
+
+/* Time block and command rail share one baseline like physical console modules. */
+.time-controls {
+  right: 16px;
+  bottom: 8px;
+  min-height: 54px;
+  padding: 4px;
+  border-radius: 2px;
+  background: #242820;
+}
+
+.time-controls button {
+  min-width: 46px;
+  border: 1px solid #11130f;
+  border-radius: 1px;
+  color: #bbb3a1;
+  background: #2d3129;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+.time-controls button:hover:not(:disabled),
+.time-controls button[aria-pressed="true"] {
+  border-color: rgba(195, 154, 74, 0.5);
+  color: var(--bone-bright);
+  background: #3b3527;
+}
+
+.world-construction-status > .game-icon { color: var(--brass-hot); }
+
+.dust-status {
+  top: 82px;
+  border: 1px solid #17130b;
+  border-radius: 1px;
+  color: #f0cf7c;
+  background: #42351d;
+  box-shadow:
+    0 0 0 1px rgba(224, 189, 105, 0.28) inset,
+    0 7px 18px rgba(0, 0, 0, 0.36);
+  font: 850 10px/1 var(--font-condensed);
+  letter-spacing: 0.08em;
+}
+
+.command-dock {
+  height: 62px;
+  padding: 4px 5px 0;
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  background:
+    linear-gradient(180deg, rgba(255, 244, 215, 0.055), transparent 18px),
+    #242820;
+  box-shadow:
+    0 0 0 1px rgba(207, 190, 148, 0.21) inset,
+    0 2px 0 rgba(255, 247, 220, 0.045) inset,
+    0 12px 28px rgba(0, 0, 0, 0.58);
+}
+
+.command-dock button {
+  min-width: 78px;
+  padding: 5px 13px 7px;
+  border-left-color: rgba(220, 201, 158, 0.1);
+  color: #a69f8d;
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.08));
+  font: 850 10px/1 var(--font-condensed);
+  letter-spacing: 0.07em;
+}
+
+.command-dock button:hover {
+  color: var(--bone-bright);
+  background: #30342a;
+}
+
+.command-dock button.active {
+  color: #f1dfb1;
+  background:
+    linear-gradient(180deg, rgba(195, 154, 74, 0.22), transparent 72%),
+    #312e24;
+  box-shadow:
+    0 0 0 1px rgba(224, 189, 105, 0.17) inset,
+    0 -3px 0 rgba(9, 11, 9, 0.4) inset;
+}
+
+.command-dock button::after {
+  right: 8px;
+  bottom: auto;
+  left: 8px;
+  top: 0;
+  height: 3px;
+  border-radius: 0;
+}
+
+.command-dock button.active::after {
+  background: var(--brass-hot);
+  box-shadow: none;
+}
+
+.command-dock .game-icon {
+  width: 21px;
+  height: 21px;
+  stroke-width: 2.1;
+}
+
+.command-dock button > b {
+  border-color: #1d211b;
+  border-radius: 2px;
+  color: #211b0e;
+  background: var(--brass-hot);
+}
+
+.command-sheet {
+  right: 16px;
+  bottom: 61px;
+  left: 16px;
+  height: min(324px, calc(100dvh - 140px));
+  border-radius: 2px 2px 0 0;
+  clip-path: polygon(0 12px, 12px 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  background: #252921;
+}
+
+.sheet-header {
+  height: 50px;
+  min-height: 50px;
+  padding: 4px 8px 4px 14px;
+  border-bottom: 1px solid #10120f;
+  background:
+    linear-gradient(90deg, rgba(195, 154, 74, 0.12), transparent 18%),
+    #30342b;
+  box-shadow: 0 -1px 0 rgba(215, 196, 153, 0.13) inset;
+}
+
+.sheet-header > span > .game-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--brass-hot);
+}
+
+.sheet-title { font-size: 17px; }
+
+.sheet-header > button {
+  border: 1px solid #131611;
+  border-radius: 1px;
+  color: #aaa391;
+  background: #242820;
+}
+
+.work-sheet,
+.plan-sheet {
+  gap: 1px;
+  background: #10120f;
+}
+
+.work-sheet > *,
+.plan-sheet > section {
+  background:
+    linear-gradient(180deg, rgba(255, 248, 228, 0.018), transparent 34px),
+    #272b24;
+}
+
+.work-node,
+.loadout-card,
+.roster-card,
+.inventory-card,
+.forecast-card,
+.queue-action,
+.plan-time-action,
+.verification-evidence,
+.brief-grid input,
+.brief-grid select,
+.segment-control,
+.work-tags span {
+  border-radius: 1px;
+}
+
+.work-node,
+.loadout-card,
+.roster-card,
+.inventory-card,
+.queue-action {
+  border-color: rgba(207, 190, 148, 0.15);
+  color: #d0c7b3;
+  background: #2d3129;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+}
+
+.work-node:hover,
+.work-node.selected,
+.loadout-card:hover:not(:disabled),
+.loadout-card.staged,
+.roster-card:hover,
+.roster-card.selected,
+.inventory-card:hover,
+.inventory-card.selected {
+  border-color: rgba(224, 189, 105, 0.62);
+  color: var(--bone-bright);
+  background:
+    linear-gradient(90deg, rgba(195, 154, 74, 0.16), transparent 74%),
+    #34372e;
+}
+
+.work-node-index,
+.gear-symbol,
+.inventory-art,
+.mini-portrait,
+.large-portrait {
+  border-radius: 1px;
+  border-color: rgba(201, 180, 132, 0.3);
+  background: #1b1f19;
+}
+
+.work-node-index {
+  color: #c4b99f;
+  font-family: var(--font-readout);
+}
+
+.work-node.selected .work-node-index,
+.inventory-art,
+.gear-symbol { color: var(--brass-hot); }
+
+.work-node strong,
+.loadout-card strong,
+.roster-copy strong,
+.inventory-card strong { font-family: var(--font-condensed); }
+.work-node strong { font-size: 12px; }
+.loadout-card strong { font-size: 11px; }
+.roster-copy strong { font-size: 16px; }
+.inventory-card strong { font-size: 15px; }
+
+.primary-action,
+.commit-action {
+  border-color: #6d5326;
+  border-radius: 1px;
+  color: #221b0d;
+  background: linear-gradient(180deg, #e2c376, #b68b3d);
+  box-shadow:
+    0 1px 0 rgba(255, 245, 203, 0.48) inset,
+    0 -2px 0 rgba(72, 48, 14, 0.38) inset;
+}
+
+.primary-action:hover,
+.commit-action:hover:not(:disabled) {
+  color: #171208;
+  background: linear-gradient(180deg, #efd58e, #c99d48);
+}
+
+.smart-plan-button {
+  border-radius: 1px;
+  color: #d9c487;
+  border-color: rgba(195, 154, 74, 0.35);
+  background: #312b1e;
+}
+
+.forecast-card.valid,
+.verification-evidence.success {
+  border-color: rgba(136, 169, 103, 0.42);
+  background: #293025;
+}
+
+.forecast-card.invalid,
+.verification-evidence.failure {
+  border-color: rgba(189, 90, 77, 0.46);
+  background: #33221d;
+}
+
+/* Architect uses the exact same field-console material language. */
+.construction-shell {
+  --construction-panel: rgba(39, 43, 36, 0.985);
+  --construction-panel-low: rgba(20, 23, 19, 0.99);
+  --construction-cream: var(--bone);
+  --construction-muted: var(--ash);
+  --construction-amber: var(--brass-hot);
+  --construction-cyan: var(--blueprint);
+  --construction-green: var(--success);
+  --construction-red: var(--danger);
+  background: var(--void);
+}
+
+.construction-topbar {
+  height: 58px;
+  padding: 0 12px;
+  border-bottom: 2px solid #080a08;
+  background:
+    linear-gradient(90deg, rgba(195, 154, 74, 0.045), transparent 30%),
+    linear-gradient(180deg, #30342c, #1b1f19);
+  box-shadow:
+    0 1px 0 rgba(238, 222, 184, 0.14) inset,
+    0 5px 18px rgba(0, 0, 0, 0.46);
+}
+
+.construction-brand .brand-mark {
+  width: 38px;
+  height: 38px;
+}
+
+.construction-brand small {
+  color: #b7a26f;
+  font: 850 9px/1 var(--font-condensed);
+  letter-spacing: 0.15em;
+}
+
+.construction-brand strong {
+  color: var(--bone-bright);
+  font: 750 17px/1 var(--font-condensed);
+}
+
+.construction-top-actions button,
+.construction-zoom-controls {
+  border-color: #0c0f0b;
+  border-radius: 2px;
+  color: #bbb3a1;
+  background: #22261f;
+  box-shadow: 0 0 0 1px rgba(205, 187, 143, 0.14) inset;
+}
+
+.construction-top-actions button:hover:not(:disabled),
+.construction-zoom-controls button:hover:not(:disabled) {
+  border-color: rgba(195, 154, 74, 0.55);
+  color: var(--brass-hot);
+  background: #343126;
+}
+
+.music-toggle[aria-pressed="true"] {
+  border-color: rgba(114, 163, 147, 0.56);
+  color: #9bc8b8;
+  background: #26302a;
+  box-shadow:
+    0 0 0 1px rgba(159, 205, 187, 0.12) inset,
+    0 0 10px rgba(114, 163, 147, 0.12);
+}
+
+.music-toggle[aria-pressed="true"] .game-icon {
+  filter: drop-shadow(0 0 3px rgba(155, 200, 184, 0.38));
+}
+
+.construction-job-hud {
+  top: 12px;
+  left: 12px;
+  min-height: 48px;
+  padding: 4px;
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+
+.construction-job-summary {
+  border-radius: 1px;
+}
+
+.construction-job-summary strong {
+  color: var(--bone-bright);
+  font: 750 12px/1 var(--font-condensed);
+}
+
+.construction-job-summary small {
+  color: var(--ash);
+  font: 500 9px/1.1 var(--font-ui);
+}
+
+.construction-material-summary strong {
+  color: var(--bone);
+  font: 750 11px/1 var(--font-condensed);
+}
+
+.construction-material-summary small { font-size: 9px; }
+
+.construction-queue-popover {
+  border-radius: 2px;
+  background:
+    linear-gradient(180deg, rgba(255, 244, 215, 0.04), transparent 54px),
+    #242820;
+}
+
+.construction-queue-heading {
+  border-bottom-color: #11140f;
+  background: #30342b;
+}
+
+.construction-queue-heading-icon,
+.construction-queue-heading > button,
+.construction-queue-target-icon,
+.construction-queue-row {
+  border-radius: 1px;
+}
+
+.construction-queue-heading small,
+.construction-queue-row-status strong {
+  font-family: var(--font-ui);
+  font-size: 9px;
+}
+
+.construction-queue-row-title strong {
+  color: var(--bone);
+  font: 750 12px/1.1 var(--font-condensed);
+}
+
+.construction-queue-row-metrics { font-size: 8px; }
+
+.construction-controls {
+  border-radius: 2px;
+  background:
+    linear-gradient(180deg, rgba(255, 244, 215, 0.04), transparent 28px),
+    #252921;
+}
+
+.construction-category-bar button,
+.construction-designator-strip button,
+.construction-tool-list > button {
+  border-radius: 1px;
+  font-family: var(--font-condensed);
+}
+
+.construction-category-bar .architect-button[aria-pressed="true"],
+.construction-tool-list > button[aria-pressed="true"] {
+  border-color: rgba(224, 189, 105, 0.58);
+  color: #f2dfab;
+  background: #3a3221;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.24) inset;
+}
+
+.construction-designator-strip {
+  border-radius: 1px;
+  background: #1b1f19;
+}
+
+.construction-designator-summary small,
+.active-tool-summary small,
+.select-mode-summary small {
+  color: #a09988;
+  font: 800 9px/1 var(--font-condensed);
+}
+
+.construction-designator-summary strong,
+.active-tool-summary strong,
+.select-mode-summary strong {
+  color: var(--bone);
+  font-family: var(--font-condensed);
+  font-size: 12px;
+}
+
+.settlement-guide,
+.blueprint-tray {
+  clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 0 100%);
+}
+
+.settlement-guide h1,
+.blueprint-tray button strong {
+  color: var(--bone-bright);
+  font-family: var(--font-condensed);
+}
+
+/* Mobile is recomposed around a visible map, not merely compressed. */
+@media (max-width: 860px) {
+  .game-topbar {
+    height: 104px;
+    padding: 6px 8px 5px;
+    gap: 5px 7px;
+  }
+
+  .brand-mark { width: 38px; height: 38px; }
+  .brand-lockup strong { font-size: 15px; }
+
+  .resource-rack {
+    border-top-color: rgba(218, 199, 157, 0.1);
+    border-left: 0;
+  }
+
+  .resource-chip {
+    min-width: 94px;
+    padding: 0 9px;
+  }
+
+  .resource-chip small { font-size: 8px; }
+  .resource-chip strong { font-size: 11px; }
+
+  .world-stage { height: calc(100dvh - 104px); }
+
+  .colonist-strip {
+    top: 8px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-width: none;
+    height: 52px;
+    padding: 3px;
+    justify-content: center;
+    transform: none;
+  }
+
+  .colonist-card,
+  .colonist-strip.expanded .colonist-card {
+    min-width: 45px;
+    height: 44px;
+    padding: 1px 3px;
+    justify-content: center;
+  }
+
+  .colonist-strip .colonist-card > span:last-child,
+  .colonist-strip.expanded .colonist-card > span:last-child { display: none; }
+  .colonist-card .portrait { width: 35px; height: 40px; }
+
+  .incident-card,
+  .colonist-strip + .incident-card {
+    top: 66px;
+    left: 8px;
+    width: min(320px, calc(100% - 16px));
+    padding: 8px;
+  }
+
+  .incident-card.collapsed {
+    width: min(320px, calc(100% - 16px));
+    min-height: 56px;
+  }
+
+  .incident-heading {
+    grid-template-columns: 36px minmax(0, 1fr) auto 44px;
+    gap: 7px;
+  }
+
+  .incident-heading strong { font-size: 15px; }
+  .incident-toggle { width: 44px; height: 44px; }
+
+  .incident-card.expanded {
+    max-height: calc(100dvh - 242px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .incident-profile-brief > p { font-size: 10px; }
+
+  .selection-inspector {
+    right: 8px;
+    bottom: 126px;
+    left: 8px;
+    width: auto;
+    max-height: min(42dvh, 310px);
+  }
+
+  .time-controls {
+    right: 8px;
+    bottom: 65px;
+    left: 8px;
+    min-height: 54px;
+  }
+
+  .command-dock {
+    height: 60px;
+    padding-top: 3px;
+  }
+
+  .command-dock button {
+    min-width: 0;
+    padding: 4px 2px 7px;
+    font-size: 9px;
+  }
+
+  .command-dock .game-icon { width: 20px; height: 20px; }
+
+  .command-sheet {
+    right: 0;
+    bottom: 59px;
+    left: 0;
+    height: min(70dvh, 590px);
+    max-height: calc(100% - 64px);
+    border-radius: 2px 2px 0 0;
+  }
+
+  .sheet-header { min-height: 54px; height: 54px; }
+  .sheet-title { font-size: 18px; }
+  .work-focus > p,
+  .roster-copy p,
+  .event-entry strong { font-size: 11px; }
+
+  .construction-job-hud {
+    top: 8px;
+    left: 8px;
+    width: min(470px, calc(100% - 72px));
+    max-width: min(470px, calc(100% - 72px));
+  }
+
+  .construction-job-summary strong { font-size: 11px; }
+  .construction-job-summary small { font-size: 9px; }
+}
+
+@media (max-width: 480px) {
+  .brand-lockup small { display: none; }
+  .brand-lockup strong { max-width: 132px; }
+
+  .colonist-strip { justify-content: space-between; }
+  .colonist-card,
+  .colonist-strip.expanded .colonist-card { min-width: 0; flex: 1 1 0; }
+
+  .incident-card,
+  .colonist-strip + .incident-card,
+  .incident-card.collapsed {
+    width: calc(100% - 16px);
+  }
+
+  .incident-card.expanded { max-height: calc(100dvh - 236px); }
+  .incident-heading small { font-size: 8px; }
+  .incident-heading strong { font-size: 14px; }
+
+  .command-dock button { font-size: 8px; }
+  .command-dock button > b { right: calc(50% - 22px); }
+
+  .construction-job-hud {
+    width: calc(100% - 72px);
+    max-width: calc(100% - 72px);
+  }
+}
+
+@media (max-height: 680px) and (min-width: 861px) {
+  .incident-card,
+  .colonist-strip + .incident-card { top: 10px; }
+  .colonist-strip { top: 6px; height: 50px; }
+  .incident-profile-brief > p { display: none; }
+  .command-sheet { height: min(286px, calc(100dvh - 116px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .incident-toggle .game-icon { transition: none; }
+}

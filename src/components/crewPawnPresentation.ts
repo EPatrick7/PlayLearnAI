@@ -6,6 +6,7 @@ export interface CrewPawnPresentation {
   initials: string
   showStatusDot: boolean
   status: CrewMember['status']
+  suited?: boolean
   variant: PawnSpriteVariant
 }
 
@@ -30,10 +31,12 @@ const initials = (name: string) => name
 export const crewPawnPresentation = (
   member: CrewMember,
   index: number,
+  suited = false,
 ): CrewPawnPresentation => ({
   accent: accents[index % accents.length],
   initials: initials(member.name),
   showStatusDot: true,
   status: member.status,
+  suited,
   variant: variants[index % variants.length],
 })
