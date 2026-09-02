@@ -13,6 +13,7 @@ import {
   detectRooms,
   getWorkstationCells,
   getWorkstationFootprintSize,
+  offsetPresetPoint,
   type ConstructionLayout,
 } from './construction'
 import {
@@ -102,14 +103,14 @@ const cloneState = (state: MoonbaseState): MoonbaseState =>
   JSON.parse(JSON.stringify(state)) as MoonbaseState
 
 const PRESET_MODULE_POSITIONS: Record<MoonbaseState['modules'][number]['type'], MapPosition> = {
-  habitat: { x: 1, y: 6, width: 6, height: 7 },
-  corridor: { x: 6, y: 8, width: 14, height: 3 },
-  life_support: { x: 8, y: 3, width: 5, height: 6 },
-  storage: { x: 8, y: 10, width: 5, height: 6 },
-  laboratory: { x: 14, y: 3, width: 5, height: 6 },
-  airlock: { x: 14, y: 10, width: 5, height: 6 },
-  solar_battery_skid: { x: 19, y: 2, width: 5, height: 5 },
-  landing_pad: { x: 19, y: 11, width: 5, height: 6 },
+  habitat: offsetPresetPoint({ x: 1, y: 6, width: 6, height: 7 }),
+  corridor: offsetPresetPoint({ x: 6, y: 8, width: 14, height: 3 }),
+  life_support: offsetPresetPoint({ x: 8, y: 3, width: 5, height: 6 }),
+  storage: offsetPresetPoint({ x: 8, y: 10, width: 5, height: 6 }),
+  laboratory: offsetPresetPoint({ x: 14, y: 3, width: 5, height: 6 }),
+  airlock: offsetPresetPoint({ x: 14, y: 10, width: 5, height: 6 }),
+  solar_battery_skid: offsetPresetPoint({ x: 19, y: 2, width: 5, height: 5 }),
+  landing_pad: offsetPresetPoint({ x: 19, y: 11, width: 5, height: 6 }),
 }
 
 const PRESET_CREW_LOCATIONS: Record<string, LocationId> = {
@@ -122,12 +123,12 @@ const PRESET_CREW_LOCATIONS: Record<string, LocationId> = {
 }
 
 const PRESET_CREW_CELLS: Record<string, { x: number; y: number }> = {
-  'crew-amina-okafor': { x: 5, y: 9 },
-  'crew-mateo-alvarez': { x: 15, y: 13 },
-  'crew-soo-jin-park': { x: 11, y: 7 },
-  'crew-leila-haddad': { x: 5, y: 8 },
-  'crew-jonah-reed': { x: 5, y: 10 },
-  'crew-nia-kimani': { x: 11, y: 14 },
+  'crew-amina-okafor': offsetPresetPoint({ x: 5, y: 9 }),
+  'crew-mateo-alvarez': offsetPresetPoint({ x: 15, y: 13 }),
+  'crew-soo-jin-park': offsetPresetPoint({ x: 11, y: 7 }),
+  'crew-leila-haddad': offsetPresetPoint({ x: 5, y: 8 }),
+  'crew-jonah-reed': offsetPresetPoint({ x: 5, y: 10 }),
+  'crew-nia-kimani': offsetPresetPoint({ x: 11, y: 14 }),
 }
 
 const builtBlueprintIds = (state: Pick<MoonbaseState, 'settlement'>) => {
@@ -363,7 +364,7 @@ export const deployPresetMoonbase = (
       cell: { ...(PRESET_CREW_CELLS[member.id] ?? PRESET_CREW_CELLS['crew-amina-okafor']) },
       moveCredit: 0,
     })),
-    constructionStockpile: { x: 7, y: 9 },
+    constructionStockpile: offsetPresetPoint({ x: 7, y: 9 }),
     builtModuleIds: state.modules.map((module) => module.id),
     buildSites: state.settlement.buildSites.map((site) => ({
       ...site,
@@ -380,6 +381,7 @@ export const deployPresetMoonbase = (
                 : null,
     })),
   }
+  state.reserves.constructionStock = 14
   state.worldRevision += 1
   state.operationsPlan = {
     ...state.operationsPlan,

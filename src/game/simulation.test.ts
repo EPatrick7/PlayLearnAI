@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
   paintBoundaryCell,
   paintBoundaryLine,
   placeWorkstation,
@@ -128,7 +130,10 @@ describe('Moonbase domain seed', () => {
     expect(first.seed).toBe(MOONBASE_SEED)
     expect(first.crew).toHaveLength(6)
     expect(first.modules).toHaveLength(8)
-    expect(first.map).toEqual({ width: 24, height: 18 })
+    expect(first.map).toEqual({
+      width: CONSTRUCTION_GRID_WIDTH,
+      height: CONSTRUCTION_GRID_HEIGHT,
+    })
     expect(first.workOrders.map((order) => order.id)).toEqual([
       'work-seal-lab',
       'work-repressurize-lab',

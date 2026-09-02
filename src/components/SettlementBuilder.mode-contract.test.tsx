@@ -58,7 +58,7 @@ describe('SettlementBuilder Select and Build contract', () => {
     const view = render(<SettlementBuilder />)
 
     expect(screen.getByRole('region', { name: 'Construction status' }))
-      .toHaveTextContent('Colonists haul and build every placed blueprint.')
+      .toHaveTextContent('Place one to begin.')
     expect(view.container.querySelector('.select-mode-summary'))
       .toHaveTextContent('SelectClick/tap inspect · drag map')
 

@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  offsetStarterPoint,
   paintBoundaryCell,
   paintBoundaryLine,
   placeWorkstation,
@@ -70,13 +71,28 @@ const layoutFrom = (result: ConstructionResult) => {
 
 const addSharedDoorExpansion = (source: ConstructionLayout) => {
   let layout = layoutFrom(
-    paintBoundaryLine(source, { x: 7, y: 7 }, { x: 10, y: 7 }, 'wall'),
+    paintBoundaryLine(
+      source,
+      offsetStarterPoint({ x: 7, y: 7 }),
+      offsetStarterPoint({ x: 10, y: 7 }),
+      'wall',
+    ),
   )
   layout = layoutFrom(
-    paintBoundaryLine(layout, { x: 10, y: 7 }, { x: 10, y: 12 }, 'wall'),
+    paintBoundaryLine(
+      layout,
+      offsetStarterPoint({ x: 10, y: 7 }),
+      offsetStarterPoint({ x: 10, y: 12 }),
+      'wall',
+    ),
   )
   return layoutFrom(
-    paintBoundaryLine(layout, { x: 10, y: 12 }, { x: 7, y: 12 }, 'wall'),
+    paintBoundaryLine(
+      layout,
+      offsetStarterPoint({ x: 10, y: 12 }),
+      offsetStarterPoint({ x: 7, y: 12 }),
+      'wall',
+    ),
   )
 }
 
@@ -234,28 +250,32 @@ describe('SettlementBuilder inspection selection', () => {
   it('explains an unreachable blueprint and offers exterior-door recovery', () => {
     const initial = useColonyStore.getState()
     const layout = addSharedDoorExpansion(initial.settlement.layout)
+    const starterStockpile = offsetStarterPoint({ x: 6, y: 9 })
+    const aminaCell = offsetStarterPoint({ x: 12, y: 8 })
+    const mateoCell = offsetStarterPoint({ x: 12, y: 10 })
     useColonyStore.setState({
       settlement: {
         ...initial.settlement,
         layout,
-        constructionStockpile: { x: 6, y: 9 },
+        constructionStockpile: starterStockpile,
         constructionCrew: initial.settlement.constructionCrew.map((position) => {
           if (position.crewId === 'crew-amina-okafor') {
-            return { ...position, cell: { x: 12, y: 8 } }
+            return { ...position, cell: aminaCell }
           }
           if (position.crewId === 'crew-mateo-alvarez') {
-            return { ...position, cell: { x: 12, y: 10 } }
+            return { ...position, cell: mateoCell }
           }
           return position
         }),
       },
     })
 
+    const placementOrigin = offsetStarterPoint({ x: 8, y: 10 })
     const placement = placeWorkstation(layout, {
       id: 'blocked-life-support',
       type: 'life-support',
       label: 'Blocked life support',
-      origin: { x: 8, y: 10 },
+      origin: placementOrigin,
       size: { width: 2, height: 2 },
       rotation: 0,
     })
@@ -266,7 +286,7 @@ describe('SettlementBuilder inspection selection', () => {
     useColonyStore.setState((state) => ({
       settlement: {
         ...state.settlement,
-        constructionStockpile: { x: 12, y: 9 },
+        constructionStockpile: offsetStarterPoint({ x: 12, y: 9 }),
         constructionOrders: state.settlement.constructionOrders.map((order) => (
           order.id === orderId
             ? {
@@ -281,7 +301,7 @@ describe('SettlementBuilder inspection selection', () => {
     }))
 
     render(<SettlementBuilder />)
-    inspectCell({ x: 8, y: 10 })
+    inspectCell(placementOrigin)
 
     const inspector = screen.getByRole('region', {
       name: 'Blocked life support blueprint inspector',
@@ -301,9 +321,10 @@ describe('SettlementBuilder inspection selection', () => {
       name: 'Blocked life support blueprint inspector',
     })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Return to Select mode from Door' })).toBeVisible()
+    const recoveryCell = offsetStarterPoint({ x: 10, y: 9 })
     expect(document.querySelector('.construction-cursor')).toHaveStyle({
-      gridColumn: '11',
-      gridRow: '10',
+      gridColumn: String(recoveryCell.x + 1),
+      gridRow: String(recoveryCell.y + 1),
     })
     expect(screen.getByText(/cursor is on a safe exterior wall that opens onto clear floor/i))
       .toBeVisible()

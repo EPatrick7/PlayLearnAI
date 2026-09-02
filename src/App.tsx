@@ -19,7 +19,6 @@ import { useColonyStore } from './game/store'
 import type {
   Equipment,
   GroundingEvidenceKind,
-  PlanAction,
   PlanBriefInput,
   Priority,
   StopCondition,
@@ -62,22 +61,6 @@ const stopConditionLabel = (condition: StopCondition | null, workOrders: WorkOrd
   return 'Invalid stop condition'
 }
 
-const actionDescription = (
-  action: PlanAction,
-  crew: ReturnType<typeof useColonyStore.getState>['crew'],
-  equipment: ReturnType<typeof useColonyStore.getState>['equipment'],
-  workOrders: WorkOrder[],
-) => {
-  const order = workOrders.find((candidate) => candidate.id === action.workOrderId)
-  if (action.kind === 'assign_crew') {
-    return `${crew.find((member) => member.id === action.crewId)?.name ?? action.crewId} → ${order?.label ?? action.workOrderId}`
-  }
-  if (action.kind === 'reserve_equipment') {
-    return `${equipment.find((item) => item.id === action.equipmentId)?.name ?? action.equipmentId} → ${order?.label ?? action.workOrderId}`
-  }
-  return `${order?.label ?? action.workOrderId} priority ${action.priority}`
-}
-
 const equipmentIcon = (item: Equipment): GameIconName => {
   if (item.type === 'rover') return 'map'
   if (item.type === 'medical_kit') return 'shield'
@@ -99,7 +82,7 @@ const dockItems: Array<{ id: DockTab; label: string; icon: GameIconName }> = [
   { id: 'crew', label: 'Crew', icon: 'crew' },
   { id: 'gear', label: 'Gear', icon: 'gear' },
   { id: 'plan', label: 'Plan', icon: 'plan' },
-  { id: 'log', label: 'Log', icon: 'log' },
+  { id: 'log', label: 'History', icon: 'log' },
 ]
 
 const pawnVariants: PawnSpriteVariant[] = ['umber', 'gold', 'olive', 'rose', 'copper', 'slate']
@@ -141,9 +124,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
   const [architectOpen, setArchitectOpen] = useState(false)
   const [constructionCompletionSummary, setConstructionCompletionSummary] = useState<string | null>(null)
   const [constructionCompletionToast, setConstructionCompletionToast] = useState<string | null>(null)
-  const [incidentExpanded, setIncidentExpanded] = useState(() => (
-    typeof window === 'undefined' || window.innerWidth > 600
-  ))
+  const [incidentExpanded, setIncidentExpanded] = useState(false)
   const [incidentAnnouncement, setIncidentAnnouncement] = useState<{
     message: string
     runId: string
@@ -151,6 +132,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
   const [selectedOrderId, setSelectedOrderId] = useState<WorkOrderId>('work-seal-lab')
   const [selection, setSelection] = useState<Selection | null>(null)
   const operationsMapViewportRef = useRef<HTMLDivElement>(null)
+  const operationsMapCenteredRef = useRef(false)
   const commandSheetHeadingRef = useRef<HTMLHeadingElement>(null)
   const verificationEvidenceRef = useRef<HTMLDivElement>(null)
   const focusVerificationEvidenceRef = useRef(false)
@@ -160,7 +142,6 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
     builderName: string | null
   }>())
   const plan = colony.operationsPlan
-  const incidentProfile = incidentProfileMetadataForSeed(colony.seed)
   const nextIncidentProfile = incidentProfileMetadataForSeed(colony.seed + 1)
   const canStartNextIncident = colony.learning.completedLoops > 0
   const validation = colony.validatePlan()
@@ -195,6 +176,14 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
       : plan.status === 'completed'
         ? `Plan stopped · ${statusLabel(colony.lastAdvance?.stopReason ?? 'declared_stop')}`
         : 'Committed plan in progress'
+  const completedAdvanceLabels = colony.lastAdvance?.completedWorkOrderIds
+    .map((orderId) => colony.workOrders.find((order) => order.id === orderId)?.label)
+    .filter((label): label is string => Boolean(label)) ?? []
+  const supervisionSummary = colony.lastAdvance
+    ? `${colony.lastAdvance.advancedHours}h advanced · ${completedAdvanceLabels.length > 0
+      ? `${completedAdvanceLabels.join(', ')} complete.`
+      : 'Work continues.'}`
+    : 'Plan in progress.'
   const canAdvancePlan = plan.status === 'committed' && colony.scenarioStatus === 'active'
   const selectedModuleId = selection?.kind === 'module' ? selection.id : null
   const selectedCrewId = selection?.kind === 'crew' ? selection.id : null
@@ -215,14 +204,36 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
     () => colony.equipment.filter((item) => selectedOrder.requiredEquipment.includes(item.type)),
     [colony.equipment, selectedOrder.requiredEquipment],
   )
+  const plannedTasks = colony.workOrders.flatMap((order) => {
+    const actions = plan.actions.filter((action) => action.workOrderId === order.id)
+    if (actions.length === 0) return []
+    const crewNames: string[] = []
+    const gearNames: string[] = []
+    let priority: number | null = null
+    actions.forEach((action) => {
+      if (action.kind === 'assign_crew') {
+        crewNames.push(colony.crew.find((member) => member.id === action.crewId)?.name.split(' ')[0] ?? action.crewId)
+      } else if (action.kind === 'reserve_equipment') {
+        gearNames.push(colony.equipment.find((item) => item.id === action.equipmentId)?.name ?? action.equipmentId)
+      } else {
+        priority = action.priority
+      }
+    })
+    return [{
+      actionIds: actions.map((action) => action.id),
+      detail: [crewNames.join(' + '), gearNames.join(' + '), priority ? `P${priority}` : ''].filter(Boolean).join(' · '),
+      id: order.id,
+      label: order.label,
+    }]
+  })
 
   const effectiveSolar = colony.power.solarGenerationKw * (1 - colony.power.dustDeratePercent / 100)
-  const objectiveChecks = [
-    colony.lab.atmosphere === 'yes' && colony.lab.sealed,
-    colony.research.status === 'complete',
-    colony.reserves.minimumOxygenHours >= plan.constraints.oxygenFloorHours,
+  const objectiveChecklist = [
+    { complete: colony.lab.atmosphere === 'yes' && colony.lab.sealed, label: 'Seal and pressurize lab' },
+    { complete: colony.research.status === 'complete', label: 'Complete sintering research' },
+    { complete: colony.reserves.minimumOxygenHours >= plan.constraints.oxygenFloorHours, label: `Keep O₂ above ${plan.constraints.oxygenFloorHours}h` },
   ]
-  const objectiveProgress = objectiveChecks.filter(Boolean).length
+  const objectiveProgress = objectiveChecklist.filter((check) => check.complete).length
   const constructionSpeed = colony.settlement.constructionSpeed
   const unfinishedConstructionCount = colony.settlement.constructionOrders.filter(
     (order) => order.status !== 'complete',
@@ -257,12 +268,14 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
       return
     }
     setActiveTab(tab)
+    setIncidentExpanded(false)
     setDrawerOpen(true)
   }, [activeTab, closeCommandDrawer, drawerOpen])
 
   const revealEvidence = useCallback(() => {
     focusVerificationEvidenceRef.current = true
     setActiveTab('plan')
+    setIncidentExpanded(false)
     setDrawerOpen(true)
   }, [])
 
@@ -313,19 +326,34 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
   }, [constructionCompletionToast])
 
   useEffect(() => {
+    if (colony.settlement.phase !== 'operations' || architectOpen) {
+      operationsMapCenteredRef.current = false
+      return
+    }
     const centerActiveBaseOnNarrowScreens = () => {
       const viewport = operationsMapViewportRef.current
-      if (!viewport || viewport.scrollWidth <= viewport.clientWidth || viewport.scrollLeft > 0) return
-      const targetCellCenter = 8 * 40
-      viewport.scrollLeft = Math.max(0, targetCellCenter - viewport.clientWidth / 2)
+      if (!viewport || operationsMapCenteredRef.current) return
+      const laboratory = colony.modules.find((module) => module.id === colony.lab.moduleId)
+      if (!laboratory) return
+      const cellSize = 40
+      const targetX = (laboratory.position.x + laboratory.position.width / 2) * cellSize
+      const targetY = (laboratory.position.y + laboratory.position.height / 2) * cellSize
+      viewport.scrollLeft = Math.max(0, targetX - viewport.clientWidth / 2)
+      viewport.scrollTop = Math.max(0, targetY - viewport.clientHeight / 2)
+      operationsMapCenteredRef.current = true
     }
-    const frame = window.requestAnimationFrame(centerActiveBaseOnNarrowScreens)
-    window.addEventListener('resize', centerActiveBaseOnNarrowScreens)
+    let frame = window.requestAnimationFrame(centerActiveBaseOnNarrowScreens)
+    const recenterAfterResize = () => {
+      operationsMapCenteredRef.current = false
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(centerActiveBaseOnNarrowScreens)
+    }
+    window.addEventListener('resize', recenterAfterResize)
     return () => {
       window.cancelAnimationFrame(frame)
-      window.removeEventListener('resize', centerActiveBaseOnNarrowScreens)
+      window.removeEventListener('resize', recenterAfterResize)
     }
-  }, [architectOpen, colony.settlement.phase])
+  }, [architectOpen, colony.lab.moduleId, colony.modules, colony.settlement.phase])
 
   useEffect(() => {
     const closeDrawer = (event: KeyboardEvent) => {
@@ -419,7 +447,11 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
     })
   }
 
-  const recordInspectionEvidence = (detail: string, groundingKind: GroundingEvidenceKind) => {
+  const recordInspectionEvidence = (
+    detail: string,
+    groundingKind: GroundingEvidenceKind,
+    completesPhase?: boolean,
+  ) => {
     const currentPhase = useColonyStore.getState().learning.currentPhase
     if (currentPhase !== 'ground') {
       colony.recordLearningEvidence(
@@ -430,10 +462,14 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
       )
       return
     }
-    colony.recordLearningEvidence('ground', detail, 'manual', { groundingKind })
+    colony.recordLearningEvidence('ground', detail, 'manual', {
+      groundingKind,
+      ...(completesPhase === undefined ? {} : { completesPhase }),
+    })
   }
 
   const selectWorkOrder = (workOrderId: WorkOrderId, open = true) => {
+    setIncidentExpanded(false)
     setSelectedOrderId(workOrderId)
     setSelection({ kind: 'work', id: workOrderId })
     setActiveTab('work')
@@ -445,6 +481,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
   }
 
   const inspectModule = (moduleId: string) => {
+    setIncidentExpanded(false)
     const module = colony.modules.find((candidate) => candidate.id === moduleId)
     setSelection({ kind: 'module', id: moduleId })
     recordInspectionEvidence(
@@ -454,26 +491,34 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
   }
 
   const inspectCrew = (crewId: string) => {
+    setIncidentExpanded(false)
     const member = colony.crew.find((candidate) => candidate.id === crewId)
+    const qualified = Boolean(
+      member && member.skills[selectedOrder.requiredSkill] >= selectedOrder.minimumSkill,
+    )
     setSelection({ kind: 'crew', id: crewId })
     setDrawerOpen(false)
     recordInspectionEvidence(
-      `Compared ${member?.name ?? crewId}'s skills, fatigue, status, and current assignment.`,
+      `${member?.name ?? crewId} has ${member?.skills[selectedOrder.requiredSkill] ?? 0} ${selectedOrder.requiredSkill}; ${qualified ? 'qualified' : `needs ${selectedOrder.minimumSkill}`} for ${selectedOrder.label}.`,
       'crew_equipment_comparison',
+      qualified ? undefined : false,
     )
   }
 
   const inspectEquipment = (equipmentId: string) => {
+    setIncidentExpanded(false)
     const item = colony.equipment.find((candidate) => candidate.id === equipmentId)
     setSelection({ kind: 'equipment', id: equipmentId })
     setDrawerOpen(false)
     recordInspectionEvidence(
-      `Compared ${item?.name ?? equipmentId}'s type, condition, location, and availability.`,
+      `Checked ${item?.name ?? equipmentId}'s condition and availability. Choose a qualified responder to finish this step.`,
       'crew_equipment_comparison',
+      false,
     )
   }
 
   const inspectMapTile = (tile: MapTileInspection) => {
+    setIncidentExpanded(false)
     setSelection({ kind: 'tile', tile })
     setDrawerOpen(false)
     recordInspectionEvidence(
@@ -510,6 +555,10 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
     )
     if (existing) colony.removePlanAction(existing.id)
     colony.stagePlanAction({ kind: 'set_priority', workOrderId: selectedOrder.id, priority })
+  }
+
+  const clearPlannedTask = (actionIds: string[]) => {
+    actionIds.forEach((actionId) => colony.removePlanAction(actionId))
   }
 
   const stageRecommendedResponse = () => {
@@ -569,22 +618,77 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
     entry.groundingKind === 'incident_telemetry'
   ))
 
-  const continueSupervisionLoop = () => {
-    if (colony.learning.currentPhase === 'ground') {
-      if (hasCurrentTelemetryEvidence) openTab('crew')
-      else inspectModule('module-laboratory')
+  const tutorialStep = verificationIsCurrent
+    ? {
+        action: 'Review evidence',
+        detail: 'The live result now matches the plan. The operating loop is complete.',
+        icon: 'verify' as const,
+        id: 'complete' as const,
+        number: 6,
+        title: 'Outcome verified',
+      }
+    : plan.status === 'completed' || colony.scenarioStatus === 'objective_complete'
+      ? {
+          action: 'Verify outcome',
+          detail: 'Compare the live colony with the safety limits you approved.',
+          icon: 'verify' as const,
+          id: 'review' as const,
+          number: 6,
+          title: 'Check the result',
+        }
+      : plan.status === 'committed'
+        ? {
+            action: 'Run plan',
+            detail: 'Advance to the declared stop; the simulation pauses if a safeguard trips.',
+            icon: 'fastForward' as const,
+            id: 'run' as const,
+            number: 5,
+            title: 'Supervise execution',
+          }
+        : isDraft && plan.actions.length > 0
+          ? {
+              action: 'Review plan',
+              detail: 'Check assignments, reserves, and the stopping rule before work begins.',
+              icon: 'plan' as const,
+              id: 'approve' as const,
+              number: 4,
+              title: 'Approve the safeguards',
+            }
+          : !colony.learning.achieved.ground && !hasCurrentTelemetryEvidence
+            ? {
+                action: 'Inspect breach',
+                detail: 'Read the laboratory pressure and condition before assigning anyone.',
+                icon: 'inspect' as const,
+                id: 'inspect' as const,
+                number: 1,
+                title: 'See what changed',
+              }
+            : !colony.learning.achieved.ground
+              ? {
+                  action: 'Choose responder',
+                  detail: `Find a crew member with ${selectedOrder.requiredSkill} ${selectedOrder.minimumSkill} or higher.`,
+                  icon: 'crew' as const,
+                  id: 'responder' as const,
+                  number: 2,
+                  title: 'Match skill to risk',
+                }
+              : {
+                  action: 'Build response',
+                  detail: 'Assign crew and required gear, or inspect the recommended response first.',
+                  icon: 'work' as const,
+                  id: 'assign' as const,
+                  number: 3,
+                  title: 'Create a safe plan',
+                }
+
+  const continueTutorial = () => {
+    setIncidentExpanded(false)
+    if (tutorialStep.id === 'inspect') {
+      inspectModule('module-laboratory')
       return
     }
-    openTab(colony.learning.currentPhase === 'plan' ? 'work' : 'plan')
+    openTab(tutorialStep.id === 'responder' ? 'crew' : tutorialStep.id === 'assign' ? 'work' : 'plan')
   }
-
-  const supervisionActionLabel = colony.learning.currentPhase === 'ground'
-    ? hasCurrentTelemetryEvidence ? 'Compare crew and gear' : 'Inspect breach'
-    : colony.learning.currentPhase === 'plan'
-      ? 'Build response'
-      : colony.learning.currentPhase === 'supervise'
-        ? 'Supervise plan'
-        : 'Verify outcome'
 
   const resetRun = () => {
     if (!window.confirm('Reset this Moonbase run and replay the Aquila arrival?')) return
@@ -661,6 +765,12 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
           : 'map'
 
   const selectedOrderPercent = Math.min(100, Math.round((selectedOrder.progressHours / selectedOrder.durationHours) * 100))
+  const missionFailed = colony.scenarioStatus === 'failed'
+  const objectiveTitle = missionFailed
+    ? 'Oxygen depleted'
+    : colony.scenarioStatus === 'objective_complete'
+      ? 'Laboratory recovered'
+      : 'Recover the laboratory'
 
   return (
     <div className={`game-shell scenario-${colony.scenarioStatus}`}>
@@ -674,17 +784,8 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
           <div className={`resource-chip ${colony.reserves.oxygenHours <= plan.constraints.oxygenFloorHours + 4 ? 'warning' : 'nominal'}`} title="Oxygen reserve">
             <GameIcon name="oxygen" /><span><small>Oxygen</small><strong>{colony.reserves.oxygenHours.toFixed(1)}h</strong></span>
           </div>
-          <div className="resource-chip" title="Water reserve">
-            <GameIcon name="water" /><span><small>Water</small><strong>{colony.reserves.waterDays.toFixed(1)}d</strong></span>
-          </div>
-          <div className="resource-chip" title="Food reserve">
-            <GameIcon name="food" /><span><small>Food</small><strong>{colony.reserves.foodDays.toFixed(1)}d</strong></span>
-          </div>
           <div className={`resource-chip ${colony.power.status}`} title="Solar generation and demand">
             <GameIcon name="power" /><span><small>Grid</small><strong>{effectiveSolar.toFixed(0)}/{colony.power.demandKw} kW</strong></span>
-          </div>
-          <div className="resource-chip resource-stock" title="Construction stock">
-            <GameIcon name="gear" /><span><small>Materials</small><strong>{colony.reserves.constructionStock}</strong></span>
           </div>
         </section>
 
@@ -697,7 +798,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
             settlementPhase={colony.settlement.phase}
             status={webMcpStatus}
           />
-          <button aria-label={`Reset run for deterministic seed ${colony.seed}`} className="icon-button" onClick={resetRun} title={`Reset run · seed ${colony.seed}`} type="button"><GameIcon name="reset" /></button>
+          <button aria-label="Restart mission" className="icon-button" onClick={resetRun} title="Restart mission" type="button"><GameIcon name="reset" /></button>
         </div>
       </header>
 
@@ -772,7 +873,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
         <section className={`incident-card ${colony.scenarioStatus} ${incidentExpanded ? 'expanded' : 'collapsed'}`} aria-label="Current objective">
           <div className="incident-heading">
             <span className="incident-icon"><GameIcon name={colony.scenarioStatus === 'objective_complete' ? 'check' : 'alert'} /></span>
-            <span><small>{colony.scenarioStatus === 'objective_complete' ? 'Objective secured' : 'Priority incident'}</small><strong>Recover Kepler Laboratory</strong></span>
+            <span><small>{missionFailed ? 'Mission failed' : colony.scenarioStatus === 'objective_complete' ? 'Objective complete' : 'Mission objective'}</small><strong>{objectiveTitle}</strong></span>
             <b>{objectiveProgress}/3</b>
             <button
               aria-controls="incident-detail-panel"
@@ -785,48 +886,35 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
               <GameIcon name="chevron" />
             </button>
           </div>
+          <div
+            aria-label={missionFailed ? 'Tutorial paused' : `Tutorial step ${tutorialStep.number} of 6`}
+            className={`tutorial-next ${missionFailed ? 'failed' : `tutorial-${tutorialStep.id}`}`}
+          >
+            <span className="tutorial-step-number"><small>{missionFailed ? 'Guide' : 'Step'}</small><b>{missionFailed ? '—' : `${tutorialStep.number}/6`}</b></span>
+            <span className="tutorial-step-copy">
+              <strong>{missionFailed ? 'Recover the mission' : tutorialStep.title}</strong>
+              <small>{missionFailed ? 'Restart from the one-habitat landing site.' : tutorialStep.detail}</small>
+            </span>
+            <button
+              aria-label={missionFailed ? 'Restart mission' : tutorialStep.action}
+              onClick={missionFailed ? resetRun : continueTutorial}
+              title={missionFailed ? 'Restart mission' : tutorialStep.action}
+              type="button"
+            >
+              <GameIcon name={missionFailed ? 'reset' : tutorialStep.icon} />
+              <span>{missionFailed ? 'Restart' : tutorialStep.action}</span>
+            </button>
+          </div>
           <div className="incident-details" id="incident-detail-panel">
             <div className="objective-progress" aria-label={`${objectiveProgress} of 3 objective conditions complete`}><i style={{ width: `${(objectiveProgress / 3) * 100}%` }} /></div>
-            <section
-              aria-label={`${incidentProfile.name} risk brief`}
-              className="incident-profile-brief"
-              data-incident-profile={incidentProfile.id}
-            >
-              <header><small>Seeded risk profile</small><strong>{incidentProfile.name}</strong></header>
-              <p>{incidentProfile.summary}</p>
-              <p className="incident-profile-focus"><small>Planning focus</small>{incidentProfile.planningFocus}</p>
-              {canStartNextIncident ? (
-                <button
-                  aria-label={`Start next incident. Next profile: ${nextIncidentProfile.name}. Built settlement preserved.`}
-                  className="incident-profile-next"
-                  onClick={startNextIncidentRun}
-                  type="button"
-                >
-                  <GameIcon name="fastForward" />
-                  <span><strong>Start next incident</strong><small>Next · {nextIncidentProfile.name}</small></span>
-                  <GameIcon name="chevron" />
-                </button>
-              ) : (
-                <p className="incident-profile-focus">
-                  Complete one Ground → Plan → Supervise → Verify loop to unlock the next incident.
-                </p>
-              )}
-              {incidentAnnouncement?.runId === colony.runId && (
-                <p className="incident-profile-announcement" role="status">
-                  {incidentAnnouncement.message}
-                </p>
-              )}
-            </section>
-            <p className="incident-coaching">{colony.learning.coaching}</p>
-            <div className="learning-loop" aria-label={`Current supervision phase: ${colony.learning.currentPhase}`}>
-              {(['ground', 'plan', 'supervise', 'verify'] as const).map((phase, index) => (
-                <span aria-label={`${phase}${colony.learning.achieved[phase] ? ', complete' : colony.learning.currentPhase === phase ? ', current' : ''}`} className={`${colony.learning.currentPhase === phase ? 'current' : ''} ${colony.learning.achieved[phase] ? 'complete' : ''}`} key={phase} title={phase}>
-                  <b>{colony.learning.achieved[phase] ? <GameIcon name="check" /> : index + 1}</b>
-                  <small>{phase}</small>
+            <div className="objective-checklist" aria-label="Objective checklist">
+              {objectiveChecklist.map((check) => (
+                <span className={check.complete ? 'complete' : ''} key={check.label}>
+                  <GameIcon name={check.complete ? 'check' : 'work'} />
+                  {check.label}
                 </span>
               ))}
             </div>
-            <button className="text-action" onClick={continueSupervisionLoop} type="button"><GameIcon name={colony.learning.currentPhase === 'ground' ? 'inspect' : colony.learning.currentPhase === 'plan' ? 'work' : 'plan'} />{supervisionActionLabel}</button>
             {colony.alerts.length > 0 && (
               <div aria-label="Active alerts" className="incident-alerts" role="group">
                 {colony.alerts.slice(0, 2).map((alert) => (
@@ -844,6 +932,23 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                 ))}
               </div>
             )}
+            {canStartNextIncident && (
+              <button
+                aria-label={`Start next incident. Next profile: ${nextIncidentProfile.name}. Built settlement preserved.`}
+                className="incident-profile-next"
+                onClick={startNextIncidentRun}
+                type="button"
+              >
+                <GameIcon name="fastForward" />
+                <span><strong>Next incident</strong><small>{nextIncidentProfile.name}</small></span>
+                <GameIcon name="chevron" />
+              </button>
+            )}
+            {incidentAnnouncement?.runId === colony.runId && (
+              <p className="incident-profile-announcement" role="status">
+                {incidentAnnouncement.message}
+              </p>
+            )}
           </div>
         </section>
 
@@ -855,7 +960,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
         >
           <div className="selection-heading">
             <span className="selection-kind"><GameIcon name={selectionIcon} /></span>
-            <span><small>{selectionKindLabel} selected</small><strong>{selectionTitle}</strong></span>
+            <span><small>{selectionKindLabel}</small><strong>{selectionTitle}</strong></span>
             <button aria-label="Close inspector" className="inspector-close" onClick={() => setSelection(null)} type="button"><GameIcon name="close" /></button>
           </div>
           {selection.kind === 'module' && selectedModule && (
@@ -879,13 +984,18 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
               <span><small>Condition</small><strong>{selectedModule.condition}%</strong></span>
               <span><small>Power</small><strong>P{selectedModule.powerPriority}</strong></span>
               <span><small>Crew</small><strong>{colony.crew.filter((member) => member.location === selectedModule.location).length}</strong></span>
+              {selectedModule.id === 'module-laboratory' &&
+                tutorialStep.id === 'responder' && (
+                  <button className="inspector-action" onClick={continueTutorial} type="button">
+                    Choose responder <GameIcon name="chevron" />
+                  </button>
+                )}
             </div>
           )}
           {selectedCrew && (
             <div className="selection-stats">
               <span><small>Health</small><strong>{Math.round(selectedCrew.health)}%</strong></span>
               <span><small>Fatigue</small><strong>{Math.round(selectedCrew.fatigue)}%</strong></span>
-              <span><small>Morale</small><strong>{Math.round(selectedCrew.morale)}%</strong></span>
               <span><small>Location</small><strong>{formatLocation(selectedCrew.location)}</strong></span>
             </div>
           )}
@@ -919,17 +1029,9 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
               <span><small>Pressure</small><strong>{selectedTile.atmosphere === 'yes' ? 'Nominal' : selectedTile.atmosphere === 'low' ? 'Low' : 'Vacuum'}</strong></span>
             </div>
           )}
-          {selectedTile && (
-            <dl className="selection-details">
-              <div><dt>Coordinates</dt><dd>Column {selectedTile.cell.x + 1} · Row {selectedTile.cell.y + 1}</dd></div>
-              <div><dt>Area</dt><dd>{selectedTile.roomLabel ?? selectedTile.moduleName ?? 'Lunar exterior'}</dd></div>
-              <div><dt>Surface</dt><dd>{selectedTile.surfaceLabel}</dd></div>
-              <div><dt>On tile</dt><dd>{selectedTile.contents.length === 0 ? 'Nothing' : `${selectedTile.contents.length} ${selectedTile.contents.length === 1 ? 'thing' : 'things'}`}</dd></div>
-            </dl>
-          )}
         </section>}
 
-        {!drawerOpen && (
+        {!drawerOpen && unfinishedConstructionCount > 0 && (
           <section
             aria-label="Simulation controls"
             className="time-controls has-construction-clock"
@@ -965,8 +1067,6 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
             />
           </section>
         )}
-
-        {colony.dust.active && <div className="dust-status"><GameIcon name="dust" />Dust front active · solar derated {colony.power.dustDeratePercent}%</div>}
 
         {colony.verification && verificationIsCurrent && !(drawerOpen && activeTab === 'plan') && (
           <section className={`outcome-banner ${colony.verification.status}`} aria-live="polite">
@@ -1025,16 +1125,16 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
               <article className="work-focus">
                 <header>
                   <span><small>Selected order</small><strong>{selectedOrder.label}</strong></span>
-                  {isDraft && <label className="priority-control">P<select aria-label="Work priority" onChange={(event) => stagePriority(Number(event.target.value) as Priority)} value={displayedPriority}>{[1, 2, 3, 4, 5].map((priority) => <option key={priority} value={priority}>{priority}</option>)}</select></label>}
+                  {isDraft && <label className="priority-control">Priority<select aria-label="Work priority" onChange={(event) => stagePriority(Number(event.target.value) as Priority)} value={displayedPriority}>{[1, 2, 3, 4, 5].map((priority) => <option key={priority} value={priority}>{priority}{priority === 5 ? ' · highest' : ''}</option>)}</select></label>}
                 </header>
                 <p>{selectedOrder.detail}</p>
                 <div className="work-tags"><span><GameIcon name="crew" />{selectedOrder.requiredSkill} {selectedOrder.minimumSkill}+</span><span><GameIcon name="clock" />{selectedOrder.durationHours} hours</span><span className={`hazard-${selectedOrder.hazard}`}><GameIcon name="shield" />{selectedOrder.hazard}</span></div>
               </article>
 
               <div className="loadout-column">
-                <header><span>Assign crew</span><small>Click to stage</small></header>
+                <header><span>Assign crew</span><small>Best fit first</small></header>
                 <div className="loadout-scroll">
-                  {[...colony.crew].sort((a, b) => b.skills[selectedOrder.requiredSkill] - a.skills[selectedOrder.requiredSkill]).map((member) => {
+                  {[...colony.crew].sort((a, b) => b.skills[selectedOrder.requiredSkill] - a.skills[selectedOrder.requiredSkill]).map((member, rank) => {
                     const crewIndex = Math.max(0, colony.crew.findIndex((candidate) => candidate.id === member.id))
                     const staged = plan.actions.some((action) => action.kind === 'assign_crew' && action.crewId === member.id && action.workOrderId === selectedOrder.id)
                     const committed = selectedOrder.assignedCrewIds.includes(member.id)
@@ -1053,7 +1153,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                           />
                         </span>
                         <span><strong>{member.name}</strong><small>{member.role}</small></span>
-                        <b>{selectedOrder.requiredSkill.slice(0, 3).toUpperCase()} {member.skills[selectedOrder.requiredSkill]}</b>
+                        <b>{rank === 0 ? 'Best · ' : ''}{selectedOrder.requiredSkill.slice(0, 3).toUpperCase()} {member.skills[selectedOrder.requiredSkill]}</b>
                         <i>{staged || committed ? <GameIcon name="check" /> : <GameIcon name="plus" />}</i>
                       </button>
                     )
@@ -1062,7 +1162,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
               </div>
 
               <div className="loadout-column gear-loadout">
-                <header><span>Required gear</span><small>{formatLocation(selectedOrder.location)}</small></header>
+                <header><span>Required gear</span><small>{requiredEquipment.length ? 'Choose one of each' : formatLocation(selectedOrder.location)}</small></header>
                 <div className="loadout-scroll">
                   {requiredEquipment.length ? requiredEquipment.map((item) => {
                     const staged = plan.actions.some((action) => action.kind === 'reserve_equipment' && action.equipmentId === item.id && action.workOrderId === selectedOrder.id)
@@ -1081,7 +1181,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
               </div>
 
               <div className="work-sheet-actions">
-                {isDraft && <button className="smart-plan-button" disabled={!recommendedResponse} onClick={stageRecommendedResponse} type="button"><GameIcon name="plan" /><span><strong>Stage example for review</strong><small>{recommendedResponseDetail}</small></span></button>}
+                {isDraft && <button className="smart-plan-button" disabled={!recommendedResponse} onClick={stageRecommendedResponse} title={recommendedResponseDetail} type="button"><GameIcon name="plan" /><span><strong>Use recommended plan</strong><small>Assign crew and gear</small></span></button>}
                 <button className="primary-action" onClick={() => openTab('plan')} type="button"><span>Review plan</span><b>{plan.actions.length}</b><GameIcon name="chevron" /></button>
               </div>
             </div>
@@ -1091,7 +1191,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
             <div className="sheet-body roster-sheet">
               <div className="roster-grid">
                 {colony.crew.map((member, index) => (
-                  <button aria-pressed={selectedCrewId === member.id} className={`roster-card ${selectedCrewId === member.id ? 'selected' : ''}`} key={member.id} onClick={() => setSelection({ kind: 'crew', id: member.id })} type="button">
+                    <button aria-pressed={selectedCrewId === member.id} className={`roster-card ${selectedCrewId === member.id ? 'selected' : ''}`} key={member.id} onClick={() => inspectCrew(member.id)} type="button">
                     <span className="large-portrait">
                       <PawnSprite
                         accent={pawnAccents[index % pawnAccents.length]}
@@ -1102,9 +1202,8 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                         variant={pawnVariants[index % pawnVariants.length]}
                       />
                     </span>
-                    <span className="roster-copy"><small>{member.status}</small><strong>{member.name}</strong><em>{member.role}</em><p>{member.trait}</p></span>
-                    <span className="vital-bars"><i><b style={{ width: `${member.health}%` }} /></i><small>HLT {Math.round(member.health)}</small><i className="fatigue"><b style={{ width: `${member.fatigue}%` }} /></i><small>FAT {Math.round(member.fatigue)}</small></span>
-                    <span className="skill-grid">{Object.entries(member.skills).map(([skill, value]) => <i key={skill} title={skill}>{skill.slice(0, 3).toUpperCase()} <b>{value}</b></i>)}</span>
+                    <span className="roster-copy"><small>{member.status}</small><strong>{member.name}</strong><em>{member.role} · {selectedOrder.requiredSkill.slice(0, 3).toUpperCase()} {member.skills[selectedOrder.requiredSkill]}{member.skills[selectedOrder.requiredSkill] >= selectedOrder.minimumSkill ? ' · Qualified' : ''}</em></span>
+                    <span className="vital-bars"><i><b style={{ width: `${member.health}%` }} /></i><small>Health {Math.round(member.health)}</small><i className="fatigue"><b style={{ width: `${member.fatigue}%` }} /></i><small>Fatigue {Math.round(member.fatigue)}</small></span>
                   </button>
                 ))}
               </div>
@@ -1118,7 +1217,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                   const stagedAction = plan.actions.find((action) => action.kind === 'reserve_equipment' && action.equipmentId === item.id)
                   const order = stagedAction ? colony.workOrders.find((candidate) => candidate.id === stagedAction.workOrderId) : null
                   return (
-                    <button aria-pressed={selectedEquipmentId === item.id} className={`inventory-card ${selectedEquipmentId === item.id ? 'selected' : ''} ${item.status}`} key={item.id} onClick={() => setSelection({ kind: 'equipment', id: item.id })} type="button">
+                    <button aria-pressed={selectedEquipmentId === item.id} className={`inventory-card ${selectedEquipmentId === item.id ? 'selected' : ''} ${item.status}`} key={item.id} onClick={() => inspectEquipment(item.id)} type="button">
                       <span className="inventory-art"><GameIcon name={equipmentIcon(item)} /></span>
                       <span><small>{statusLabel(item.status)}</small><strong>{item.name}</strong><em>{formatLocation(item.location)}</em></span>
                       <span className="condition-meter"><i><b style={{ width: `${item.condition}%` }} /></i>{item.condition}%</span>
@@ -1133,31 +1232,49 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
           {activeTab === 'plan' && (
             <div className={`sheet-body plan-sheet plan-${plan.status} ${verificationIsCurrent ? 'plan-verified' : ''}`}>
               <section className="brief-controls">
-                <header><span><small>Operations plan · R{plan.revision}</small><strong>Laboratory recovery</strong></span><b className={`plan-state ${plan.status}`}>{planStateLabel}</b></header>
+                <header><span><small>Mission plan</small><strong>Laboratory recovery</strong></span><b className={`plan-state ${plan.status}`}>{planStateLabel}</b></header>
                 {isDraft ? (
-                  <div className="brief-grid">
-                    <label><span>Keep oxygen above</span><div className="number-field"><input aria-label="O₂ reserve floor hours" max={colony.reserves.oxygenHours} min={8} onChange={(event) => updateBrief({ constraints: { ...plan.constraints, oxygenFloorHours: Number(event.target.value) } })} type="number" value={plan.constraints.oxygenFloorHours} /><i>hours</i></div></label>
-                    <label><span>Protected crew</span><select aria-label="Protected crew" onChange={(event) => updateBrief({ constraints: { ...plan.constraints, protectedCrewIds: event.target.value ? [event.target.value] : [] } })} value={plan.constraints.protectedCrewIds[0] ?? ''}><option value="">None</option>{colony.crew.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
-                    <label><span>Run for at most</span><div className="segment-control">{[8, 10, 12].map((hours) => <button aria-label={`${hours} hour horizon`} className={plan.horizonHours === hours ? 'active' : ''} key={hours} onClick={() => updateBrief({ horizonHours: hours })} type="button">{hours}h</button>)}</div></label>
-                    <label><span>Stop when</span><select aria-label="Stop condition" onChange={(event) => setStopCondition(event.target.value as StopCondition['kind'] | '')} value={plan.stopCondition?.kind ?? ''}><option disabled value="">Choose…</option><option value="objective_complete">Objective complete</option><option value="critical_alert">Critical alert</option><option value="oxygen_below">Oxygen floor reached</option><option value="battery_below">Battery below 12 kWh</option><option value="work_order_complete">{milestoneChoiceLabel}</option></select></label>
-                  </div>
+                  <details className="plan-safeguards">
+                    <summary>
+                      <span><strong>Safety limits</strong><small>{plan.constraints.oxygenFloorHours}h O₂ · {plan.horizonHours || 12}h max · {stopConditionLabel(plan.stopCondition, colony.workOrders)}</small></span>
+                      <GameIcon name="chevron" />
+                    </summary>
+                    <div className="brief-grid">
+                      <label><span>O₂ minimum</span><div className="number-field"><input aria-label="O₂ reserve floor hours" max={colony.reserves.oxygenHours} min={8} onChange={(event) => updateBrief({ constraints: { ...plan.constraints, oxygenFloorHours: Number(event.target.value) } })} type="number" value={plan.constraints.oxygenFloorHours} /><i>hours</i></div></label>
+                      <label><span>Protect crew</span><select aria-label="Protected crew" onChange={(event) => updateBrief({ constraints: { ...plan.constraints, protectedCrewIds: event.target.value ? [event.target.value] : [] } })} value={plan.constraints.protectedCrewIds[0] ?? ''}><option value="">None</option>{colony.crew.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+                      <label><span>Time limit</span><div className="segment-control">{[8, 10, 12].map((hours) => <button aria-label={`${hours} hour horizon`} className={plan.horizonHours === hours ? 'active' : ''} key={hours} onClick={() => updateBrief({ horizonHours: hours })} type="button">{hours}h</button>)}</div></label>
+                      <label><span>Stop at</span><select aria-label="Stop condition" onChange={(event) => setStopCondition(event.target.value as StopCondition['kind'] | '')} value={plan.stopCondition?.kind ?? ''}><option disabled value="">Choose…</option><option value="objective_complete">Objective complete</option><option value="critical_alert">Critical alert</option><option value="oxygen_below">Oxygen floor reached</option><option value="battery_below">Battery below 12 kWh</option><option value="work_order_complete">{milestoneChoiceLabel}</option></select></label>
+                    </div>
+                  </details>
                 ) : <div className="committed-summary"><span><small>Floor</small>{plan.constraints.oxygenFloorHours}h O₂</span><span><small>Horizon</small>{plan.horizonHours}h</span><span><small>Stop</small>{stopConditionLabel(plan.stopCondition, colony.workOrders)}</span></div>}
               </section>
 
+              {isDraft && recommendedResponse && plan.actions.length === 0 && (
+                <section className="plan-recommendation">
+                  <span className="forecast-symbol"><GameIcon name="plan" /></span>
+                  <span><small>Recommended response</small><strong>{recommendedResponse.detail}</strong><p>{recommendedResponse.rationale}</p></span>
+                  <button onClick={stageRecommendedResponse} type="button">Stage it <GameIcon name="chevron" /></button>
+                </section>
+              )}
+
               <section className="staged-queue">
-                <header><span>{isDraft ? 'Proposed changes' : 'Executed actions'}</span><small>{plan.actions.length} total</small></header>
+                <header><span>{isDraft ? 'Assignments' : 'Completed tasks'}</span><small>{plannedTasks.length} {plannedTasks.length === 1 ? 'task' : 'tasks'}</small></header>
                 <div>
-                  {plan.actions.length ? plan.actions.map((action) => (
-                    <article className="queue-action" key={action.id}><span className={`action-kind ${action.kind}`}>{action.kind === 'assign_crew' ? <GameIcon name="crew" /> : action.kind === 'reserve_equipment' ? <GameIcon name="gear" /> : <GameIcon name="work" />}</span><p>{actionDescription(action, colony.crew, colony.equipment, colony.workOrders)}</p>{isDraft && <button aria-label="Remove staged action" onClick={() => colony.removePlanAction(action.id)} type="button"><GameIcon name="close" /></button>}</article>
-                  )) : <div className="empty-state"><GameIcon name="plan" /><span><strong>No actions staged</strong><small>Pick work, crew, and equipment—or stage the recommended response.</small></span></div>}
+                  {plannedTasks.length ? plannedTasks.map((task) => (
+                    <article className="queue-action plan-task" key={task.id}>
+                      <span className="action-kind"><GameIcon name="work" /></span>
+                      <p><strong>{task.label}</strong><small>{task.detail}</small></p>
+                      {isDraft && <button aria-label={`Remove ${task.label} from plan`} onClick={() => clearPlannedTask(task.actionIds)} type="button"><GameIcon name="close" /></button>}
+                    </article>
+                  )) : <div className="empty-state"><GameIcon name="plan" /><span><strong>No assignments yet</strong><small>Choose Work or use the recommended plan.</small></span></div>}
                 </div>
               </section>
 
               {isDraft ? (
                 <section className={`forecast-card ${validation.valid ? 'valid' : 'invalid'}`}>
-                  <header><span className="forecast-symbol"><GameIcon name={validation.valid ? 'check' : 'warning'} /></span><span><small>{validation.valid ? 'Forecast clear' : `${validation.issues.filter((issue) => issue.severity === 'error').length} blockers`}</small><strong>{validation.valid ? 'Ready to commit' : 'Plan needs attention'}</strong></span></header>
-                  <div className="forecast-values"><span><small>Finish</small><strong>{validation.preview.estimatedCompletionHours ?? '—'}h</strong></span><span><small>O₂ low</small><strong>{validation.preview.projectedOxygenHours.toFixed(1)}h</strong></span><span><small>Battery</small><strong>{validation.preview.projectedBatteryKwh.toFixed(0)} kWh</strong></span></div>
-                  {validation.issues.length > 0 && <div className="issue-list">{validation.issues.slice(0, 4).map((issue) => <p className={issue.severity} key={`${issue.code}-${issue.actionId ?? issue.targetId ?? 'plan'}-${issue.message}`}><i />{issue.message}</p>)}</div>}
+                  <header><span className="forecast-symbol"><GameIcon name={validation.valid ? 'check' : 'warning'} /></span><span><small>{validation.valid ? 'Safety check passed' : 'Next step'}</small><strong>{validation.valid ? 'Ready to start' : plan.actions.length === 0 ? 'Add an assignment' : `${validation.issues.filter((issue) => issue.severity === 'error').length} issues to fix`}</strong></span></header>
+                  {(validation.valid || plan.actions.length > 0) && <div className="forecast-values"><span><small>Finish</small><strong>{validation.preview.estimatedCompletionHours ?? '—'}h</strong></span><span><small>Lowest O₂</small><strong>{validation.preview.projectedOxygenHours.toFixed(1)}h</strong></span><span><small>Battery</small><strong>{validation.preview.projectedBatteryKwh.toFixed(0)} kWh</strong></span></div>}
+                  {plan.actions.length > 0 && validation.issues.length > 0 && <div className="issue-list">{validation.issues.slice(0, 3).map((issue) => <p className={issue.severity} key={`${issue.code}-${issue.actionId ?? issue.targetId ?? 'plan'}-${issue.message}`}><i />{issue.message}</p>)}</div>}
                 </section>
               ) : (
                 <section className="forecast-card valid execution-card">
@@ -1166,15 +1283,11 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                   <div className="issue-list"><p className="success"><i />{
                     verificationIsCurrent
                       ? colony.verification?.status === 'success'
-                        ? 'The preserved outcome matches the declared objective and safeguards.'
-                        : 'Verification found residual risk. Review the evidence before opening the next plan.'
-                      : colony.scenarioStatus === 'objective_complete'
-                        ? 'The recovery snapshot is preserved. Verify it before starting the next incident.'
-                      : plan.status === 'completed'
-                        ? declaredMilestoneOrder
-                          ? 'The milestone snapshot is preserved. Verify it, then start the next bounded plan.'
-                          : 'The declared stop snapshot is preserved. Verify it before opening a fresh bounded plan.'
-                        : 'The committed snapshot is preserved. Verify it against the objective and declared reserve floor.'
+                        ? 'No remaining risk found.'
+                        : 'Review the remaining risks below.'
+                      : plan.status === 'completed' || colony.scenarioStatus === 'objective_complete'
+                        ? 'Verify before continuing.'
+                        : supervisionSummary
                   }</p></div>
                   {colony.verification && verificationIsCurrent && (
                     <div
@@ -1193,7 +1306,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                         ))}
                       </div>
                       <div className="verification-risks">
-                        <strong>Residual risks</strong>
+                        <strong>Remaining risks</strong>
                         {colony.verification.residualRisks.length > 0
                           ? colony.verification.residualRisks.map((risk) => <p key={risk}>{risk}</p>)
                           : <p>None observed at this checkpoint.</p>}
@@ -1208,8 +1321,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                   <>
                     <button className="secondary-action" disabled={!plan.actions.length} onClick={() => colony.clearPlan()} type="button">Clear</button>
                     {plan.basedOnWorldRevision !== colony.worldRevision && <button className="secondary-action" onClick={() => colony.rebasePlan()} type="button">Rebase</button>}
-                    <button className="smart-plan-button compact" disabled={!recommendedResponse} onClick={stageRecommendedResponse} title={recommendedResponseDetail} type="button"><GameIcon name="plan" /><span>Stage example for review</span></button>
-                    <button className="commit-action" disabled={!validation.valid} onClick={commitPlan} type="button"><GameIcon name="check" /><span>Commit plan</span></button>
+                    <button aria-label="Start plan" className="commit-action" disabled={!validation.valid} onClick={commitPlan} type="button"><GameIcon name="check" /><span>Start plan</span></button>
                   </>
                 ) : (
                   <>
@@ -1217,7 +1329,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                       <>
                         <header className="plan-execution-heading">
                           <strong>{verificationIsCurrent ? 'Outcome verified' : 'Outcome ready'}</strong>
-                          <small>{verificationIsCurrent ? 'Evidence is recorded below' : 'Compare the preserved stop with the plan'}</small>
+                          <small>{verificationIsCurrent ? 'Evidence recorded below' : 'Review the result'}</small>
                         </header>
                         {!verificationIsCurrent ? (
                           <button
@@ -1257,17 +1369,7 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                           <small>Advance within the committed safeguards</small>
                         </header>
                         <button
-                          className="plan-time-action"
-                          disabled={!canAdvancePlan}
-                          onClick={() => colony.advanceTime({ hours: 1, stopCondition: plan.stopCondition ?? undefined })}
-                          title="Advance one hour"
-                          type="button"
-                        >
-                          <GameIcon name="clock" />
-                          <span><strong>Advance 1 hour</strong><small>Run one plan step</small></span>
-                        </button>
-                        <button
-                          className="plan-time-action"
+                          className="plan-time-action plan-run-action"
                           disabled={!canAdvancePlan}
                           onClick={() => colony.advanceTime({ hours: plan.horizonHours || 4, stopCondition: plan.stopCondition ?? undefined })}
                           title="Advance to the plan stop condition"
@@ -1275,6 +1377,16 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                         >
                           <GameIcon name="fastForward" />
                           <span><strong>Run to stop</strong><small>{stopConditionLabel(plan.stopCondition, colony.workOrders)}</small></span>
+                        </button>
+                        <button
+                          className="plan-time-action"
+                          disabled={!canAdvancePlan}
+                          onClick={() => colony.advanceTime({ hours: 1, stopCondition: plan.stopCondition ?? undefined })}
+                          title="Advance one hour"
+                          type="button"
+                        >
+                          <GameIcon name="clock" />
+                          <span><strong>Advance 1 hour</strong><small>Optional checkpoint</small></span>
                         </button>
                         <button
                           className="plan-time-action plan-verify-action"
@@ -1296,9 +1408,9 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
 
           {activeTab === 'log' && (
             <div className="sheet-body log-sheet">
-              <header className="log-summary"><span><small>World revision</small><strong>R{colony.worldRevision}</strong></span><span><small>Plan revision</small><strong>R{plan.revision}</strong></span><span><small>Evidence</small><strong>{colony.learning.evidence.length}</strong></span><span><small>Last stop</small><strong>{colony.lastAdvance?.stopReason ? statusLabel(colony.lastAdvance.stopReason) : '—'}</strong></span></header>
+              <header className="log-summary"><span><small>Mission day</small><strong>{colony.missionDay}</strong></span><span><small>Time</small><strong>{formatClock(colony.hour)}</strong></span><span><small>Events</small><strong>{colony.events.length}</strong></span><span><small>Last stop</small><strong>{colony.lastAdvance?.stopReason ? statusLabel(colony.lastAdvance.stopReason) : '—'}</strong></span></header>
               <div className="event-timeline">
-                {colony.events.slice(0, 12).map((event) => <article className={`event-entry ${event.phase}`} key={event.id}><span className="event-time">D{event.missionDay} {formatClock(event.hour)}</span><i /><span><small>{event.phase} · {event.actor}</small><strong>{event.message}</strong></span></article>)}
+                {colony.events.slice(0, 12).map((event) => <article className={`event-entry ${event.phase}`} key={event.id}><span className="event-time">D{event.missionDay} {formatClock(event.hour)}</span><i /><span><small>{statusLabel(event.phase)}</small><strong>{event.message}</strong></span></article>)}
               </div>
             </div>
           )}
@@ -1343,7 +1455,6 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
                 >{verificationIsCurrent ? '✓' : '!'}</b>
               )}
               {item.id === 'plan' && plan.status !== 'completed' && plan.actions.length > 0 && <b>{plan.actions.length}</b>}
-              {item.id === 'log' && colony.alerts.length > 0 && <b className="alert-badge">{colony.alerts.length}</b>}
             </button>
           ))}
         </nav>
@@ -1353,7 +1464,21 @@ function GameApplication({ onReplayArrival }: { onReplayArrival: () => void }) {
 }
 
 function App() {
-  const hasSavedMission = useColonyStore((state) => state.settlement.phase === 'operations')
+  const hasSavedMission = useColonyStore((state) => (
+    state.settlement.phase === 'operations' ||
+    state.worldRevision > 1 ||
+    state.settlement.constructionOrders.length > 0
+  ))
+  const savedMissionDay = useColonyStore((state) => state.missionDay)
+  const savedSettlementPhase = useColonyStore((state) => state.settlement.phase)
+  const savedScenarioStatus = useColonyStore((state) => state.scenarioStatus)
+  const savedMissionLabel = savedSettlementPhase !== 'operations'
+    ? 'Complete the first expansion'
+    : savedScenarioStatus === 'objective_complete'
+      ? 'Laboratory recovery complete'
+      : savedScenarioStatus === 'failed'
+        ? 'Colony needs a restart'
+        : 'Recover the damaged laboratory'
   const [replayPending, setReplayPending] = useState(() => {
     if (typeof window === 'undefined') return false
     try {
@@ -1367,7 +1492,7 @@ function App() {
     if (typeof window === 'undefined') return false
     try {
       const savedArrival = window.sessionStorage.getItem(MISSION_ARRIVAL_SESSION_KEY)
-      return (savedArrival === 'complete' && hasSavedMission) ||
+      return savedArrival === 'complete' ||
         (savedArrival === MISSION_ARRIVAL_TEST_BYPASS_VALUE && import.meta.env.MODE === 'test')
     } catch {
       return false
@@ -1399,13 +1524,9 @@ function App() {
 
   const prepareNewMission = useCallback(() => {
     useColonyStore.getState().resetColony()
-    const result = useColonyStore.getState().deployPresetMoonbase()
-    if (!result.ok) {
-      throw new Error(result.error ?? `arrival setup returned ${result.code}`)
-    }
     try {
-      // The mission is fully installed before the non-blocking cinematic runs.
-      // A refresh during that sequence should resume operations, not reset again.
+      // The one-room landing settlement is installed before the cinematic.
+      // Arrival hands the player directly into the guided first expansion.
       window.sessionStorage.setItem(MISSION_ARRIVAL_SESSION_KEY, 'complete')
     } catch {
       // The in-memory cutscene can still complete when session storage is unavailable.
@@ -1422,6 +1543,8 @@ function App() {
           hasSavedMission={hasSavedMission && !replayPending}
           onComplete={completeArrival}
           onPrepareNewMission={prepareNewMission}
+          savedMissionDay={savedMissionDay}
+          savedMissionLabel={savedMissionLabel}
         />
       )}
     </BackgroundMusicProvider>

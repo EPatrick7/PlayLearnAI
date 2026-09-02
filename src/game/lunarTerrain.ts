@@ -85,22 +85,18 @@ const inBounds = (point: Point, width: number, height: number) => (
   point.x >= 0 && point.x < width && point.y >= 0 && point.y < height
 )
 
-/**
- * Shackleton Base sits in a surveyed basin with a service lane extending east.
- * Keeping that area visually quiet lets the authored terrain survive construction
- * changes without appearing to move when a player places a wall or workstation.
- */
+/** Keep the central survey basin readable while the outer map remains rugged. */
 export const isLunarTerrainQuietCell = ({ x, y }: Point, width: number, height: number) => {
   const normalizedX = (x + 0.5) / width
   const normalizedY = (y + 0.5) / height
   const basin = (
-    ((normalizedX - 0.23) / 0.19) ** 2 +
-    ((normalizedY - 0.53) / 0.29) ** 2
+    ((normalizedX - 0.5) / 0.34) ** 2 +
+    ((normalizedY - 0.5) / 0.32) ** 2
   ) < 1
   const serviceLane = (
-    normalizedX >= 0.3 &&
-    normalizedX <= 0.76 &&
-    Math.abs(normalizedY - 0.53) <= 0.105
+    normalizedX >= 0.12 &&
+    normalizedX <= 0.88 &&
+    Math.abs(normalizedY - 0.5) <= 0.075
   )
   return basin || serviceLane
 }

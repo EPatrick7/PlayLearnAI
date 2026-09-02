@@ -13,19 +13,17 @@ const renderPanel = (
 describe('AgentLinkPanel', () => {
   it('shows connection status and a supervised first prompt without exposing the tool catalog', async () => {
     renderPanel()
-    const trigger = screen.getByRole('button', { name: /Agent access ready.*Open connection help/i })
+    const trigger = screen.getByRole('button', { name: /Agent ready.*Open connection help/i })
 
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    expect(trigger).toHaveTextContent('AgentAccess ready')
+    expect(trigger).toHaveTextContent('AgentReady')
     expect(trigger).not.toHaveTextContent(/\d/)
     fireEvent.click(trigger)
 
-    const dialog = screen.getByRole('dialog', { name: 'Agent access ready' })
+    const dialog = screen.getByRole('dialog', { name: 'Agent ready' })
     expect(dialog).not.toHaveAttribute('aria-modal')
-    expect(dialog).toHaveTextContent('Nothing changes until you ask')
-    expect(dialog).toHaveTextContent('Paste the suggested prompt into the Codex task')
-    expect(dialog).toHaveTextContent('Review every proposed change here')
-    expect(dialog).toHaveTextContent('Inspect the incident, dependencies, crew, gear, oxygen, and power')
+    expect(dialog).toHaveTextContent('You approve plans before time advances')
+    expect(dialog).toHaveTextContent('Inspect this incident and explain the main risks')
     expect(dialog).not.toHaveTextContent(/\btools?\b/i)
     expect(dialog).not.toHaveTextContent(/capabilit/i)
     expect(dialog).not.toHaveTextContent(/revision/i)
@@ -35,10 +33,10 @@ describe('AgentLinkPanel', () => {
   })
 
   it.each([
-    ['ready', 'Agent access ready', 'can share the live mission'],
-    ['registering', 'Setting up agent access', 'checking whether this browser'],
-    ['unavailable', 'Agent access unavailable', 'cannot offer the live mission'],
-    ['error', 'Agent access error', 'did not finish setting up'],
+    ['ready', 'Agent ready', 'approve plans before time advances'],
+    ['registering', 'Connecting agent', 'keep playing while the connection finishes'],
+    ['unavailable', 'Manual play', 'not available in this browser'],
+    ['error', 'Agent connection failed', 'mission is safe'],
   ] as const)('explains the %s connection state', (status, heading, explanation) => {
     renderPanel(status)
     fireEvent.click(screen.getByRole('button', { name: new RegExp(heading, 'i') }))
@@ -48,16 +46,13 @@ describe('AgentLinkPanel', () => {
     expect(dialog).toHaveTextContent(explanation)
   })
 
-  it('gives actionable setup instructions when disconnected', () => {
+  it('keeps the disconnected state concise and playable', () => {
     renderPanel('unavailable', 'landing')
-    fireEvent.click(screen.getByRole('button', { name: /Agent access unavailable/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Manual play/i }))
 
-    const dialog = screen.getByRole('dialog', { name: 'Agent access unavailable' })
-    expect(dialog).toHaveTextContent('built-in browser in the latest desktop app')
-    expect(dialog).toHaveTextContent('GPT-5.6 Sol or GPT-5.6 Terra')
-    expect(dialog).toHaveTextContent('Luna does not currently support Site tools')
-    expect(dialog).toHaveTextContent('No separate MCP server, plugin, or API key is needed')
-    expect(dialog).not.toHaveTextContent('Try this first')
+    const dialog = screen.getByRole('dialog', { name: 'Manual play' })
+    expect(dialog).toHaveTextContent('Agent access is not available in this browser')
+    expect(dialog).not.toHaveTextContent(/MCP server|API key|GPT-5/i)
   })
 
   it.each([
@@ -66,18 +61,18 @@ describe('AgentLinkPanel', () => {
     ['habitable', 'Check access, life support, and remaining work'],
     ['expanding', 'what is blocking the first shift'],
     ['ready', 'whether it is safe to begin the first shift'],
-    ['operations', 'dependencies, crew, gear, oxygen, and power'],
+    ['operations', 'explain the main risks'],
   ] as const)('offers an inspect-first prompt for %s', (phase, prompt) => {
     renderPanel('ready', phase)
     fireEvent.click(screen.getByRole('button', { name: /Open connection help/i }))
-    expect(screen.getByRole('dialog', { name: 'Agent access ready' })).toHaveTextContent(prompt)
+    expect(screen.getByRole('dialog', { name: 'Agent ready' })).toHaveTextContent(prompt)
   })
 
   it.each([
-    ['ground', 'Do not change anything yet'],
+    ['ground', 'Do not change anything'],
     ['plan', 'Do not commit it'],
-    ['supervise', 'Advance one hour'],
-    ['verify', 'Show any residual risks'],
+    ['supervise', 'Advance 1 hour'],
+    ['verify', 'list remaining risks'],
   ] as const)('teaches the %s authority boundary', (learningPhase, prompt) => {
     render(
       <AgentLinkPanel
@@ -87,23 +82,23 @@ describe('AgentLinkPanel', () => {
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: /Open connection help/i }))
-    expect(screen.getByRole('dialog', { name: 'Agent access ready' })).toHaveTextContent(prompt)
+    expect(screen.getByRole('dialog', { name: 'Agent ready' })).toHaveTextContent(prompt)
   })
 
   it('closes on Escape and the close control, restoring focus to the trigger', async () => {
     renderPanel()
     const trigger = screen.getByRole('button', { name: /Open connection help/i })
     fireEvent.click(trigger)
-    const dialog = screen.getByRole('dialog', { name: 'Agent access ready' })
+    const dialog = screen.getByRole('dialog', { name: 'Agent ready' })
     await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement))
 
     fireEvent.keyDown(dialog, { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: 'Agent access ready' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Agent ready' })).not.toBeInTheDocument()
     await waitFor(() => expect(document.activeElement).toBe(trigger))
 
     fireEvent.click(trigger)
     fireEvent.click(await screen.findByRole('button', { name: 'Close Agent Link details' }))
-    expect(screen.queryByRole('dialog', { name: 'Agent access ready' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Agent ready' })).not.toBeInTheDocument()
     await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
 
@@ -119,7 +114,7 @@ describe('AgentLinkPanel', () => {
     fireEvent.pointerDown(outside)
     outside.focus()
 
-    expect(screen.queryByRole('dialog', { name: 'Agent access ready' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Agent ready' })).not.toBeInTheDocument()
     expect(document.activeElement).toBe(outside)
   })
 
@@ -134,7 +129,7 @@ describe('AgentLinkPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy prompt' }))
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining(
-      'Inspect the incident, dependencies, crew, gear, oxygen, and power',
+      'Inspect this incident and explain the main risks',
     )))
     expect(screen.getByRole('button', { name: 'Copied' })).toBeVisible()
   })

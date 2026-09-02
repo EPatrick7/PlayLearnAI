@@ -844,9 +844,11 @@ export function MoonbaseMap({
       ref={mapRef}
       role="group"
       style={{
+        '--map-columns': width,
+        '--map-rows': height,
         gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))`,
         gridTemplateRows: `repeat(${height}, minmax(0, 1fr))`,
-      }}
+      } as CSSProperties}
     >
       <LunarTerrain dustActive={dustActive} height={height} seed={terrainSeed} width={width} />
       <div className="map-grid" aria-hidden="true" />

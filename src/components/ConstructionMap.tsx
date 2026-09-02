@@ -303,11 +303,14 @@ export function ConstructionMap({
   const edgePanFrameRef = useRef<number | null>(null)
   const edgePanLastTimestampRef = useRef<number | null>(null)
   const edgePanStepRef = useRef<(timestamp: number) => void>(() => undefined)
-  const [hoverCell, setHoverCell] = useState<GridPoint | null>({ x: 8, y: 9 })
+  const initialCursor = constructionStockpile && isInConstructionBounds(constructionStockpile, layout)
+    ? constructionStockpile
+    : { x: Math.floor(layout.width / 2), y: Math.floor(layout.height / 2) }
+  const [hoverCell, setHoverCell] = useState<GridPoint | null>(initialCursor)
   const [dragStart, setDragStart] = useState<GridPoint | null>(null)
   const [dragEnd, setDragEnd] = useState<GridPoint | null>(null)
   const [draftTool, setDraftTool] = useState<ConstructionTool | null>(null)
-  const [cursor, setCursor] = useState<GridPoint>({ x: 8, y: 9 })
+  const [cursor, setCursor] = useState<GridPoint>(initialCursor)
   const interactionEpoch = `${toolActivationId}:${selectedTool ?? 'select'}`
   const [previewTargetEpoch, setPreviewTargetEpoch] = useState<string | null>(null)
   const [suppressedPreview, setSuppressedPreview] = useState<{
@@ -1553,7 +1556,11 @@ export function ConstructionMap({
         onPointerMove={movePointer}
         onPointerUp={finishPointer}
         ref={surfaceRef}
-        style={{ '--construction-zoom': zoom } as CSSProperties}
+        style={{
+          '--construction-grid-height': layout.height,
+          '--construction-grid-width': layout.width,
+          '--construction-zoom': zoom,
+        } as CSSProperties}
       >
       <div
         aria-describedby="construction-grid-help construction-grid-status"

@@ -1,5 +1,10 @@
 import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
+  offsetStarterPoint,
+} from '../game/construction'
 import { createInitialState } from '../game/seed'
 import { constructModule } from '../game/settlement'
 import { useColonyStore } from '../game/store'
@@ -252,7 +257,7 @@ describe('Moonbase WebMCP registration', () => {
       kind: 'workstation',
       workstationType: 'solar-array',
       workstationId: 'agent-solar-array',
-      origin: { x: 14, y: 12 },
+      origin: { x: CONSTRUCTION_GRID_WIDTH - 4, y: CONSTRUCTION_GRID_HEIGHT - 3 },
       rotation: 0,
     })
     expect(workstation).toMatchObject({
@@ -268,8 +273,8 @@ describe('Moonbase WebMCP registration', () => {
       expectedRunId: useColonyStore.getState().runId,
       expectedWorldRevision: workstation.worldRevision,
       kind: 'deconstruct',
-      start: { x: 3, y: 7 },
-      end: { x: 3, y: 7 },
+      start: offsetStarterPoint({ x: 3, y: 7 }),
+      end: offsetStarterPoint({ x: 3, y: 7 }),
     })
     expect(deconstruction).toMatchObject({ ok: true, code: 'queued' })
 

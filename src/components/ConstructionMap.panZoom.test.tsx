@@ -3,6 +3,10 @@ import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
+  LEGACY_CONSTRUCTION_GRID_HEIGHT,
+  LEGACY_CONSTRUCTION_GRID_WIDTH,
   createConstructionLayout,
   placeWorkstation,
   type ConstructionLayout,
@@ -165,6 +169,12 @@ const inspectionTile = (
   focusedItem: null,
 })
 
+const createLegacyConstructionLayout = (): ConstructionLayout => ({
+  ...createConstructionLayout(),
+  width: LEGACY_CONSTRUCTION_GRID_WIDTH,
+  height: LEGACY_CONSTRUCTION_GRID_HEIGHT,
+})
+
 describe('ConstructionMap pan and zoom', () => {
   it('keeps seeded terrain separate from construction hit targets across tool changes', () => {
     const { container, map, rerenderSelectedTool } = renderMap(null, { terrainSeed: 240826 })
@@ -173,13 +183,17 @@ describe('ConstructionMap pan and zoom', () => {
 
     const initialSignature = signature()
     expect(Number(terrain()?.dataset.terrainFeatureCount)).toBeGreaterThanOrEqual(42)
-    expect(map.querySelectorAll('[data-construction-cell]')).toHaveLength(24 * 18)
+    expect(map.querySelectorAll('[data-construction-cell]')).toHaveLength(
+      CONSTRUCTION_GRID_WIDTH * CONSTRUCTION_GRID_HEIGHT,
+    )
     expect(terrain()).toHaveAttribute('aria-hidden', 'true')
     expect(terrain()).not.toHaveAttribute('data-construction-cell')
 
     rerenderSelectedTool('wall')
     expect(signature()).toBe(initialSignature)
-    expect(map.querySelectorAll('[data-construction-cell]')).toHaveLength(24 * 18)
+    expect(map.querySelectorAll('[data-construction-cell]')).toHaveLength(
+      CONSTRUCTION_GRID_WIDTH * CONSTRUCTION_GRID_HEIGHT,
+    )
   })
 
   it('waits for a fresh target after activation even when the stale cursor is valid', () => {
@@ -425,7 +439,7 @@ describe('ConstructionMap pan and zoom', () => {
   })
 
   it('inspects the exact non-origin tile clicked inside a multi-tile workstation', () => {
-    const placed = placeWorkstation(createConstructionLayout(), {
+    const placed = placeWorkstation(createLegacyConstructionLayout(), {
       id: 'battery-footprint',
       type: 'battery-bank',
       label: 'Battery bank',
@@ -1132,7 +1146,9 @@ describe('ConstructionMap pan and zoom', () => {
       })
     vi.spyOn(window, 'cancelAnimationFrame')
       .mockImplementation(() => undefined)
-    const { cell, map, onApply, scroll, surface } = renderMap('wall')
+    const { cell, map, onApply, scroll, surface } = renderMap('wall', {
+      layout: createLegacyConstructionLayout(),
+    })
     act(() => {
       frames.splice(0).forEach((callback) => callback(0))
     })
@@ -1222,7 +1238,9 @@ describe('ConstructionMap pan and zoom', () => {
       return frames.length
     })
     vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
-    const { cell, map, scroll, surface } = renderMap('wall')
+    const { cell, map, scroll, surface } = renderMap('wall', {
+      layout: createLegacyConstructionLayout(),
+    })
     act(() => {
       frames.splice(0).forEach((callback) => callback(0))
     })
@@ -1582,8 +1600,8 @@ describe('ConstructionMap pan and zoom', () => {
       toJSON: () => ({}),
     })
     const pawn = map.querySelector<HTMLElement>(`[data-crew-id="${builder.id}"]`)!
-    const expectedLeft = `${((crewCell.x + 0.5) / 24) * 100}%`
-    const expectedTop = `${((crewCell.y + 0.5) / 18) * 100}%`
+    const expectedLeft = `${((crewCell.x + 0.5) / CONSTRUCTION_GRID_WIDTH) * 100}%`
+    const expectedTop = `${((crewCell.y + 0.5) / CONSTRUCTION_GRID_HEIGHT) * 100}%`
 
     expect(pawn).toHaveStyle({ left: expectedLeft, top: expectedTop })
     fireEvent.wheel(map, { clientX: 200, clientY: 150, deltaY: -80 })
@@ -1997,8 +2015,23 @@ describe('ConstructionMap pan and zoom', () => {
     expect(surface).toContainElement(map)
   })
 
+  it('starts the keyboard cursor at the construction stockpile when one is available', () => {
+    const stockpile = { x: 8, y: 9 }
+    const { container } = renderMap(null, { constructionStockpile: stockpile })
+
+    expect(screen.getByRole('status')).toHaveTextContent(/column 9, row 10/i)
+    expect(container.querySelector('.construction-cursor')).toHaveStyle({
+      gridColumn: '9',
+      gridRow: '10',
+    })
+  })
+
   it('pans with WASD while Arrow keys move and reveal only the tile cursor', () => {
     const { cell, map, scroll } = renderMap()
+    const target = {
+      x: Math.floor(CONSTRUCTION_GRID_WIDTH / 2) + 1,
+      y: Math.floor(CONSTRUCTION_GRID_HEIGHT / 2),
+    }
     scroll.scrollLeft = 40
     scroll.scrollTop = 25
     vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
@@ -2012,7 +2045,7 @@ describe('ConstructionMap pan and zoom', () => {
       y: 0,
       toJSON: () => ({}),
     })
-    vi.spyOn(cell({ x: 9, y: 9 }), 'getBoundingClientRect').mockReturnValue({
+    vi.spyOn(cell(target), 'getBoundingClientRect').mockReturnValue({
       bottom: 150,
       height: 40,
       left: 210,
@@ -2028,11 +2061,11 @@ describe('ConstructionMap pan and zoom', () => {
 
     expect(scroll.scrollLeft).toBe(114)
     expect(scroll.scrollTop).toBe(25)
-    expect(screen.getByRole('status')).toHaveTextContent(/column 10, row 10/i)
+    expect(screen.getByRole('status')).toHaveTextContent(/column 20, row 14/i)
 
     fireEvent.keyDown(map, { key: 'w' })
     expect(scroll.scrollTop).toBe(-23)
-    expect(screen.getByRole('status')).toHaveTextContent(/column 10, row 10/i)
+    expect(screen.getByRole('status')).toHaveTextContent(/column 20, row 14/i)
 
     const input = document.createElement('input')
     map.append(input)

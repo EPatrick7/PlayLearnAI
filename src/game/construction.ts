@@ -1,5 +1,9 @@
-export const CONSTRUCTION_GRID_WIDTH = 24 as const
-export const CONSTRUCTION_GRID_HEIGHT = 18 as const
+export const LEGACY_CONSTRUCTION_GRID_WIDTH = 24 as const
+export const LEGACY_CONSTRUCTION_GRID_HEIGHT = 18 as const
+export const CONSTRUCTION_GRID_WIDTH = 36 as const
+export const CONSTRUCTION_GRID_HEIGHT = 27 as const
+export const PRESET_LAYOUT_OFFSET = { x: 6, y: 5 } as const
+export const STARTER_LAYOUT_OFFSET = { x: 12, y: 4 } as const
 export const CONSTRUCTION_GRID = {
   width: CONSTRUCTION_GRID_WIDTH,
   height: CONSTRUCTION_GRID_HEIGHT,
@@ -12,6 +16,18 @@ export interface GridPoint {
   x: number
   y: number
 }
+
+export const offsetPresetPoint = <T extends GridPoint>(point: T): T => ({
+  ...point,
+  x: point.x + PRESET_LAYOUT_OFFSET.x,
+  y: point.y + PRESET_LAYOUT_OFFSET.y,
+})
+
+export const offsetStarterPoint = <T extends GridPoint>(point: T): T => ({
+  ...point,
+  x: point.x + STARTER_LAYOUT_OFFSET.x,
+  y: point.y + STARTER_LAYOUT_OFFSET.y,
+})
 
 export interface GridSize {
   width: number
@@ -41,8 +57,8 @@ export interface WorkstationPlacement {
 }
 
 export interface ConstructionLayout {
-  width: typeof CONSTRUCTION_GRID_WIDTH
-  height: typeof CONSTRUCTION_GRID_HEIGHT
+  width: number
+  height: number
   boundaries: BoundaryCell[]
   workstations: WorkstationPlacement[]
 }

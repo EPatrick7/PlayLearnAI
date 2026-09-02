@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   createConstructionLayout,
+  LEGACY_CONSTRUCTION_GRID_HEIGHT,
+  LEGACY_CONSTRUCTION_GRID_WIDTH,
   paintBoundaryCell,
   type BoundaryCell,
 } from './construction'
@@ -14,6 +16,13 @@ import {
   advanceConstructionWorkerSimulationFixedStep,
   type ConstructionWorkerSimulationInput,
 } from './constructionWorkerSimulation'
+
+const legacyLayoutWith = (boundaries: BoundaryCell[]) => ({
+  ...createConstructionLayout(),
+  width: LEGACY_CONSTRUCTION_GRID_WIDTH,
+  height: LEGACY_CONSTRUCTION_GRID_HEIGHT,
+  boundaries,
+})
 
 const wallOrder = () => {
   const layout = createConstructionLayout()
@@ -673,7 +682,7 @@ describe('spatial construction worker simulation', () => {
       },
     }
     const result = advanceConstructionWorkerSimulation(inputFor(order, 4, {
-      layout: { ...createConstructionLayout(), boundaries: barrier },
+      layout: legacyLayoutWith(barrier),
       crewPositions: [{ crewId: 'builder', cell: { x: 1, y: 1 }, moveCredit: 0 }],
     }))
 
@@ -700,7 +709,7 @@ describe('spatial construction worker simulation', () => {
       result.orders[0],
       4,
       {
-        layout: { ...createConstructionLayout(), boundaries: opened },
+        layout: legacyLayoutWith(opened),
         crewPositions: result.crewPositions,
         constructionStock: result.constructionStock,
       },
@@ -747,7 +756,7 @@ describe('spatial construction worker simulation', () => {
     ]
     const first = advanceConstructionWorkerSimulation({
       ...inputFor(order, 0),
-      layout: { ...createConstructionLayout(), boundaries: barrier },
+      layout: legacyLayoutWith(barrier),
       crewPositions: [
         { crewId: 'alpha', cell: { x: 3, y: 4 }, moveCredit: 0 },
         { crewId: 'beta', cell: { x: 1, y: 1 }, moveCredit: 0 },
@@ -903,7 +912,7 @@ describe('spatial construction worker simulation', () => {
       priority: 3,
     }
     const first = advanceConstructionWorkerSimulation(inputFor(unreachable, 1, {
-      layout: { ...createConstructionLayout(), boundaries: barrier },
+      layout: legacyLayoutWith(barrier),
       orders: [unreachable, reachable],
       constructionStock: 1,
       crewPositions: [{ crewId: 'builder', cell: { x: 1, y: 1 }, moveCredit: 0 }],
@@ -984,7 +993,7 @@ describe('spatial construction worker simulation', () => {
       },
     ]
     const first = advanceConstructionWorkerSimulation({
-      layout: { ...createConstructionLayout(), boundaries: barrier },
+      layout: legacyLayoutWith(barrier),
       orders: [unreachable, occupyingBuilder],
       constructionStock: 4,
       stockpile: { x: 1, y: 1 },
@@ -1053,7 +1062,7 @@ describe('spatial construction worker simulation', () => {
     }
     const first = advanceConstructionWorkerSimulation({
       ...inputFor(waiting, 0),
-      layout: { ...createConstructionLayout(), boundaries: barrier },
+      layout: legacyLayoutWith(barrier),
       orders: [waiting, blockingBlueprint],
       crewPositions: [{ crewId: 'builder', cell: { x: 1, y: 1 }, moveCredit: 0 }],
     })
@@ -1124,7 +1133,7 @@ describe('spatial construction worker simulation', () => {
       },
     ]
     const first = advanceConstructionWorkerSimulation({
-      layout: { ...createConstructionLayout(), boundaries: barrier },
+      layout: legacyLayoutWith(barrier),
       orders: [waiting, blockingBlueprint],
       constructionStock: 4,
       stockpile: { x: 2, y: 1 },

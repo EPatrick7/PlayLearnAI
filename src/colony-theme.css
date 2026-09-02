@@ -552,6 +552,84 @@ div.agent-link-panel > button.agent-link-trigger {
 .incident-card.collapsed .incident-toggle .game-icon { transform: rotate(90deg); }
 .incident-card.collapsed .incident-details { display: none; }
 
+.tutorial-next {
+  margin-top: 9px;
+  padding-top: 9px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid rgba(207, 190, 148, 0.13);
+}
+
+.tutorial-step-number {
+  min-height: 38px;
+  display: grid;
+  place-content: center;
+  gap: 3px;
+  border: 1px solid rgba(195, 154, 74, 0.42);
+  color: var(--brass-hot);
+  background: #312b1e;
+  text-align: center;
+}
+
+.tutorial-step-number small {
+  color: #a89a79;
+  font: 800 7px/1 var(--font-condensed);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tutorial-step-number b { font: 850 11px/1 var(--font-readout); }
+
+.tutorial-step-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.tutorial-step-copy strong {
+  overflow: hidden;
+  color: var(--bone-bright);
+  font: 800 12px/1.1 var(--font-condensed);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tutorial-step-copy small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #b7ae9b;
+  font: 500 9px/1.3 var(--font-ui);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.tutorial-next > button {
+  min-width: 42px;
+  min-height: 38px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(195, 154, 74, 0.46);
+  color: var(--brass-hot);
+  background: #3a311f;
+  font: 850 9px/1 var(--font-condensed);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tutorial-next > button:hover {
+  border-color: rgba(224, 189, 105, 0.74);
+  background: #4a3d25;
+}
+
+.tutorial-next > button .game-icon { width: 15px; height: 15px; }
+.tutorial-next.failed .tutorial-step-number { color: #e08777; border-color: rgba(189, 90, 77, 0.5); background: rgba(119, 47, 39, 0.25); }
+.tutorial-next.tutorial-complete .tutorial-step-number { color: #afca87; border-color: rgba(136, 169, 103, 0.5); background: rgba(86, 112, 65, 0.22); }
+
 .objective-progress {
   height: 5px;
   margin: 9px 0 8px;
@@ -652,6 +730,59 @@ div.agent-link-panel > button.agent-link-trigger {
   border-color: rgba(224, 189, 105, 0.72);
   background: #423823;
 }
+
+.plan-safeguards {
+  border: 1px solid rgba(207, 190, 148, 0.14);
+  background: #22261f;
+}
+
+.plan-safeguards > summary {
+  min-height: 42px;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #c9c0ad;
+  cursor: pointer;
+  list-style: none;
+}
+
+.plan-safeguards > summary::-webkit-details-marker { display: none; }
+.plan-safeguards > summary > span { min-width: 0; display: grid; gap: 3px; }
+.plan-safeguards > summary strong { font: 800 10px/1 var(--font-condensed); }
+.plan-safeguards > summary small { overflow: hidden; color: #9f9786; font: 600 8px/1.2 var(--font-readout); text-overflow: ellipsis; white-space: nowrap; }
+.plan-safeguards > summary .game-icon { width: 14px; height: 14px; transform: rotate(90deg); transition: transform 130ms ease; }
+.plan-safeguards[open] > summary .game-icon { transform: rotate(-90deg); }
+.plan-safeguards .brief-grid { padding: 0 9px 9px; }
+
+.plan-recommendation {
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border-left: 2px solid #7597a0;
+}
+
+.plan-recommendation > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+.plan-recommendation small { color: #9f9786; font: 800 8px/1 var(--font-condensed); letter-spacing: 0.08em; text-transform: uppercase; }
+.plan-recommendation strong { color: var(--bone-bright); font: 800 12px/1.1 var(--font-condensed); }
+.plan-recommendation p { margin: 1px 0 0; color: #bdb4a1; font: 500 9px/1.35 var(--font-ui); }
+.plan-recommendation button {
+  min-height: 36px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(117, 174, 190, 0.4);
+  color: #c5d7d4;
+  background: #29332e;
+  font: 800 9px/1 var(--font-condensed);
+  text-transform: uppercase;
+}
+.plan-recommendation button .game-icon { width: 13px; height: 13px; }
+.plan-time-action.plan-run-action { border-color: rgba(195, 154, 74, 0.54); background: #37301f; }
 
 .incident-alerts button {
   min-height: 36px;
@@ -1287,13 +1418,15 @@ div.agent-link-panel > button.agent-link-trigger {
 
   .construction-job-hud {
     top: 8px;
-    left: 8px;
-    width: min(470px, calc(100% - 72px));
-    max-width: min(470px, calc(100% - 72px));
+    right: 7px;
+    left: 7px;
+    width: auto;
+    max-width: none;
   }
 
   .construction-job-summary strong { font-size: 11px; }
   .construction-job-summary small { font-size: 9px; }
+  .construction-job-summary.queue-empty small { display: none; }
 }
 
 @media (max-width: 480px) {
@@ -1314,12 +1447,35 @@ div.agent-link-panel > button.agent-link-trigger {
   .incident-heading small { font-size: 8px; }
   .incident-heading strong { font-size: 14px; }
 
+  .tutorial-next {
+    grid-template-columns: 36px minmax(0, 1fr) 44px;
+    gap: 6px;
+  }
+
+  .tutorial-next > button {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+  }
+
+  .tutorial-next > button > span { display: none; }
+
+  .plan-recommendation {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .plan-recommendation > button {
+    grid-column: 1 / -1;
+    justify-content: center;
+  }
+
   .command-dock button { font-size: 8px; }
   .command-dock button > b { right: calc(50% - 22px); }
 
   .construction-job-hud {
-    width: calc(100% - 72px);
-    max-width: calc(100% - 72px);
+    width: auto;
+    max-width: none;
   }
 }
 
@@ -1333,4 +1489,166 @@ div.agent-link-panel > button.agent-link-trigger {
 
 @media (prefers-reduced-motion: reduce) {
   .incident-toggle .game-icon { transition: none; }
+}
+
+/* Novice-first hierarchy: keep the world visible and reveal detail on demand. */
+.resource-rack {
+  grid-template-columns: repeat(2, minmax(116px, 180px));
+  justify-content: start;
+}
+
+.objective-checklist {
+  margin-bottom: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.objective-checklist > span {
+  min-height: 30px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(207, 190, 148, 0.14);
+  color: #d0c7b3;
+  background: #23271f;
+  font: 650 11px/1.25 var(--font-ui);
+}
+
+.objective-checklist > span.complete {
+  color: #bfd49f;
+  border-color: rgba(136, 169, 103, 0.34);
+  background: #293025;
+}
+
+.objective-checklist .game-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.incident-card small,
+.sheet-body small,
+.sheet-header small,
+.loadout-card small,
+.work-node small {
+  font-size: max(10px, 0.68rem);
+}
+
+.queue-action.plan-task p {
+  display: grid;
+  gap: 3px;
+}
+
+.queue-action.plan-task p strong {
+  color: var(--bone-bright);
+  font: 750 12px/1.15 var(--font-condensed);
+}
+
+.queue-action.plan-task p small {
+  overflow: hidden;
+  color: var(--ash);
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roster-card {
+  grid-template-columns: 56px minmax(120px, 1fr) 112px;
+}
+
+.vital-bars small { font-size: 10px; }
+
+@media (max-width: 860px) {
+  .game-topbar {
+    height: 84px;
+    grid-template-rows: 40px 34px;
+    gap: 3px 6px;
+  }
+
+  .world-stage { height: calc(100dvh - 84px); }
+
+  .resource-rack {
+    grid-template-columns: repeat(2, minmax(0, 132px));
+    overflow: hidden;
+  }
+
+  .resource-chip {
+    min-width: 0;
+    padding-inline: 9px;
+  }
+
+  div.agent-link-panel > button.agent-link-trigger {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+  }
+
+  .agent-link-trigger-label,
+  .agent-link-trigger-state { display: none; }
+
+  .colonist-strip { display: none; }
+
+  .incident-card,
+  .colonist-strip + .incident-card,
+  .incident-card.collapsed {
+    top: 8px;
+  }
+
+  .incident-card.expanded {
+    max-height: calc(100dvh - 168px);
+  }
+
+  .command-sheet {
+    position: fixed;
+    z-index: 120;
+    top: 8px;
+    right: 0;
+    bottom: 59px;
+    left: 0;
+    width: 100%;
+    height: auto;
+    max-height: none;
+  }
+
+  .world-stage:has(.command-sheet.open) { z-index: 90; }
+
+  .work-sheet {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .work-sheet .work-chain { order: 1; }
+  .work-sheet .work-focus { order: 2; }
+  .work-sheet .work-sheet-actions { order: 3; }
+  .work-sheet .loadout-column { order: 4; }
+  .work-sheet .gear-loadout { order: 5; }
+
+  .plan-sheet .brief-controls { order: 1; }
+  .plan-sheet .staged-queue { order: 2; }
+  .plan-sheet .forecast-card { order: 3; }
+  .plan-sheet .plan-actions { order: 4; }
+
+  .plan-sheet .staged-queue {
+    min-height: auto !important;
+  }
+
+  .plan-sheet .empty-state {
+    height: auto;
+    min-height: 72px;
+    padding: 12px;
+  }
+
+  .plan-sheet .forecast-card {
+    min-height: auto !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .brand-lockup strong { max-width: 154px; }
+  .incident-card.expanded { max-height: calc(100dvh - 150px); }
 }

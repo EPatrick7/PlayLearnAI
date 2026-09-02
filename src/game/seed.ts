@@ -9,6 +9,12 @@ import type {
 } from './types'
 import { createStarterConstruction } from './constructionCatalog'
 import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
+  offsetPresetPoint,
+  offsetStarterPoint,
+} from './construction'
+import {
   incidentProfileForSeed,
   normalizeIncidentSeed,
   type IncidentProfile,
@@ -45,7 +51,7 @@ export const isOpaqueRunId = (value: unknown): value is string => (
 
 export const nextIncidentSeed = (seed: number) => normalizeIncidentSeed(seed) + 1
 
-export const INITIAL_BUILD_SITES: BuildSiteState[] = [
+export const INITIAL_BUILD_SITES: BuildSiteState[] = ([
   {
     id: 'site-power-west',
     label: 'West Ridge',
@@ -123,9 +129,9 @@ export const INITIAL_BUILD_SITES: BuildSiteState[] = [
     connectionSide: 'north',
     occupiedBy: null,
   },
-]
+] satisfies BuildSiteState[]).map((site) => offsetPresetPoint(site))
 
-const modules: ModuleState[] = [
+const modules: ModuleState[] = ([
   {
     id: 'module-habitat',
     name: 'Habitat Aster',
@@ -214,7 +220,10 @@ const modules: ModuleState[] = [
     powerPriority: 3,
     breached: false,
   },
-]
+] satisfies ModuleState[]).map((module) => ({
+  ...module,
+  position: offsetPresetPoint(module.position),
+}))
 
 const crew: CrewMember[] = [
   {
@@ -381,7 +390,7 @@ const workOrders: WorkOrder[] = [
     id: 'work-seal-lab',
     type: 'seal_breach',
     label: 'Seal laboratory breach',
-    detail: 'Retrieve an EVA suit and engineering kit, cross the isolated zone, and patch the micrometeorite puncture.',
+    detail: 'Patch the laboratory breach.',
     location: 'laboratory',
     status: 'ready',
     priority: 5,
@@ -402,7 +411,7 @@ const workOrders: WorkOrder[] = [
     id: 'work-repressurize-lab',
     type: 'repressurize_lab',
     label: 'Repressurize laboratory',
-    detail: 'Enter in an EVA suit, pressure-test the repair, and restore the zone from vacuum through low pressure to a safe atmosphere.',
+    detail: 'Pressure-test the seal and restore atmosphere.',
     location: 'laboratory',
     status: 'blocked',
     priority: 5,
@@ -423,7 +432,7 @@ const workOrders: WorkOrder[] = [
     id: 'work-research-sintering',
     type: 'research',
     label: 'Research Regolith Sintering',
-    detail: 'Qualify microwave sintering parameters for local anorthite-rich regolith after the laboratory is restored.',
+    detail: 'Complete the sintering experiment.',
     location: 'laboratory',
     status: 'blocked',
     priority: 4,
@@ -444,7 +453,7 @@ const workOrders: WorkOrder[] = [
     id: 'work-clean-solar',
     type: 'clean_solar',
     label: 'Clean priority solar bank',
-    detail: 'Use the rover before the dust front peaks to keep the battery from becoming the research bottleneck.',
+    detail: 'Clean the solar array before the dust front.',
     location: 'solar-skid',
     status: 'ready',
     priority: 4,
@@ -533,7 +542,7 @@ export const createInitialState = (
   elapsedHours: 0,
   worldRevision: 1,
   scenarioStatus: 'active',
-  map: { width: 24, height: 18 },
+  map: { width: CONSTRUCTION_GRID_WIDTH, height: CONSTRUCTION_GRID_HEIGHT },
   settlement: {
     phase: 'landing',
     terrainSeed: normalizedSeed,
@@ -542,14 +551,14 @@ export const createInitialState = (
     constructionSequence: 1,
     constructionSpeed: 1,
     constructionCrew: [
-      { crewId: 'crew-amina-okafor', cell: { x: 6, y: 9 }, moveCredit: 0 },
-      { crewId: 'crew-mateo-alvarez', cell: { x: 6, y: 10 }, moveCredit: 0 },
-      { crewId: 'crew-soo-jin-park', cell: { x: 4, y: 10 }, moveCredit: 0 },
-      { crewId: 'crew-leila-haddad', cell: { x: 5, y: 10 }, moveCredit: 0 },
-      { crewId: 'crew-jonah-reed', cell: { x: 6, y: 9 }, moveCredit: 0 },
-      { crewId: 'crew-nia-kimani', cell: { x: 5, y: 10 }, moveCredit: 0 },
+      { crewId: 'crew-amina-okafor', cell: offsetStarterPoint({ x: 6, y: 9 }), moveCredit: 0 },
+      { crewId: 'crew-mateo-alvarez', cell: offsetStarterPoint({ x: 6, y: 10 }), moveCredit: 0 },
+      { crewId: 'crew-soo-jin-park', cell: offsetStarterPoint({ x: 4, y: 10 }), moveCredit: 0 },
+      { crewId: 'crew-leila-haddad', cell: offsetStarterPoint({ x: 5, y: 10 }), moveCredit: 0 },
+      { crewId: 'crew-jonah-reed', cell: offsetStarterPoint({ x: 6, y: 9 }), moveCredit: 0 },
+      { crewId: 'crew-nia-kimani', cell: offsetStarterPoint({ x: 5, y: 10 }), moveCredit: 0 },
     ],
-    constructionStockpile: { x: 8, y: 9 },
+    constructionStockpile: offsetStarterPoint({ x: 8, y: 9 }),
     buildSites: structuredClone(INITIAL_BUILD_SITES),
     builtModuleIds: ['module-habitat', 'module-corridor', 'module-landing-pad'],
   },
@@ -568,7 +577,7 @@ export const createInitialState = (
     minimumOxygenHours: profile.balance.oxygenHours,
     waterDays: 9.4,
     foodDays: 8.7,
-    constructionStock: 14,
+    constructionStock: 30,
   },
   power: {
     solarGenerationKw: 24,

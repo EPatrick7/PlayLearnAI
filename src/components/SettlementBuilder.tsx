@@ -12,6 +12,7 @@ import {
   eraseAt,
   getWorkstationCells,
   isInConstructionBounds,
+  offsetStarterPoint,
   removeWorkstation,
   type ConstructionLayout,
   type ConstructionResult,
@@ -40,6 +41,7 @@ import {
 import { constructionSemanticEvaCells } from '../game/constructionHazards'
 import { findConstructionPath } from '../game/constructionPathfinding'
 import { canBeginOperations } from '../game/settlement'
+import { analyzeConstructionPressure } from '../game/pressureTopology'
 import { useColonyStore } from '../game/store'
 import type { Priority } from '../game/types'
 import { AgentLinkPanel, type AgentLinkStatus } from './AgentLinkPanel'
@@ -140,11 +142,11 @@ const toolName = (tool: ConstructionTool | null) => {
 }
 
 const instructionFor = (tool: ConstructionTool | null) => {
-  if (!tool) return 'Select · click or tap to inspect · drag open ground to move · wheel or pinch to zoom.'
-  if (tool === 'wall') return 'Wall blueprint · drag a one-tile line · middle/Space-drag or two-finger pan. Colonists build every tile.'
-  if (tool === 'door') return 'Pressure door · becomes an airlock at a room-to-vacuum boundary · stays a hatch between rooms.'
-  if (tool === 'erase') return 'Deconstruct order · click or drag built objects · middle/Space-drag or two-finger pan.'
-  return `${WORKSTATION_SPECS[tool].description} · click or tap to place · middle/Space-drag or touch-drag to move · rotate as needed.`
+  if (!tool) return 'Select: inspect tiles · drag to move · wheel or pinch to zoom.'
+  if (tool === 'wall') return 'Wall: drag a tile line. Colonists build each blueprint.'
+  if (tool === 'door') return 'Door: choose a wall tile. Exterior doors become airlocks.'
+  if (tool === 'erase') return 'Deconstruct: click or drag built objects.'
+  return `${WORKSTATION_SPECS[tool].label}: choose a tile; rotate if needed.`
 }
 
 const gestureFor = (tool: ConstructionTool) => (
@@ -350,7 +352,7 @@ export function SettlementBuilder({
   const [selectedTool, setSelectedTool] = useState<ConstructionTool | null>(null)
   const [toolActivationId, setToolActivationId] = useState(0)
   const [rotation, setRotation] = useState<WorkstationRotation>(0)
-  const [announcement, setAnnouncement] = useState('Build freely. Rooms are enclosed shapes with at least one door.')
+  const [announcement, setAnnouncement] = useState('Build freely. Rooms need walls and one door.')
   const [toastVisible, setToastVisible] = useState(false)
   const simulationSpeed = colony.settlement.constructionSpeed
   const constructionQueue = useMemo(() => buildConstructionQueue(constructionOrders, {
@@ -428,21 +430,28 @@ export function SettlementBuilder({
       .flatMap((workstation) => getWorkstationCells(workstation).map(pointKey)))
     return rooms.find((room) => (
       room.cells.some((cell) => starterWorkstationCells.has(pointKey(cell)))
-    ))?.id ?? roomIdByCell.get('5:9') ?? null
+    ))?.id
+      ?? roomIdByCell.get(pointKey(offsetStarterPoint({ x: 5, y: 9 })))
+      ?? roomIdByCell.get(pointKey({ x: 5, y: 9 }))
+      ?? null
   }, [layout.workstations, roomIdByCell, rooms])
   const inaccessibleExpansionRoom = rooms.find((room) => (
     room.id !== starterRoomId && !reachableRoomIds.has(room.id)
   )) ?? null
+  const reachableExpansionRoom = rooms.find((room) => (
+    room.id !== starterRoomId && reachableRoomIds.has(room.id)
+  )) ?? null
   const guideAccessDoorCell = useMemo(() => preferredExteriorDoorCell({
     layout,
     orders: constructionOrders,
-    room: inaccessibleExpansionRoom,
+    room: inaccessibleExpansionRoom ?? reachableExpansionRoom,
     stockpile: colony.settlement.constructionStockpile,
   }), [
     colony.settlement.constructionStockpile,
     constructionOrders,
     inaccessibleExpansionRoom,
     layout,
+    reachableExpansionRoom,
   ])
   const hasReachableExpansionRoom = rooms.some((room) => (
     room.id !== starterRoomId && reachableRoomIds.has(room.id)
@@ -470,6 +479,9 @@ export function SettlementBuilder({
       return cells.every((cell) => roomCells.has(pointKey(cell)))
     })
   }), [layout.workstations, reachableRoomIds, rooms])
+  const hasExteriorAirlock = useMemo(() => analyzeConstructionPressure(layout).doors.some((door) => (
+    door.role === 'exterior_airlock' && door.roomIds.length === 1
+  )), [layout])
   const firstShiftStep = colony.settlement.phase === 'operations'
     ? null
     : openOrders.length > 0
@@ -480,14 +492,16 @@ export function SettlementBuilder({
           ? 'access-door'
           : !hasReachableEnclosedLifeSupport
             ? 'life-support'
+            : !hasExteriorAirlock
+              ? 'access-door'
             : readyForShift
               ? 'ready'
               : 'building'
-  const semanticEvaCells = useMemo(() => constructionSemanticEvaCells(
-    colony.modules,
-    layout,
-    colony.lab.atmosphere,
-  ), [colony.lab.atmosphere, colony.modules, layout])
+  const semanticEvaCells = useMemo(() => (
+    colony.settlement.phase === 'operations'
+      ? constructionSemanticEvaCells(colony.modules, layout, colony.lab.atmosphere)
+      : []
+  ), [colony.lab.atmosphere, colony.modules, colony.settlement.phase, layout])
   const inspectionByCell = useMemo(() => buildMapInspection({
     width: layout.width,
     height: layout.height,
@@ -1258,41 +1272,41 @@ export function SettlementBuilder({
   const toolInstruction = selectedTool
     ? instructionFor(selectedTool)
     : buildOpen
-      ? 'Choose a designator, then place blueprints on the map. Colonists haul materials and build them.'
+      ? 'Choose a designator, then place it on the map.'
       : readyForShift
         ? 'Your first expansion is habitable. Begin the first shift when you are ready.'
       : instructionFor(null)
   const firstShiftGuide = firstShiftStep === 'room'
     ? {
-        ariaLabel: 'First shift: build second enclosed room with Wall designator',
-        compactTitle: 'Next · Wall',
-        detail: 'Next: Structure → Wall. Enclose a second room with one door.',
+        ariaLabel: 'Expand the habitat with the Wall designator',
+        compactTitle: 'Expand · Wall',
+        detail: 'Amina and Mateo are ready. Draw walls east of the existing door to enclose one new room.',
         icon: 'wall' as const,
-        title: `First shift · ${Math.min(rooms.length, 2)}/2 rooms`,
+        title: 'Expand the habitat',
       }
     : firstShiftStep === 'door'
       ? {
-          ariaLabel: 'Finish the second room with a Door designator',
-          compactTitle: 'Next · Door',
-          detail: 'Next: Structure → Door. Replace one wall tile in the closed shell.',
+          ariaLabel: 'Connect the new room with the Door designator',
+          compactTitle: 'Connect · Door',
+          detail: 'Replace the shared wall with a door so crew can enter.',
           icon: 'door' as const,
-          title: 'First shift · Add a door',
+          title: 'Connect the rooms',
         }
       : firstShiftStep === 'access-door'
         ? {
             ariaLabel: 'Add an exterior airlock for suited colonist access',
-            compactTitle: 'Access · Airlock',
-            detail: 'Next: add an exterior airlock beside open floor so suited colonists and material can reach the expansion.',
+            compactTitle: 'Add · Airlock',
+            detail: 'Place a door on an exterior wall for suited crew and cargo.',
             icon: 'door' as const,
-            title: 'First shift · Add exterior airlock',
+            title: 'Add an airlock',
           }
         : firstShiftStep === 'life-support'
           ? {
               ariaLabel: 'Place Life support inside an enclosed room',
               compactTitle: 'Life support',
-              detail: 'Next: Production → Life support inside an enclosed room.',
+              detail: 'Place Life Support inside the new enclosed room.',
               icon: 'lifeSupport' as const,
-              title: 'First shift · Add Life Support',
+              title: 'Make it habitable',
             }
       : firstShiftStep === 'building'
         ? {
@@ -1310,7 +1324,7 @@ export function SettlementBuilder({
           ? {
               ariaLabel: 'Begin first shift',
               compactTitle: 'Begin shift',
-              detail: 'Expansion habitable · exterior airlock online · begin the first shift.',
+            detail: 'The expansion is sealed, accessible, and ready for crew.',
               icon: 'play' as const,
               title: 'First shift ready',
             }
@@ -1375,7 +1389,7 @@ export function SettlementBuilder({
             aria-label={firstShiftGuide?.ariaLabel ?? (constructionQueue.length > 0
               ? `${constructionQueueOpen ? 'Close' : 'Open'} construction queue, ${constructionQueue.length} ${constructionQueue.length === 1 ? 'placement' : 'placements'}, ${openOrders.length} ${openOrders.length === 1 ? 'job' : 'jobs'}`
               : 'No construction jobs queued')}
-            className={`construction-job-summary construction-queue-trigger ${firstShiftStep ? `first-shift-${firstShiftStep}` : ''}`}
+            className={`construction-job-summary construction-queue-trigger ${constructionQueue.length === 0 && !firstShiftGuide ? 'queue-empty' : ''} ${firstShiftStep ? `first-shift-${firstShiftStep}` : ''}`}
             onClick={firstShiftGuide ? runFirstShiftStep : toggleConstructionQueue}
             ref={constructionQueueTriggerRef}
             type="button"
@@ -1398,7 +1412,7 @@ export function SettlementBuilder({
                 ? strongestQueueStatus?.activity ?? 'Waiting for a builder'
                 : constructionCompletionSummary ?? (selectedTool || buildOpen
                   ? toolInstruction
-                  : 'Colonists haul and build every placed blueprint.'))}</small>
+                  : 'Place one to begin.'))}</small>
               {firstShiftGuide && openOrders.length === 0 && (
                 <span className="sr-only">No blueprints.</span>
               )}
@@ -1433,7 +1447,7 @@ export function SettlementBuilder({
                 <span className="construction-queue-heading-icon"><GameIcon name="plan" /></span>
                 <span>
                   <strong id="construction-queue-title">Construction queue</strong>
-                  <small>Select a placement to inspect its next job</small>
+                  <small>Choose a placement to inspect</small>
                 </span>
                 <button aria-label="Close construction queue" onClick={() => closeConstructionQueue()} type="button">
                   <GameIcon name="close" />

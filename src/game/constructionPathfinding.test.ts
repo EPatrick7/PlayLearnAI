@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   createConstructionLayout,
+  LEGACY_CONSTRUCTION_GRID_HEIGHT,
+  LEGACY_CONSTRUCTION_GRID_WIDTH,
+  offsetStarterPoint,
   type BoundaryCell,
   type ConstructionLayout,
   type GridPoint,
@@ -24,6 +27,15 @@ const layoutWith = (
   ...createConstructionLayout(),
   boundaries,
   workstations,
+})
+
+const legacyLayoutWith = (
+  boundaries: BoundaryCell[] = [],
+  workstations: WorkstationPlacement[] = [],
+): ConstructionLayout => ({
+  ...layoutWith(boundaries, workstations),
+  width: LEGACY_CONSTRUCTION_GRID_WIDTH,
+  height: LEGACY_CONSTRUCTION_GRID_HEIGHT,
 })
 
 const rack = (
@@ -192,7 +204,7 @@ describe('construction pathfinding', () => {
       y: 1,
       kind: 'wall',
     }))
-    const layout = layoutWith(barrier)
+    const layout = legacyLayoutWith(barrier)
 
     expect(findConstructionPath(layout, { x: 0, y: 1 }, [{ x: 0, y: 2 }])).toBeNull()
     expect(findConstructionPath(layout, { x: 0, y: 0 }, [{ x: 0, y: 2 }])).toBeNull()
@@ -231,13 +243,13 @@ describe('construction pathfinding', () => {
 
   it('requires EVA and crosses the valid exterior airlock at a pressure boundary', () => {
     const layout = createStarterConstruction()
-    const start = { x: 6, y: 10 }
-    const exterior = { x: 8, y: 10 }
+    const start = offsetStarterPoint({ x: 6, y: 10 })
+    const exterior = offsetStarterPoint({ x: 8, y: 10 })
 
     expect(findConstructionPath(layout, start, [exterior], { hasEvaSuit: false }))
       .toBeNull()
     const suited = findConstructionPath(layout, start, [exterior], { hasEvaSuit: true })
-    expect(suited?.path).toContainEqual({ x: 7, y: 9 })
+    expect(suited?.path).toContainEqual(offsetStarterPoint({ x: 7, y: 9 }))
   })
 
   it('keeps an interior pressure door traversable without EVA', () => {
@@ -266,14 +278,15 @@ describe('construction pathfinding', () => {
 
   it('blocks a shell breach shortcut and routes suited return through the airlock', () => {
     const layout = createStarterConstruction()
+    const breach = offsetStarterPoint({ x: 7, y: 10 })
     layout.boundaries = layout.boundaries.filter((boundary) => (
-      boundary.x !== 7 || boundary.y !== 10
+      boundary.x !== breach.x || boundary.y !== breach.y
     ))
 
     const route = findConstructionPath(
       layout,
-      { x: 6, y: 10 },
-      [{ x: 8, y: 10 }],
+      offsetStarterPoint({ x: 6, y: 10 }),
+      [offsetStarterPoint({ x: 8, y: 10 })],
       { hasEvaSuit: true },
     )
     expect(route?.path).toEqual([
@@ -282,11 +295,11 @@ describe('construction pathfinding', () => {
       { x: 7, y: 9 },
       { x: 8, y: 9 },
       { x: 8, y: 10 },
-    ])
-    expect(route?.path).not.toContainEqual({ x: 7, y: 10 })
+    ].map(offsetStarterPoint))
+    expect(route?.path).not.toContainEqual(breach)
     expect(findConstructionPressureReturnPath(
       createStarterConstruction(),
-      { x: 8, y: 10 },
-    )?.path).toContainEqual({ x: 7, y: 9 })
+      offsetStarterPoint({ x: 8, y: 10 }),
+    )?.path).toContainEqual(offsetStarterPoint({ x: 7, y: 9 }))
   })
 })

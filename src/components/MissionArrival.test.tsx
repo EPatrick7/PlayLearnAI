@@ -3,18 +3,16 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MissionArrival, type MissionArrivalProps } from './MissionArrival'
 
-const ARRIVAL_STAGES = ['descent', 'touchdown', 'approach', 'airlock'] as const
+const ARRIVAL_STAGES = ['touchdown', 'emergency'] as const
 
 const TEST_TIMINGS: NonNullable<MissionArrivalProps['timings']> = {
-  descent: 100,
   touchdown: 100,
-  approach: 100,
-  airlock: 100,
+  emergency: 100,
 }
 
 const beginLanding = async () => {
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: /start landing/i }))
+    fireEvent.click(screen.getByRole('button', { name: /start new colony/i }))
     await Promise.resolve()
   })
 }
@@ -29,7 +27,7 @@ describe('MissionArrival', () => {
     vi.useRealTimers()
   })
 
-  it('holds on an explanatory briefing until the player explicitly starts', () => {
+  it('holds on a concise mission briefing until the player explicitly starts', () => {
     const onPrepareNewMission = vi.fn()
     const onComplete = vi.fn()
 
@@ -41,16 +39,18 @@ describe('MissionArrival', () => {
       />,
     )
 
-    expect(screen.getByRole('heading', { name: /land safely.*build deliberately/i })).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Ground → Plan → Supervise → Verify' })).toBeVisible()
-    expect(screen.getByText(/nothing starts on its own/i)).toBeVisible()
-    expect(screen.getByRole('button', { name: /start landing/i })).toBeEnabled()
+    expect(screen.getByRole('heading', { name: /build a home.*on the moon/i })).toBeVisible()
+    expect(screen.getByRole('complementary', { name: 'First shift' })).toHaveTextContent(
+      'Build a second room with an airlock and life support.',
+    )
+    expect(screen.getByText(/start with one habitat.*keep six crew safe/i)).toBeVisible()
+    expect(screen.getByRole('button', { name: /start new colony/i })).toBeEnabled()
 
     act(() => vi.advanceTimersByTime(60_000))
 
     expect(onPrepareNewMission).not.toHaveBeenCalled()
     expect(onComplete).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: /start landing/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /start new colony/i })).toBeEnabled()
   })
 
   it('prepares a fresh mission, stages the full suited arrival, and completes once', async () => {
@@ -67,8 +67,8 @@ describe('MissionArrival', () => {
     await beginLanding()
 
     expect(onPrepareNewMission).toHaveBeenCalledTimes(1)
-    expect(container.querySelector('.mission-arrival')).toHaveAttribute('data-arrival-stage', 'descent')
-    expect(screen.getByRole('img', { name: /powered descent active/i })).toBeVisible()
+    expect(container.querySelector('.mission-arrival')).toHaveAttribute('data-arrival-stage', 'touchdown')
+    expect(screen.getByRole('img', { name: /landed safely beside the starter habitat/i })).toBeVisible()
 
     for (const stage of ARRIVAL_STAGES.slice(1)) {
       act(() => vi.advanceTimersByTime(100))
@@ -76,7 +76,7 @@ describe('MissionArrival', () => {
     }
 
     expect(container.querySelectorAll('[data-pawn-suited="true"]')).toHaveLength(6)
-    expect(screen.getByRole('img', { name: /airlock is pressurizing/i })).toBeVisible()
+    expect(screen.getByRole('img', { name: /Amina and Mateo are starting a habitat expansion/i })).toBeVisible()
 
     act(() => vi.advanceTimersByTime(100))
 
@@ -99,7 +99,7 @@ describe('MissionArrival', () => {
     )
 
     await beginLanding()
-    fireEvent.click(screen.getByRole('button', { name: /skip arrival/i }))
+    fireEvent.click(screen.getByRole('button', { name: /skip intro/i }))
 
     expect(onComplete).toHaveBeenCalledWith({ kind: 'new', skipped: true })
 
@@ -115,13 +115,18 @@ describe('MissionArrival', () => {
         hasSavedMission
         onComplete={onComplete}
         onPrepareNewMission={onPrepareNewMission}
+        savedMissionDay={3}
+        savedMissionLabel="Complete the first expansion"
       />,
     )
 
-    expect(screen.getByRole('button', { name: /resume saved mission/i })).toBeVisible()
-    expect(screen.getByRole('button', { name: /start a new landing/i })).toBeVisible()
+    expect(screen.getByRole('button', { name: /continue mission/i })).toBeVisible()
+    expect(screen.getByRole('button', { name: /new colony/i })).toBeVisible()
+    expect(screen.getByRole('complementary', { name: /saved mission/i })).toHaveTextContent(
+      /continue · day 3.*complete the first expansion/i,
+    )
 
-    fireEvent.click(screen.getByRole('button', { name: /resume saved mission/i }))
+    fireEvent.click(screen.getByRole('button', { name: /continue mission/i }))
 
     expect(onPrepareNewMission).not.toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith({ kind: 'saved', skipped: false })
@@ -140,7 +145,7 @@ describe('MissionArrival', () => {
     await beginLanding()
 
     expect(screen.getByRole('alert')).toHaveTextContent(/navigation check failed/i)
-    expect(screen.getByRole('button', { name: /start landing/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /start new colony/i })).toBeEnabled()
     expect(screen.queryByTestId('arrival-scene')).not.toBeInTheDocument()
     expect(onComplete).not.toHaveBeenCalled()
   })

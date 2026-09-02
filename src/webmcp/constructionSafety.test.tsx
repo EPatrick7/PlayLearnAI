@@ -1,5 +1,6 @@
 import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CONSTRUCTION_GRID_HEIGHT, CONSTRUCTION_GRID_WIDTH } from '../game/construction'
 import { useColonyStore } from '../game/store'
 import { useWebMcpTools } from './registerTools'
 
@@ -335,14 +336,17 @@ describe('construction WebMCP host and mutation safety', () => {
       { ...wall, start: { x: 10.5, y: 1 } },
       { ...wall, start: { x: -1, y: 1 } },
       { ...wall, start: { x: Number.POSITIVE_INFINITY, y: 1 } },
-      { ...wall, end: { x: 24, y: 1 } },
-      { ...wall, end: { x: 10, y: 18 } },
+      { ...wall, end: { x: CONSTRUCTION_GRID_WIDTH, y: 1 } },
+      { ...wall, end: { x: 10, y: CONSTRUCTION_GRID_HEIGHT } },
       { ...wall, end: { x: 1e100, y: 1 } },
       { ...wall, kind: 'deconstruct', end: { x: 1e100, y: 1 } },
       { ...wall, unexpected: true },
       { ...workstation, workstationType: 'unknown' },
       { ...workstation, origin: null },
-      { ...workstation, origin: { x: 24, y: 18 } },
+      {
+        ...workstation,
+        origin: { x: CONSTRUCTION_GRID_WIDTH, y: CONSTRUCTION_GRID_HEIGHT },
+      },
       { ...workstation, rotation: 45 },
       { ...workstation, label: 42 },
       { ...workstation, workstationId: [] },

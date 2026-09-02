@@ -244,7 +244,10 @@ const constructionRoutingTopology = (
 export const normalizeConstructionStockpile = (
   layout: ConstructionLayout,
   requested: GridPoint | null | undefined,
-  fallback: GridPoint = { x: 8, y: 9 },
+  fallback: GridPoint = {
+    x: Math.floor(layout.width / 2),
+    y: Math.floor(layout.height / 2),
+  },
   transientBlockedCells: readonly GridPoint[] = [],
 ): GridPoint => {
   const topology = constructionRoutingTopology(layout, transientBlockedCells)

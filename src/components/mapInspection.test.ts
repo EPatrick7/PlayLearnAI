@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
   createConstructionLayout,
   getWorkstationCells,
+  offsetPresetPoint,
+  offsetStarterPoint,
+  type GridPoint,
   type WorkstationPlacement,
 } from '../game/construction'
 import type { ConstructionOrder } from '../game/constructionJobs'
@@ -23,6 +28,8 @@ const lifeSupport: WorkstationPlacement = {
   size: { width: 2, height: 2 },
   rotation: 0,
 }
+
+const pointKey = ({ x, y }: GridPoint) => `${x}:${y}`
 
 const workstationOrder = (
   status: ConstructionOrder['status'] = 'building',
@@ -89,18 +96,18 @@ describe('construction map inspection', () => {
       constructionLayout: deployed.settlement.layout,
     })
 
-    expect(tiles.get('7:9')).toMatchObject({
+    expect(tiles.get(pointKey(offsetPresetPoint({ x: 7, y: 9 })))).toMatchObject({
       surfaceKind: 'floor',
       surfaceLabel: 'Pressurized floor',
       atmosphere: 'yes',
     })
-    expect(tiles.get('16:6')).toMatchObject({
+    expect(tiles.get(pointKey(offsetPresetPoint({ x: 16, y: 6 })))).toMatchObject({
       surfaceKind: 'floor',
       surfaceLabel: 'Vacuum floor',
       atmosphere: 'no',
       moduleName: 'Kepler Laboratory',
     })
-    expect(tiles.get('19:11')).toMatchObject({
+    expect(tiles.get(pointKey(offsetPresetPoint({ x: 19, y: 11 })))).toMatchObject({
       surfaceKind: 'landing-pad',
       surfaceLabel: 'Landing pad',
       atmosphere: 'exterior',
@@ -110,10 +117,11 @@ describe('construction map inspection', () => {
 
   it('reports the central spine as vacuum when the breached lab is opened into it', () => {
     const [deployed] = deployPresetMoonbase(createInitialState())
+    const labSpineDoor = offsetPresetPoint({ x: 16, y: 8 })
     const layout = {
       ...deployed.settlement.layout,
       boundaries: deployed.settlement.layout.boundaries.filter(
-        (boundary) => boundary.x !== 16 || boundary.y !== 8,
+        (boundary) => boundary.x !== labSpineDoor.x || boundary.y !== labSpineDoor.y,
       ),
     }
     const evaRequiredCells = constructionSemanticEvaCells(
@@ -133,7 +141,7 @@ describe('construction map inspection', () => {
       evaRequiredCells,
     })
 
-    expect(tiles.get('13:9')).toMatchObject({
+    expect(tiles.get(pointKey(offsetPresetPoint({ x: 13, y: 9 })))).toMatchObject({
       surfaceLabel: 'Vacuum floor',
       atmosphere: 'no',
     })
@@ -221,7 +229,7 @@ describe('construction map inspection', () => {
       constructionLayout: layout,
     })
 
-    expect(tiles.get('4:9')).toMatchObject({
+    expect(tiles.get(pointKey(offsetStarterPoint({ x: 4, y: 9 })))).toMatchObject({
       surfaceLabel: 'Pressurized floor',
       surfaceDetail: 'Sealed player-built room',
       atmosphere: 'yes',
@@ -538,6 +546,6 @@ describe('construction map inspection', () => {
 
   it('ignores complete construction orders and remains backward compatible when omitted', () => {
     expect(inspection([workstationOrder('complete')]).get('5:4')?.contents).toEqual([])
-    expect(inspection().size).toBe(24 * 18)
+    expect(inspection().size).toBe(CONSTRUCTION_GRID_WIDTH * CONSTRUCTION_GRID_HEIGHT)
   })
 })

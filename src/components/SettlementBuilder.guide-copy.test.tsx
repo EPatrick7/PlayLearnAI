@@ -5,6 +5,7 @@ import {
   paintBoundaryCell,
   paintBoundaryLine,
   placeWorkstation,
+  offsetStarterPoint,
   type ConstructionLayout,
   type ConstructionResult,
   type GridPoint,
@@ -17,35 +18,37 @@ const layoutFrom = (result: ConstructionResult) => {
   return result.layout
 }
 
+const starterPoint = (x: number, y: number) => offsetStarterPoint({ x, y })
+
 const addSecondShell = (source: ConstructionLayout) => {
   let layout = layoutFrom(
-    paintBoundaryLine(source, { x: 9, y: 2 }, { x: 14, y: 2 }, 'wall'),
+    paintBoundaryLine(source, starterPoint(9, 2), starterPoint(14, 2), 'wall'),
   )
   layout = layoutFrom(
-    paintBoundaryLine(layout, { x: 14, y: 2 }, { x: 14, y: 7 }, 'wall'),
+    paintBoundaryLine(layout, starterPoint(14, 2), starterPoint(14, 7), 'wall'),
   )
   layout = layoutFrom(
-    paintBoundaryLine(layout, { x: 14, y: 7 }, { x: 9, y: 7 }, 'wall'),
+    paintBoundaryLine(layout, starterPoint(14, 7), starterPoint(9, 7), 'wall'),
   )
   layout = layoutFrom(
-    paintBoundaryLine(layout, { x: 9, y: 7 }, { x: 9, y: 2 }, 'wall'),
+    paintBoundaryLine(layout, starterPoint(9, 7), starterPoint(9, 2), 'wall'),
   )
   return layout
 }
 
 const addSecondRoom = (source: ConstructionLayout) => layoutFrom(
-  paintBoundaryCell(addSecondShell(source), { x: 10, y: 2 }, 'door'),
+  paintBoundaryCell(addSecondShell(source), starterPoint(10, 2), 'door'),
 )
 
 const addSharedDoorExpansion = (source: ConstructionLayout) => {
   let layout = layoutFrom(
-    paintBoundaryLine(source, { x: 7, y: 7 }, { x: 10, y: 7 }, 'wall'),
+    paintBoundaryLine(source, starterPoint(7, 7), starterPoint(10, 7), 'wall'),
   )
   layout = layoutFrom(
-    paintBoundaryLine(layout, { x: 10, y: 7 }, { x: 10, y: 11 }, 'wall'),
+    paintBoundaryLine(layout, starterPoint(10, 7), starterPoint(10, 11), 'wall'),
   )
   layout = layoutFrom(
-    paintBoundaryLine(layout, { x: 10, y: 11 }, { x: 7, y: 11 }, 'wall'),
+    paintBoundaryLine(layout, starterPoint(10, 11), starterPoint(7, 11), 'wall'),
   )
   return layout
 }
@@ -102,11 +105,10 @@ describe('SettlementBuilder first-shift guide', () => {
 
     const status = screen.getByRole('region', { name: 'Construction status' })
     const guide = within(status).getByRole('button', {
-      name: 'First shift: build second enclosed room with Wall designator',
+      name: 'Expand the habitat with the Wall designator',
     })
-    expect(guide).toHaveTextContent('First shift · 1/2 rooms')
-    expect(guide).toHaveTextContent('Structure → Wall')
-    expect(guide).toHaveTextContent('one door')
+    expect(guide).toHaveTextContent('Expand the habitat')
+    expect(guide).toHaveTextContent('Draw walls east of the existing door')
     expect(guide).not.toHaveAttribute('aria-expanded')
     expect(guide).not.toHaveAttribute('aria-haspopup')
 
@@ -124,8 +126,8 @@ describe('SettlementBuilder first-shift guide', () => {
     const guide = screen.getByRole('button', {
       name: 'Place Life support inside an enclosed room',
     })
-    expect(guide).toHaveTextContent('First shift · Add Life Support')
-    expect(guide).toHaveTextContent('Production → Life support')
+    expect(guide).toHaveTextContent('Make it habitable')
+    expect(guide).toHaveTextContent('Place Life Support inside the new enclosed room')
 
     fireEvent.click(guide)
 
@@ -143,13 +145,13 @@ describe('SettlementBuilder first-shift guide', () => {
         ...state.settlement,
         layout,
         constructionOrders: [],
-        constructionStockpile: { x: 12, y: 9 },
+        constructionStockpile: starterPoint(12, 9),
         constructionCrew: state.settlement.constructionCrew.map((position) => {
           if (position.crewId === 'crew-amina-okafor') {
-            return { ...position, cell: { x: 12, y: 8 } }
+            return { ...position, cell: starterPoint(12, 8) }
           }
           if (position.crewId === 'crew-mateo-alvarez') {
-            return { ...position, cell: { x: 12, y: 10 } }
+            return { ...position, cell: starterPoint(12, 10) }
           }
           return position
         }),
@@ -163,8 +165,8 @@ describe('SettlementBuilder first-shift guide', () => {
     const guide = screen.getByRole('button', {
       name: 'Add an exterior airlock for suited colonist access',
     })
-    expect(guide).toHaveTextContent('First shift · Add exterior airlock')
-    expect(guide).toHaveTextContent('colonists and material can reach')
+    expect(guide).toHaveTextContent('Add an airlock')
+    expect(guide).toHaveTextContent('suited crew and cargo')
 
     fireEvent.click(guide)
 
@@ -178,10 +180,10 @@ describe('SettlementBuilder first-shift guide', () => {
     render(<SettlementBuilder />)
 
     const guide = screen.getByRole('button', {
-      name: 'Finish the second room with a Door designator',
+      name: 'Connect the new room with the Door designator',
     })
-    expect(guide).toHaveTextContent('First shift · Add a door')
-    expect(guide).toHaveTextContent('Replace one wall tile')
+    expect(guide).toHaveTextContent('Connect the rooms')
+    expect(guide).toHaveTextContent('Replace the shared wall with a door')
 
     fireEvent.click(guide)
 
@@ -192,7 +194,7 @@ describe('SettlementBuilder first-shift guide', () => {
   it('prioritizes unfinished worker jobs and opens their existing queue', () => {
     const state = useColonyStore.getState()
     const queued = state.queueConstruction(
-      paintBoundaryCell(state.settlement.layout, { x: 9, y: 6 }, 'wall'),
+      paintBoundaryCell(state.settlement.layout, starterPoint(9, 6), 'wall'),
     )
     expect(queued.ok).toBe(true)
     render(<SettlementBuilder />)
@@ -214,7 +216,7 @@ describe('SettlementBuilder first-shift guide', () => {
       id: 'guide-life-support',
       type: 'life-support',
       label: 'Life support',
-      origin: { x: 12, y: 3 },
+      origin: starterPoint(12, 3),
       size: { width: 2, height: 2 },
       rotation: 0,
     }))
@@ -223,7 +225,7 @@ describe('SettlementBuilder first-shift guide', () => {
 
     const guide = screen.getByRole('button', { name: 'Begin first shift' })
     expect(guide).toHaveTextContent('First shift ready')
-    expect(guide).toHaveTextContent('Expansion habitable')
+    expect(guide).toHaveTextContent('sealed, accessible, and ready for crew')
 
     const promotion = screen.getByRole('region', { name: 'Begin the first shift' })
     expect(promotion).toHaveTextContent('2 rooms')
@@ -242,7 +244,7 @@ describe('SettlementBuilder first-shift guide', () => {
       id: 'outdoor-life-support',
       type: 'life-support',
       label: 'Outdoor life support',
-      origin: { x: 18, y: 2 },
+      origin: starterPoint(18, 2),
       size: { width: 2, height: 2 },
       rotation: 0,
     }))
@@ -262,7 +264,7 @@ describe('SettlementBuilder Copy action', () => {
     render(<SettlementBuilder onConstructionQueued={onConstructionQueued} />)
     const layoutBefore = useColonyStore.getState().settlement.layout
     const revisionBefore = useColonyStore.getState().worldRevision
-    pointAtCell({ x: 3, y: 7 })
+    pointAtCell(starterPoint(3, 7))
 
     const inspector = screen.getByRole('region', { name: 'Composite wall inspector' })
     const copyAction = within(inspector).getByRole('button', { name: 'Copy' })
@@ -277,19 +279,19 @@ describe('SettlementBuilder Copy action', () => {
     expect(onConstructionQueued).not.toHaveBeenCalled()
     await waitFor(() => expect(constructionMap()).toHaveFocus())
 
-    pointAtCell({ x: 9, y: 6 }, 82)
+    pointAtCell(starterPoint(9, 6), 82)
 
     expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(1)
     expect(onConstructionQueued).toHaveBeenCalledOnce()
     expect(useColonyStore.getState().settlement.constructionOrders[0]).toMatchObject({
-      target: { kind: 'boundary', construct: { x: 9, y: 6, kind: 'wall' } },
+      target: { kind: 'boundary', construct: { ...starterPoint(9, 6), kind: 'wall' } },
     })
     expect(screen.getByRole('button', { name: 'Return to Select mode from Wall' })).toBeVisible()
   })
 
   it('copies the built door without creating a replacement blueprint', () => {
     render(<SettlementBuilder />)
-    pointAtCell({ x: 7, y: 9 })
+    pointAtCell(starterPoint(7, 9))
 
     const inspector = screen.getByRole('region', { name: 'Exterior airlock inspector' })
     fireEvent.click(within(inspector).getByRole('button', { name: 'Copy' }))
@@ -309,7 +311,7 @@ describe('SettlementBuilder Copy action', () => {
       )),
     })
     render(<SettlementBuilder />)
-    pointAtCell({ x: 4, y: 8 })
+    pointAtCell(starterPoint(4, 8))
 
     const inspector = screen.getByRole('region', { name: 'Amina bunk inspector' })
     fireEvent.click(within(inspector).getByRole('button', { name: 'Copy' }))
@@ -318,7 +320,7 @@ describe('SettlementBuilder Copy action', () => {
     expect(screen.getByRole('button', { name: 'Rotate Bunk bed to 180°' })).toBeVisible()
     expect(useColonyStore.getState().settlement.constructionOrders).toHaveLength(0)
 
-    pointAtCell({ x: 4, y: 9 }, 83)
+    pointAtCell(starterPoint(4, 9), 83)
 
     expect(useColonyStore.getState().settlement.constructionOrders).toContainEqual(
       expect.objectContaining({

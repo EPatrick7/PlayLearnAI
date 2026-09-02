@@ -1,7 +1,13 @@
 import '@testing-library/jest-dom/vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { getWorkstationCells, type WorkstationPlacement } from '../game/construction'
+import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
+  getWorkstationCells,
+  offsetPresetPoint,
+  type WorkstationPlacement,
+} from '../game/construction'
 import type { ConstructionOrder } from '../game/constructionJobs'
 import {
   generateLunarTerrain,
@@ -12,7 +18,7 @@ import { createInitialState } from '../game/seed'
 import { deployPresetMoonbase } from '../game/settlement'
 import { MoonbaseMap, type MoonbaseMapProps } from './MoonbaseMap'
 
-const wallCell = { x: 17, y: 12 }
+const wallCell = { x: CONSTRUCTION_GRID_WIDTH - 10, y: CONSTRUCTION_GRID_HEIGHT - 7 }
 const bunk: WorkstationPlacement = {
   id: 'operations-bunk',
   type: 'bed',
@@ -115,8 +121,8 @@ const renderMap = (overrides: Partial<MoonbaseMapProps> = {}) => {
 }
 
 const terrainSignature = (seed: number) => lunarTerrainFeatures(generateLunarTerrain({
-  width: 24,
-  height: 18,
+  width: CONSTRUCTION_GRID_WIDTH,
+  height: CONSTRUCTION_GRID_HEIGHT,
   seed,
 })).map((feature) => [
   feature.kind,
@@ -137,25 +143,33 @@ describe('lunar terrain generation', () => {
   })
 
   it('keeps features in bounds at a restrained density', () => {
-    const terrain = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
+    const terrain = generateLunarTerrain({
+      width: CONSTRUCTION_GRID_WIDTH,
+      height: CONSTRUCTION_GRID_HEIGHT,
+      seed: 240826,
+    })
     const features = lunarTerrainFeatures(terrain)
 
     expect(terrain.mountains.length).toBeGreaterThanOrEqual(24)
-    expect(terrain.mountains.length).toBeLessThanOrEqual(32)
+    expect(terrain.mountains.length).toBeLessThanOrEqual(40)
     expect(terrain.boulders.length).toBeGreaterThanOrEqual(4)
     expect(terrain.boulders.length).toBeLessThanOrEqual(12)
-    expect((terrain.mountains.length + terrain.boulders.length) / (24 * 18))
-      .toBeGreaterThanOrEqual(0.05)
-    expect((terrain.mountains.length + terrain.boulders.length) / (24 * 18))
-      .toBeLessThanOrEqual(0.11)
+    expect(
+      (terrain.mountains.length + terrain.boulders.length) /
+      (CONSTRUCTION_GRID_WIDTH * CONSTRUCTION_GRID_HEIGHT),
+    ).toBeGreaterThanOrEqual(0.03)
+    expect(
+      (terrain.mountains.length + terrain.boulders.length) /
+      (CONSTRUCTION_GRID_WIDTH * CONSTRUCTION_GRID_HEIGHT),
+    ).toBeLessThanOrEqual(0.08)
     expect(features.length).toBeGreaterThanOrEqual(46)
     expect(features.length).toBeLessThanOrEqual(72)
     features.forEach((feature) => {
       expect(Number.isInteger(feature.x) && Number.isInteger(feature.y)).toBe(true)
       expect(feature.x).toBeGreaterThanOrEqual(0)
       expect(feature.y).toBeGreaterThanOrEqual(0)
-      expect(feature.x + feature.width).toBeLessThanOrEqual(24)
-      expect(feature.y + feature.height).toBeLessThanOrEqual(18)
+      expect(feature.x + feature.width).toBeLessThanOrEqual(CONSTRUCTION_GRID_WIDTH)
+      expect(feature.y + feature.height).toBeLessThanOrEqual(CONSTRUCTION_GRID_HEIGHT)
       expect(feature.variant).toBeGreaterThanOrEqual(0)
       expect(feature.variant).toBeLessThanOrEqual(3)
     })
@@ -177,7 +191,11 @@ describe('lunar terrain generation', () => {
   })
 
   it('does not overlap physical feature footprints', () => {
-    const terrain = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
+    const terrain = generateLunarTerrain({
+      width: CONSTRUCTION_GRID_WIDTH,
+      height: CONSTRUCTION_GRID_HEIGHT,
+      seed: 240826,
+    })
     const occupied = new Set<string>()
     ;[
       ...terrain.mountains,
@@ -199,7 +217,11 @@ describe('lunar terrain generation', () => {
 
   it('joins mountain walls while keeping individual boulders separate', () => {
     ;[0, 1, 240826, 240827, -17].forEach((seed) => {
-      const terrain = generateLunarTerrain({ width: 24, height: 18, seed })
+      const terrain = generateLunarTerrain({
+        width: CONSTRUCTION_GRID_WIDTH,
+        height: CONSTRUCTION_GRID_HEIGHT,
+        seed,
+      })
       const mountainKeys = new Set(terrain.mountains.map((feature) => `${feature.x}:${feature.y}`))
       const rockKeys = new Set([
         ...mountainKeys,
@@ -216,14 +238,22 @@ describe('lunar terrain generation', () => {
         expect(feature.height).toBe(1)
         expect(feature.neighborMask).toBe(expectedMask)
         expect(feature.neighborMask).toBeGreaterThan(0)
-        expect(isLunarTerrainQuietCell(feature, 24, 18)).toBe(false)
+        expect(isLunarTerrainQuietCell(
+          feature,
+          CONSTRUCTION_GRID_WIDTH,
+          CONSTRUCTION_GRID_HEIGHT,
+        )).toBe(false)
       })
 
       terrain.boulders.forEach((feature) => {
         expect(feature.width).toBe(1)
         expect(feature.height).toBe(1)
         expect(feature.neighborMask).toBeUndefined()
-        expect(isLunarTerrainQuietCell(feature, 24, 18)).toBe(false)
+        expect(isLunarTerrainQuietCell(
+          feature,
+          CONSTRUCTION_GRID_WIDTH,
+          CONSTRUCTION_GRID_HEIGHT,
+        )).toBe(false)
         for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
           for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
             if (offsetX === 0 && offsetY === 0) continue
@@ -243,24 +273,32 @@ describe('MoonbaseMap live construction layer', () => {
     expect(container.querySelectorAll('[data-tile-kind="landing-pad"]')).not.toHaveLength(0)
   })
 
-  it('keeps seeded terrain stable and separate from the 24 by 18 inspection grid', () => {
+  it('keeps seeded terrain stable and separate from the expanded inspection grid', () => {
     const view = renderMap({ terrainSeed: 240826 })
     const terrain = () => view.container.querySelector<HTMLElement>('.lunar-terrain')
     const signature = () => terrain()?.dataset.terrainSignature
-    const generated = generateLunarTerrain({ width: 24, height: 18, seed: 240826 })
+    const generated = generateLunarTerrain({
+      width: CONSTRUCTION_GRID_WIDTH,
+      height: CONSTRUCTION_GRID_HEIGHT,
+      seed: 240826,
+    })
 
     const initialSignature = signature()
     expect(Number(terrain()?.dataset.terrainFeatureCount)).toBeGreaterThanOrEqual(46)
     expect(Number(terrain()?.dataset.terrainMountainCount)).toBe(generated.mountains.length)
     expect(Number(terrain()?.dataset.terrainBoulderCount)).toBe(generated.boulders.length)
-    expect(view.container.querySelectorAll('[data-map-cell]')).toHaveLength(24 * 18)
+    expect(view.container.querySelectorAll('[data-map-cell]')).toHaveLength(
+      CONSTRUCTION_GRID_WIDTH * CONSTRUCTION_GRID_HEIGHT,
+    )
     expect(terrain()).toHaveAttribute('aria-hidden', 'true')
     expect(terrain()).not.toHaveAttribute('data-map-cell')
     expect(terrain()?.style.backgroundImage).toContain('data:image/svg+xml')
 
     view.rerender(<MoonbaseMap {...view.props} dustActive />)
     expect(signature()).toBe(initialSignature)
-    expect(view.container.querySelectorAll('[data-map-cell]')).toHaveLength(24 * 18)
+    expect(view.container.querySelectorAll('[data-map-cell]')).toHaveLength(
+      CONSTRUCTION_GRID_WIDTH * CONSTRUCTION_GRID_HEIGHT,
+    )
 
     view.rerender(<MoonbaseMap {...view.props} terrainSeed={240827} />)
     expect(signature()).not.toBe(initialSignature)
@@ -309,7 +347,7 @@ describe('MoonbaseMap live construction layer', () => {
         },
         {
           crewId: unassignedCrew.id,
-          cell: { x: 23, y: 17 },
+          cell: { x: CONSTRUCTION_GRID_WIDTH - 1, y: CONSTRUCTION_GRID_HEIGHT - 1 },
           moveCredit: 0,
         },
       ],
@@ -320,8 +358,8 @@ describe('MoonbaseMap live construction layer', () => {
     const builder = screen.getByRole('button', {
       name: /select amina okafor.*walking to site.*carrying 2 construction material/i,
     })
-    expect(builder).toHaveAttribute('data-grid-x', '17')
-    expect(builder).toHaveAttribute('data-grid-y', '12')
+    expect(builder).toHaveAttribute('data-grid-x', String(wallCell.x))
+    expect(builder).toHaveAttribute('data-grid-y', String(wallCell.y))
     expect(builder).toHaveAttribute('data-construction-worker-state', 'walking-to-site')
     expect(builder).toHaveAttribute('data-order-id', order.id)
     expect(builder).toHaveAttribute('data-crew-breathing', 'unsafe')
@@ -333,11 +371,13 @@ describe('MoonbaseMap live construction layer', () => {
     expect(builder.querySelector('.operations-worker-cargo')).toHaveTextContent('2')
 
     const unassigned = screen.getByRole('button', { name: new RegExp(`select ${unassignedCrew.name}`, 'i') })
-    expect(unassigned).not.toHaveAttribute('data-grid-x', '23')
-    expect(unassigned).not.toHaveAttribute('data-grid-y', '17')
+    expect(unassigned).not.toHaveAttribute('data-grid-x', String(CONSTRUCTION_GRID_WIDTH - 1))
+    expect(unassigned).not.toHaveAttribute('data-grid-y', String(CONSTRUCTION_GRID_HEIGHT - 1))
     expect(unassigned).not.toHaveAttribute('data-construction-worker-id')
 
-    expect(container.querySelector('[data-grid-x="17"][data-grid-y="12"].tile-stack-trigger'))
+    expect(container.querySelector(
+      `[data-grid-x="${wallCell.x}"][data-grid-y="${wallCell.y}"].tile-stack-trigger`,
+    ))
       .toHaveAccessibleName(/amina okafor, wall blueprint/i)
 
     fireEvent.click(builder)
@@ -389,10 +429,13 @@ describe('MoonbaseMap live construction layer', () => {
   })
 
   it('does not use a stale construction coordinate to expose an idle indoor colonist', () => {
-    const state = createInitialState()
+    const [state] = deployPresetMoonbase(createInitialState())
     const amina = state.crew[0]
     renderMap({
+      modules: state.modules,
       crew: [amina],
+      plan: state.operationsPlan,
+      constructionLayout: state.settlement.layout,
       constructionCrew: [{
         crewId: amina.id,
         cell: wallCell,
@@ -458,10 +501,11 @@ describe('MoonbaseMap live construction layer', () => {
 
   it('marks an idle corridor colonist unsafe when a breached lab vents the room', () => {
     const [deployed] = deployPresetMoonbase(createInitialState())
+    const breachedBoundary = offsetPresetPoint({ x: 16, y: 8 })
     const layout = {
       ...deployed.settlement.layout,
       boundaries: deployed.settlement.layout.boundaries.filter(
-        (boundary) => boundary.x !== 16 || boundary.y !== 8,
+        (boundary) => boundary.x !== breachedBoundary.x || boundary.y !== breachedBoundary.y,
       ),
     }
     const amina = { ...deployed.crew[0], location: 'corridor' as const }
@@ -472,7 +516,11 @@ describe('MoonbaseMap live construction layer', () => {
       workOrders: [],
       plan: deployed.operationsPlan,
       constructionLayout: layout,
-      constructionCrew: [{ crewId: amina.id, cell: { x: 13, y: 9 }, moveCredit: 0 }],
+      constructionCrew: [{
+        crewId: amina.id,
+        cell: offsetPresetPoint({ x: 13, y: 9 }),
+        moveCredit: 0,
+      }],
     })
 
     const marker = screen.getByRole('button', { name: /select amina okafor/i })

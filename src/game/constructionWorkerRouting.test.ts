@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   createConstructionLayout,
+  LEGACY_CONSTRUCTION_GRID_HEIGHT,
+  LEGACY_CONSTRUCTION_GRID_WIDTH,
+  offsetStarterPoint,
   type BoundaryCell,
   type ConstructionLayout,
   type GridPoint,
@@ -24,6 +27,15 @@ const layoutWith = (
   ...createConstructionLayout(),
   boundaries,
   workstations,
+})
+
+const legacyLayoutWith = (
+  boundaries: BoundaryCell[] = [],
+  workstations: WorkstationPlacement[] = [],
+): ConstructionLayout => ({
+  ...layoutWith(boundaries, workstations),
+  width: LEGACY_CONSTRUCTION_GRID_WIDTH,
+  height: LEGACY_CONSTRUCTION_GRID_HEIGHT,
 })
 
 const wallOrder = (
@@ -539,7 +551,7 @@ describe('construction worker routing', () => {
       kind: 'wall',
     }))
     const result = advanceConstructionWorkerRouting({
-      layout: layoutWith(barrier),
+      layout: legacyLayoutWith(barrier),
       orders: [wallOrder('wall', { x: 5, y: 4 }, {
         status: 'building',
         materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
@@ -594,7 +606,7 @@ describe('construction worker routing', () => {
       materials: { required: 1, reserved: 0, delivered: 1, recoverable: 0 },
     })
     const result = route(
-      layoutWith(barrier),
+      legacyLayoutWith(barrier),
       [order],
       [{ crewId: 'builder', cell: { x: 1, y: 1 }, moveCredit: 0 }],
       1,
@@ -607,7 +619,7 @@ describe('construction worker routing', () => {
     })
     expect(result.atSiteWorkers).toEqual([])
 
-    const opened = layoutWith(barrier.map((cell) =>
+    const opened = legacyLayoutWith(barrier.map((cell) =>
       cell.x === 1 ? { ...cell, kind: 'door' as const } : cell,
     ))
     const retried = route(opened, result.orders, result.crewPositions, 3)
@@ -665,12 +677,16 @@ describe('construction worker routing', () => {
 
   it('distinguishes an exterior order that is reachable only with EVA', () => {
     const layout = createStarterConstruction()
-    const order = wallOrder('exterior-wall', { x: 10, y: 10 })
+    const order = wallOrder('exterior-wall', offsetStarterPoint({ x: 10, y: 10 }))
     const input = {
       layout,
       orders: [order],
-      crewPositions: [{ crewId: 'builder', cell: { x: 6, y: 10 }, moveCredit: 0 }],
-      stockpile: { x: 8, y: 9 },
+      crewPositions: [{
+        crewId: 'builder',
+        cell: offsetStarterPoint({ x: 6, y: 10 }),
+        moveCredit: 0,
+      }],
+      stockpile: offsetStarterPoint({ x: 8, y: 9 }),
       elapsed: 0,
     }
     const unsuited = advanceConstructionWorkerRouting({
@@ -692,25 +708,26 @@ describe('construction worker routing', () => {
 
   it('returns an idle suited worker from vacuum through the exterior airlock', () => {
     const layout = createStarterConstruction()
-    const start = [{ crewId: 'builder', cell: { x: 8, y: 10 }, moveCredit: 0 }]
+    const exterior = offsetStarterPoint({ x: 8, y: 10 })
+    const start = [{ crewId: 'builder', cell: exterior, moveCredit: 0 }]
     const suited = advanceConstructionWorkerRouting({
       layout,
       orders: [],
       crewPositions: start,
       workers: [{ id: 'builder', hasEvaSuit: true, movementRate: 1 }],
-      stockpile: { x: 8, y: 9 },
+      stockpile: offsetStarterPoint({ x: 8, y: 9 }),
       elapsed: 3,
     })
-    expect(suited.crewPositions[0].cell).toEqual({ x: 6, y: 9 })
+    expect(suited.crewPositions[0].cell).toEqual(offsetStarterPoint({ x: 6, y: 9 }))
 
     const unsuited = advanceConstructionWorkerRouting({
       layout,
       orders: [],
       crewPositions: start,
       workers: [{ id: 'builder', hasEvaSuit: false, movementRate: 1 }],
-      stockpile: { x: 8, y: 9 },
+      stockpile: offsetStarterPoint({ x: 8, y: 9 }),
       elapsed: 3,
     })
-    expect(unsuited.crewPositions[0].cell).toEqual({ x: 8, y: 10 })
+    expect(unsuited.crewPositions[0].cell).toEqual(exterior)
   })
 })

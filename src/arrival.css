@@ -642,7 +642,7 @@
 .mission-arrival--cutscene {
   position: relative;
   display: grid;
-  grid-template-rows: 72px minmax(0, 1fr) auto;
+  grid-template-rows: 72px minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -816,6 +816,21 @@
   width: 24%;
   height: 43%;
   clip-path: polygon(12% 0, 88% 0, 100% 26%, 100% 100%, 0 100%, 0 26%);
+}
+
+.arrival-base--starter .arrival-base__module--life,
+.arrival-base--starter .arrival-base__module--stores,
+.arrival-base--starter .arrival-base__corridor {
+  display: none;
+}
+
+.arrival-base--starter .arrival-base__module--habitat {
+  left: 25%;
+  width: 50%;
+}
+
+.arrival-base--starter .arrival-base__airlock {
+  right: 17%;
 }
 
 .arrival-base__module .game-icon { width: 22px; height: 22px; color: #313a37; }
@@ -1197,6 +1212,27 @@
 
 .arrival-scene__telemetry strong { color: #a9c4b8; font-size: 7px; }
 
+.arrival-scene__mission {
+  position: absolute;
+  z-index: 11;
+  left: clamp(16px, 4vw, 64px);
+  top: clamp(18px, 4vh, 48px);
+  min-width: 190px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #d9ddca;
+  border: 1px solid rgba(143, 198, 197, 0.34);
+  background: rgba(14, 19, 17, 0.84);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+}
+
+.arrival-scene__mission .game-icon { width: 20px; height: 20px; color: var(--arrival-blue); }
+.arrival-scene__mission span { display: grid; gap: 3px; }
+.arrival-scene__mission small { color: #939f91; font: 700 7px/1 var(--font-readout, monospace); letter-spacing: 0.11em; text-transform: uppercase; }
+.arrival-scene__mission strong { font: 800 13px/1.1 var(--font-condensed, sans-serif); }
+
 .arrival-cutscene__caption {
   position: absolute;
   z-index: 10;
@@ -1422,7 +1458,7 @@
   .arrival-loop li:nth-child(2) .arrival-loop__arrow { display: none; }
   .arrival-loop li:nth-child(3) { border-top: 0; }
 
-  .mission-arrival--cutscene { grid-template-rows: 60px minmax(0, 1fr) 66px; }
+  .mission-arrival--cutscene { grid-template-rows: 60px minmax(0, 1fr); }
   .arrival-cutscene__header .arrival-brand small { display: none; }
 
   .arrival-cutscene__counter {
@@ -1449,6 +1485,9 @@
   .arrival-base__corridor--right { right: 28%; }
   .arrival-base__module--stores { right: 6%; width: 28%; }
   .arrival-base__airlock { right: -1%; }
+  .arrival-base--starter .arrival-base__module--habitat { left: 18%; width: 64%; }
+  .arrival-base--starter .arrival-base__airlock { right: 6%; }
+  .arrival-scene__mission { left: 14px; top: 16px; min-width: 0; }
 
   .arrival-lander {
     left: 23%;

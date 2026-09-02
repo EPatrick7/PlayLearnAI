@@ -39,24 +39,24 @@ const statusContent: Record<AgentLinkStatus, {
   summary: string
 }> = {
   ready: {
-    badge: 'Access ready',
-    title: 'Agent access ready',
-    summary: 'This browser can share the live mission with an agent. Nothing changes until you ask in the Codex task and review its proposal here.',
+    badge: 'Ready',
+    title: 'Agent ready',
+    summary: 'Ask Codex to inspect or propose changes. You approve plans before time advances.',
   },
   registering: {
-    badge: 'Setting up',
-    title: 'Setting up agent access',
-    summary: 'The page is checking whether this browser can make the live mission available to an agent.',
+    badge: 'Connecting…',
+    title: 'Connecting agent',
+    summary: 'You can keep playing while the connection finishes.',
   },
   unavailable: {
-    badge: 'Manual only',
-    title: 'Agent access unavailable',
-    summary: 'This browser cannot offer the live mission to an agent here. You can still play everything by hand.',
+    badge: 'Manual play',
+    title: 'Manual play',
+    summary: 'Agent access is not available in this browser.',
   },
   error: {
-    badge: 'Access error',
-    title: 'Agent access error',
-    summary: 'Agent access did not finish setting up. Your mission and manual controls are still intact.',
+    badge: 'Offline',
+    title: 'Agent connection failed',
+    summary: 'Your mission is safe. Play manually or reload.',
   },
 }
 
@@ -70,34 +70,11 @@ const phasePrompts: Record<AgentLinkSettlementPhase, string> = {
 }
 
 const operationsPrompts = {
-  ground: 'Inspect the incident, dependencies, crew, gear, oxygen, and power. Explain the evidence. Do not change anything yet.',
-  plan: 'Based on the evidence, stage the smallest safe response that achieves the objective. Do not commit it. Show me the assignments, safeguards, and validation issues to review.',
-  supervise: 'Advance one hour, then explain what changed and whether we should continue, pause, or revise the plan.',
-  verify: 'Compare the fresh outcome with the declared objective and constraints. Show any residual risks.',
+  ground: 'Inspect this incident and explain the main risks. Do not change anything.',
+  plan: 'Stage a safe plan for review. Do not commit it.',
+  supervise: 'Advance 1 hour, then summarize what changed.',
+  verify: 'Check the outcome and list remaining risks.',
 } as const
-
-const connectionSteps: Record<AgentLinkStatus, string[]> = {
-  ready: [
-    'Keep this game open in the same built-in browser tab.',
-    'Paste the suggested prompt into the Codex task beside this browser.',
-    'Review every proposed change here before advancing the mission.',
-  ],
-  registering: [
-    'Keep this page open while the connection finishes.',
-    'If it stays here, reload the page once.',
-    'You can continue playing by hand while you wait.',
-  ],
-  unavailable: [
-    'Open this game in the built-in browser in the latest desktop app.',
-    'Use GPT-5.6 Sol or GPT-5.6 Terra; Luna does not currently support Site tools.',
-    'Reload the game. No separate MCP server, plugin, or API key is needed.',
-  ],
-  error: [
-    'Reload this game in the built-in browser.',
-    'Use GPT-5.6 Sol or GPT-5.6 Terra in the latest desktop app.',
-    'If it still fails, keep playing by hand; the saved mission is unaffected.',
-  ],
-}
 
 const calculatePlacement = (trigger: HTMLButtonElement | null): PanelPlacement => {
   const viewportWidth = window.innerWidth
@@ -155,7 +132,6 @@ export function AgentLinkPanel({
   const firstPrompt = settlementPhase === 'operations'
     ? operationsPrompts[learningPhase]
     : phasePrompts[settlementPhase]
-  const steps = connectionSteps[status]
 
   const copyPrompt = async () => {
     try {
@@ -282,13 +258,6 @@ export function AgentLinkPanel({
         </span>
       </div>
 
-      <section className="agent-link-setup" aria-label="Agent connection steps">
-        <span className="agent-link-eyebrow">{status === 'ready' ? 'Play together' : 'Connect'}</span>
-        <ol>
-          {steps.map((step) => <li key={step}>{step}</li>)}
-        </ol>
-      </section>
-
       {status === 'ready' && (
         <div className="agent-link-capability">
           <span className="agent-link-capability-heading">
@@ -297,13 +266,9 @@ export function AgentLinkPanel({
               {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy prompt'}
             </button>
           </span>
-          <p>“{firstPrompt}”</p>
+          <p>{firstPrompt}</p>
         </div>
       )}
-
-      <p className="agent-link-footnote">
-        The agent works in this same live game. Its actions appear here, and you can keep using the manual controls.
-      </p>
     </section>
   ), document.body) : null
 

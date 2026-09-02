@@ -22,3 +22,4 @@ coverage/
 *.log
 npm-debug.log*
 vercel_token.secret
+/docs/screenshots

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
   cellsOnConstructionLine,
   createConstructionLayout,
   detectRooms,
@@ -45,7 +47,7 @@ describe('freeform boundary painting', () => {
     expect(isConstructionLayout({ ...valid, boundaries: undefined })).toBe(false)
     expect(isConstructionLayout({
       ...valid,
-      boundaries: [{ x: 24, y: 2, kind: 'wall' }],
+      boundaries: [{ x: CONSTRUCTION_GRID_WIDTH, y: 2, kind: 'wall' }],
     })).toBe(false)
     expect(isConstructionLayout({
       ...valid,
@@ -126,11 +128,16 @@ describe('freeform boundary painting', () => {
 
   it('validates whole strokes atomically and erases along the same snapped line', () => {
     const initial = createConstructionLayout()
-    const rejected = paintBoundaryLine(initial, { x: 20, y: 6 }, { x: 28, y: 7 }, 'wall')
+    const rejected = paintBoundaryLine(
+      initial,
+      { x: CONSTRUCTION_GRID_WIDTH - 4, y: 6 },
+      { x: CONSTRUCTION_GRID_WIDTH + 4, y: 7 },
+      'wall',
+    )
     expect(rejected).toMatchObject({
       ok: false,
       code: 'out_of_bounds',
-      conflictingCell: { x: 24, y: 6 },
+      conflictingCell: { x: CONSTRUCTION_GRID_WIDTH, y: 6 },
     })
     expect(rejected.layout).toBe(initial)
     expect(initial.boundaries).toEqual([])
@@ -226,7 +233,10 @@ describe('free-standing workstation placement', () => {
     const outOfBounds = placeWorkstation(layout, {
       id: 'rack-edge',
       type: 'storage_rack',
-      origin: { x: 23, y: 17 },
+      origin: {
+        x: CONSTRUCTION_GRID_WIDTH - 1,
+        y: CONSTRUCTION_GRID_HEIGHT - 1,
+      },
       size: { width: 2, height: 2 },
     })
     expect(outOfBounds).toMatchObject({ ok: false, code: 'out_of_bounds' })

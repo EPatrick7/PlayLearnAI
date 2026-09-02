@@ -8,7 +8,11 @@ import {
   nextIncidentSeed,
 } from './seed'
 import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
   isConstructionLayout,
+  LEGACY_CONSTRUCTION_GRID_HEIGHT,
+  LEGACY_CONSTRUCTION_GRID_WIDTH,
   type ConstructionResult,
   type GridPoint,
 } from './construction'
@@ -89,7 +93,8 @@ type InteractiveActor = 'manual' | 'agent'
 
 const PHASE_SAFE_PERSISTENCE_VERSION = 10
 const RUN_ID_PERSISTENCE_VERSION = 12
-const PERSISTENCE_VERSION = 14
+const MAP_EXPANSION_PERSISTENCE_VERSION = 15
+const PERSISTENCE_VERSION = MAP_EXPANSION_PERSISTENCE_VERSION
 const EVA_SAFE_PERSISTENCE_VERSION = 13
 
 const isCrewCollection = (value: unknown): value is MoonbaseState['crew'] => (
@@ -975,6 +980,20 @@ const isPersistedModulePosition = (value: unknown): value is MoonbaseState['modu
   )) && Number(position.width) > 0 && Number(position.height) > 0
 }
 
+const expandLegacyConstructionLayout = (value: unknown) => {
+  if (!value || typeof value !== 'object') return value
+  const layout = value as Record<string, unknown>
+  if (
+    layout.width !== LEGACY_CONSTRUCTION_GRID_WIDTH ||
+    layout.height !== LEGACY_CONSTRUCTION_GRID_HEIGHT
+  ) return value
+  return {
+    ...layout,
+    width: CONSTRUCTION_GRID_WIDTH,
+    height: CONSTRUCTION_GRID_HEIGHT,
+  }
+}
+
 /**
  * Versions before v10 allowed incident commands to run during establishment.
  * Keep the player's physical construction work, but rebuild the hidden incident
@@ -1610,7 +1629,9 @@ export const useColonyStore = create<MoonbaseStore>()(
         const runSequence = normalizedRunSequence(state.runSequence)
         const layout = version < 4
           ? createStarterConstruction()
-          : state.settlement.layout
+          : version < MAP_EXPANSION_PERSISTENCE_VERSION
+            ? expandLegacyConstructionLayout(state.settlement.layout)
+            : state.settlement.layout
         if (!isConstructionLayout(layout)) return initialState
         const constructionStock = normalizedConstructionStock(
           state.reserves?.constructionStock,
@@ -1676,6 +1697,9 @@ export const useColonyStore = create<MoonbaseStore>()(
           runId: version >= RUN_ID_PERSISTENCE_VERSION && isOpaqueRunId(state.runId)
             ? state.runId
             : createRunId(),
+          map: version < MAP_EXPANSION_PERSISTENCE_VERSION
+            ? initialState.map
+            : state.map ?? initialState.map,
           reserves: { ...state.reserves, constructionStock },
           equipment: reconciledEquipment(state.equipment, initialState.equipment),
           workOrders: reconciledWorkOrders(state.workOrders, initialState.workOrders),

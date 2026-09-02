@@ -5,24 +5,20 @@ import {
   useState,
   type CSSProperties,
 } from 'react'
-import { GameIcon, type GameIconName } from './GameIcon'
+import { GameIcon } from './GameIcon'
 import { PawnSprite, type PawnSpriteVariant } from './PawnSprite'
 import '../arrival.css'
 
 const MISSION_ARRIVAL_STAGES = [
-  'descent',
   'touchdown',
-  'approach',
-  'airlock',
+  'emergency',
 ] as const
 
 export type MissionArrivalStage = typeof MISSION_ARRIVAL_STAGES[number]
 
 const DEFAULT_MISSION_ARRIVAL_TIMINGS: Record<MissionArrivalStage, number> = {
-  descent: 2800,
-  touchdown: 1700,
-  approach: 3200,
-  airlock: 1800,
+  touchdown: 1600,
+  emergency: 3000,
 }
 
 export interface MissionArrivalCompletion {
@@ -37,15 +33,11 @@ export interface MissionArrivalProps {
   onPrepareNewMission: () => void | Promise<void>
   /** Called once the saved mission is resumed or the new-arrival sequence ends. */
   onComplete: (completion: MissionArrivalCompletion) => void
+  /** Current saved-game summary shown only when a resumable mission exists. */
+  savedMissionDay?: number
+  savedMissionLabel?: string
   /** Primarily useful for previews and deterministic tests. */
   timings?: Partial<Record<MissionArrivalStage, number>>
-}
-
-interface LearningStep {
-  detail: string
-  icon: GameIconName
-  label: string
-  number: string
 }
 
 interface ArrivalStageCopy {
@@ -55,57 +47,18 @@ interface ArrivalStageCopy {
   title: string
 }
 
-const LEARNING_STEPS: LearningStep[] = [
-  {
-    number: '01',
-    label: 'Ground',
-    icon: 'map',
-    detail: 'Read pressure, power, supplies, and the terrain before issuing work.',
-  },
-  {
-    number: '02',
-    label: 'Plan',
-    icon: 'plan',
-    detail: 'Stage crew, equipment, priorities, constraints, and a clear stop condition.',
-  },
-  {
-    number: '03',
-    label: 'Supervise',
-    icon: 'activity',
-    detail: 'Advance deliberately. Watch the crew and pause when the world changes.',
-  },
-  {
-    number: '04',
-    label: 'Verify',
-    icon: 'verify',
-    detail: 'Compare the result with the baseline, then keep the evidence you learned from.',
-  },
-]
-
 const STAGE_COPY: Record<MissionArrivalStage, ArrivalStageCopy> = {
-  descent: {
-    eyebrow: 'Powered descent',
-    title: 'Lander on final approach',
-    detail: 'Guidance has acquired the marked pad. Crew remain sealed in their EVA suits.',
-    ariaLabel: 'Powered descent active. The lander is approaching the moon base landing pad.',
-  },
   touchdown: {
-    eyebrow: 'Contact light',
-    title: 'Touchdown confirmed',
-    detail: 'Engines are safe. Surface dust is settling and the habitat beacon is steady.',
-    ariaLabel: 'Touchdown confirmed. The lander is safely on the surface beside the moon base.',
+    eyebrow: 'Touchdown',
+    title: 'Aquila is down.',
+    detail: 'Six crew. One small habitat. Plenty of room to grow.',
+    ariaLabel: 'Aquila has landed safely beside the starter habitat.',
   },
-  approach: {
-    eyebrow: 'Surface transfer',
-    title: 'All six suited crew to the airlock',
-    detail: 'The full crew crosses the exposed surface as one team. No one enters vacuum unsuited.',
-    ariaLabel: 'Surface transfer in progress. Six suited crew members are walking from the lander to the airlock.',
-  },
-  airlock: {
-    eyebrow: 'Pressure equalizing',
-    title: 'Crew entering Shackleton Relay',
-    detail: 'The outer hatch is sealed. The established habitat is pressurized, powered, and ready for the first plan.',
-    ariaLabel: 'The outer hatch is sealed and the airlock is pressurizing. The crew are entering the moon base.',
+  emergency: {
+    eyebrow: 'First shift',
+    title: 'Make the outpost livable.',
+    detail: 'Amina and Mateo take the first build shift. Add one room, an airlock, and life support.',
+    ariaLabel: 'The six-person crew is safe. Amina and Mateo are starting a habitat expansion with life support.',
   },
 }
 
@@ -138,9 +91,9 @@ function MissionMark() {
   )
 }
 
-function BaseSilhouette() {
+function BaseSilhouette({ starter = false }: { starter?: boolean }) {
   return (
-    <div aria-hidden="true" className="arrival-base">
+    <div aria-hidden="true" className={`arrival-base ${starter ? 'arrival-base--starter' : ''}`}>
       <div className="arrival-base__antenna"><i /><i /><i /></div>
       <div className="arrival-base__module arrival-base__module--life">
         <GameIcon name="lifeSupport" />
@@ -207,10 +160,11 @@ function CrewTransfer() {
 }
 
 function ArrivalScene({ stage }: { stage: MissionArrivalStage }) {
+  const visualStage = stage === 'emergency' ? 'approach' : stage
   return (
     <div
       aria-label={STAGE_COPY[stage].ariaLabel}
-      className={`arrival-scene arrival-scene--${stage}`}
+      className={`arrival-scene arrival-scene--${visualStage} arrival-scene--${stage}`}
       data-testid="arrival-scene"
       role="img"
     >
@@ -227,14 +181,15 @@ function ArrivalScene({ stage }: { stage: MissionArrivalStage }) {
         <span className="arrival-dust arrival-dust--left" />
         <span className="arrival-dust arrival-dust--right" />
       </div>
-      <BaseSilhouette />
+      <BaseSilhouette starter />
       <Lander />
       <CrewTransfer />
-      <div aria-hidden="true" className="arrival-scene__telemetry">
-        <span><small>Cabin</small><strong>SEALED</strong></span>
-        <span><small>Exterior</small><strong>VACUUM</strong></span>
-        <span><small>Suit loop</small><strong>NOMINAL</strong></span>
-      </div>
+      {stage === 'emergency' && (
+        <div className="arrival-scene__mission">
+          <GameIcon name="habitat" />
+          <span><small>Your first build</small><strong>Safe expansion</strong></span>
+        </div>
+      )}
     </div>
   )
 }
@@ -247,7 +202,7 @@ function BriefingScene() {
       <span className="arrival-briefing-scene__ridge" />
       <span className="arrival-briefing-scene__route" />
       <span className="arrival-briefing-scene__lander"><GameIcon name="landingPad" /></span>
-      <BaseSilhouette />
+      <BaseSilhouette starter />
       <div className="arrival-briefing-scene__crew">
         {CREW.map((member) => (
           <PawnSprite
@@ -261,7 +216,7 @@ function BriefingScene() {
         ))}
       </div>
       <span className="arrival-briefing-scene__label arrival-briefing-scene__label--pad">PAD 03</span>
-      <span className="arrival-briefing-scene__label arrival-briefing-scene__label--base">PRESSURIZED BASE</span>
+      <span className="arrival-briefing-scene__label arrival-briefing-scene__label--base">STARTER HABITAT</span>
     </div>
   )
 }
@@ -270,12 +225,19 @@ export function MissionArrival({
   hasSavedMission = false,
   onPrepareNewMission,
   onComplete,
+  savedMissionDay = 1,
+  savedMissionLabel = 'Build the first expansion',
   timings,
 }: MissionArrivalProps) {
   const [stage, setStage] = useState<MissionArrivalStage | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [preparationError, setPreparationError] = useState<string | null>(null)
   const [complete, setComplete] = useState(false)
+  const [reducedMotion] = useState(() => (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ))
   const mountedRef = useRef(true)
   const completionSentRef = useRef(false)
 
@@ -301,6 +263,7 @@ export function MissionArrival({
 
   useEffect(() => {
     if (!stage) return
+    if (reducedMotion && stage === 'emergency') return
     const timer = window.setTimeout(() => {
       const nextStage = MISSION_ARRIVAL_STAGES[currentStageIndex + 1]
       if (nextStage) {
@@ -311,10 +274,11 @@ export function MissionArrival({
     }, stageDuration)
 
     return () => window.clearTimeout(timer)
-  }, [currentStageIndex, finish, stage, stageDuration])
+  }, [currentStageIndex, finish, reducedMotion, stage, stageDuration])
 
   const startNewMission = async () => {
     if (preparing) return
+    if (hasSavedMission && !window.confirm('Start over? Current mission progress will be replaced.')) return
     setPreparationError(null)
     setPreparing(true)
     try {
@@ -322,7 +286,7 @@ export function MissionArrival({
       if (!mountedRef.current) return
       completionSentRef.current = false
       setPreparing(false)
-      setStage('descent')
+      setStage(reducedMotion ? 'emergency' : 'touchdown')
     } catch (error) {
       if (!mountedRef.current) return
       setPreparing(false)
@@ -358,18 +322,13 @@ export function MissionArrival({
               <strong>Shackleton Relay</strong>
             </span>
           </div>
-          <div className="arrival-cutscene__counter" aria-label={`Arrival stage ${currentStageIndex + 1} of ${MISSION_ARRIVAL_STAGES.length}`}>
-            <span>{String(currentStageIndex + 1).padStart(2, '0')}</span>
-            <i />
-            <span>{String(MISSION_ARRIVAL_STAGES.length).padStart(2, '0')}</span>
-          </div>
           <button
             className="arrival-button arrival-button--quiet"
-            onClick={() => finish({ kind: 'new', skipped: true })}
+            onClick={() => finish({ kind: 'new', skipped: !reducedMotion })}
             type="button"
           >
-            Skip arrival
-            <GameIcon name="fastForward" />
+            {reducedMotion ? 'Enter colony' : 'Skip intro'}
+            <GameIcon name={reducedMotion ? 'play' : 'fastForward'} />
           </button>
         </header>
 
@@ -380,32 +339,13 @@ export function MissionArrival({
             <span className="arrival-kicker">{copy.eyebrow}</span>
             <h1 id="arrival-cutscene-title">{copy.title}</h1>
             <p>{copy.detail}</p>
-            <div aria-hidden="true" className="arrival-stage-timer" key={stage} style={progressStyle}>
-              <span />
-            </div>
+            {!reducedMotion && (
+              <div aria-hidden="true" className="arrival-stage-timer" key={stage} style={progressStyle}>
+                <span />
+              </div>
+            )}
           </div>
         </div>
-
-        <ol aria-label="Arrival sequence" className="arrival-stage-list">
-          {MISSION_ARRIVAL_STAGES.map((candidate, index) => {
-            const state = index < currentStageIndex
-              ? 'complete'
-              : index === currentStageIndex
-                ? 'current'
-                : 'upcoming'
-            return (
-              <li
-                aria-current={state === 'current' ? 'step' : undefined}
-                data-state={state}
-                key={candidate}
-              >
-                <span>{String(index + 1).padStart(2, '0')}</span>
-                <i />
-                <strong>{STAGE_COPY[candidate].eyebrow}</strong>
-              </li>
-            )
-          })}
-        </ol>
       </section>
     )
   }
@@ -431,31 +371,25 @@ export function MissionArrival({
         <div className="arrival-brand">
           <MissionMark />
           <span>
-            <small>Mission orientation // Shackleton site</small>
+            <small>Shackleton site</small>
             <strong>Shackleton Relay</strong>
           </span>
         </div>
-        <span className="arrival-hold-status">
-          <i />
-          {preparing ? 'Preparing landing' : 'Launch hold active'}
-        </span>
       </header>
 
       <div className="arrival-briefing__content">
         <div className="arrival-briefing__copy">
-          <span className="arrival-kicker">Crewed lunar settlement // Mission day 01</span>
-          <h1 id="arrival-briefing-title">Land safely.<br />Build deliberately.</h1>
+          <span className="arrival-kicker">Lunar colony survival</span>
+          <h1 id="arrival-briefing-title">Build a home<br />on the Moon.</h1>
           <p id="arrival-briefing-summary">
-            Bring a six-person crew from the lander into a ready, pressurized moon base,
-            then recover the settlement through careful, reviewable decisions.
+            Start with one habitat. Expand carefully. Keep six crew safe.
           </p>
 
-          <aside className="arrival-safety-note" aria-label="Arrival safety">
-            <span><GameIcon name="evaSuit" /></span>
+          <aside className="arrival-safety-note" aria-label={hasSavedMission ? 'Saved mission' : 'First shift'}>
+            <span><GameIcon name={hasSavedMission ? 'activity' : 'habitat'} /></span>
             <p>
-              <strong>Vacuum protocol is automatic on arrival.</strong>
-              Every crew member crosses the exposed surface in a sealed EVA suit and only
-              removes it after the airlock reaches pressure.
+              <strong>{hasSavedMission ? `Continue · Day ${savedMissionDay}` : 'First shift'}</strong>
+              {hasSavedMission ? savedMissionLabel : 'Build a second room with an airlock and life support.'}
             </p>
           </aside>
 
@@ -468,7 +402,7 @@ export function MissionArrival({
                 type="button"
               >
                 <GameIcon name="play" />
-                <span><strong>Resume saved mission</strong><small>Return to your last checkpoint</small></span>
+                <span><strong>Continue mission</strong></span>
               </button>
             )}
             <button
@@ -481,48 +415,20 @@ export function MissionArrival({
             >
               <GameIcon name={preparing ? 'gear' : 'landingPad'} />
               <span>
-                <strong>{preparing ? 'Preparing mission…' : hasSavedMission ? 'Start a new landing' : 'Start landing'}</strong>
-                <small>{hasSavedMission ? 'Create a fresh Shackleton expedition' : 'Begin the arrival sequence'}</small>
+                <strong>{preparing ? 'Preparing…' : hasSavedMission ? 'New colony' : 'Start new colony'}</strong>
               </span>
             </button>
           </div>
 
           {preparationError && <p className="arrival-preparation-error" role="alert">{preparationError}</p>}
 
-          <p className="arrival-wait-copy">
-            <GameIcon name="pause" />
-            Nothing starts on its own. Take your time; the mission clock is stopped here.
-          </p>
         </div>
 
         <div className="arrival-briefing__visual">
           <BriefingScene />
-          <div className="arrival-briefing__manifest">
-            <span><small>Crew</small><strong>06 suited</strong></span>
-            <span><small>Habitat</small><strong>Pressurized</strong></span>
-            <span><small>Mission clock</small><strong>On hold</strong></span>
-          </div>
         </div>
       </div>
 
-      <section aria-labelledby="arrival-loop-title" className="arrival-loop">
-        <header>
-          <span className="arrival-kicker">The command loop</span>
-          <h2 id="arrival-loop-title">Ground → Plan → Supervise → Verify</h2>
-          <p>Each turn is a small, inspectable experiment. The world only advances when you tell it to.</p>
-        </header>
-        <ol>
-          {LEARNING_STEPS.map((step) => (
-            <li key={step.label}>
-              <span className="arrival-loop__number">{step.number}</span>
-              <GameIcon name={step.icon} />
-              <h3>{step.label}</h3>
-              <p>{step.detail}</p>
-              <GameIcon className="arrival-loop__arrow" name="chevron" />
-            </li>
-          ))}
-        </ol>
-      </section>
     </section>
   )
 }

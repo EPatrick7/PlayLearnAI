@@ -126,8 +126,12 @@ describe('deriveConstructionCrewCells', () => {
     expect(cells.size).toBe(3)
     expect(new Set([...cells.values()].map(cellKey))).toHaveLength(3)
     cells.forEach((cell) => expect(isInConstructionBounds(cell, layout)).toBe(true))
-    expect(Math.max(...[...cells.values()].map((cell) => Math.abs(cell.x - 11.5)))).toBeLessThanOrEqual(1.5)
-    expect(Math.max(...[...cells.values()].map((cell) => Math.abs(cell.y - 8.5)))).toBeLessThanOrEqual(0.5)
+    const centerX = (layout.width - 1) / 2
+    const centerY = (layout.height - 1) / 2
+    expect(Math.max(...[...cells.values()].map((cell) => Math.abs(cell.x - centerX))))
+      .toBeLessThanOrEqual(1.5)
+    expect(Math.max(...[...cells.values()].map((cell) => Math.abs(cell.y - centerY))))
+      .toBeLessThanOrEqual(1)
   })
 
   it('ignores invalid or completed assignments while still returning an in-bounds cell', () => {

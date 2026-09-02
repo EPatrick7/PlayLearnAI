@@ -1,9 +1,14 @@
 import type { GameIconName } from '../components/GameIcon'
-import type {
-  BoundaryCell,
-  BoundaryKind,
-  ConstructionLayout,
-  WorkstationPlacement,
+import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
+  offsetPresetPoint,
+  offsetStarterPoint,
+  type BoundaryCell,
+  type BoundaryKind,
+  type ConstructionLayout,
+  type GridPoint,
+  type WorkstationPlacement,
 } from './construction'
 
 export type BuildCategory = 'structure' | 'furniture' | 'production' | 'power' | 'orders'
@@ -142,7 +147,9 @@ const starterBoundaries = (): BoundaryCell[] => {
     cells.push({ x: 3, y, kind: 'wall' })
     cells.push({ x: 7, y, kind: y === 9 ? 'door' : 'wall' })
   }
-  return cells.sort((left, right) => left.y - right.y || left.x - right.x)
+  return cells
+    .map((cell) => offsetStarterPoint(cell))
+    .sort((left, right) => left.y - right.y || left.x - right.x)
 }
 
 const starterWorkstations = (): WorkstationPlacement[] => [
@@ -150,7 +157,7 @@ const starterWorkstations = (): WorkstationPlacement[] => [
     id: 'starter-bunk-amina',
     type: 'bed',
     label: 'Amina bunk',
-    origin: { x: 4, y: 8 },
+    origin: offsetStarterPoint({ x: 4, y: 8 }),
     size: { width: 1, height: 2 },
     rotation: 0,
   },
@@ -158,15 +165,15 @@ const starterWorkstations = (): WorkstationPlacement[] => [
     id: 'starter-bunk-mateo',
     type: 'bed',
     label: 'Mateo bunk',
-    origin: { x: 5, y: 8 },
+    origin: offsetStarterPoint({ x: 5, y: 8 }),
     size: { width: 1, height: 2 },
     rotation: 90,
   },
 ]
 
 export const createStarterConstruction = (): ConstructionLayout => ({
-  width: 24,
-  height: 18,
+  width: CONSTRUCTION_GRID_WIDTH,
+  height: CONSTRUCTION_GRID_HEIGHT,
   boundaries: starterBoundaries(),
   workstations: starterWorkstations(),
 })
@@ -174,11 +181,11 @@ export const createStarterConstruction = (): ConstructionLayout => ({
 const presetBoundaries = (): BoundaryCell[] => {
   const cells = new Map<string, BoundaryCell>()
   const place = (x: number, y: number, kind: BoundaryKind = 'wall') => {
-    const key = `${x}:${y}`
+    const point = offsetPresetPoint({ x, y })
+    const key = `${point.x}:${point.y}`
     const current = cells.get(key)
     cells.set(key, {
-      x,
-      y,
+      ...point,
       kind: current?.kind === 'door' || kind === 'door' ? 'door' : 'wall',
     })
   }
@@ -220,6 +227,8 @@ interface GridDoor {
   y: number
 }
 
+const presetOrigin = (x: number, y: number): GridPoint => offsetPresetPoint({ x, y })
+
 const presetWorkstations = (): WorkstationPlacement[] => [
   ...[
     { id: 'preset-bunk-amina', x: 2, y: 7 },
@@ -232,7 +241,7 @@ const presetWorkstations = (): WorkstationPlacement[] => [
     id,
     type: 'bed' as const,
     label: 'Crew bunk',
-    origin: { x, y },
+    origin: presetOrigin(x, y),
     size: { width: 1, height: 2 },
     rotation: 0 as const,
   })),
@@ -240,7 +249,7 @@ const presetWorkstations = (): WorkstationPlacement[] => [
     id: 'preset-life-support',
     type: 'life-support',
     label: 'Shackleton ECLSS',
-    origin: { x: 9, y: 4 },
+    origin: presetOrigin(9, 4),
     size: { width: 2, height: 2 },
     rotation: 0,
   },
@@ -248,7 +257,7 @@ const presetWorkstations = (): WorkstationPlacement[] => [
     id: 'preset-research-bench',
     type: 'research-bench',
     label: 'Kepler research bench',
-    origin: { x: 15, y: 4 },
+    origin: presetOrigin(15, 4),
     size: { width: 3, height: 2 },
     rotation: 0,
   },
@@ -256,7 +265,7 @@ const presetWorkstations = (): WorkstationPlacement[] => [
     id: 'preset-storage-rack',
     type: 'storage-rack',
     label: 'Mission stores',
-    origin: { x: 9, y: 12 },
+    origin: presetOrigin(9, 12),
     size: { width: 2, height: 2 },
     rotation: 0,
   },
@@ -264,7 +273,7 @@ const presetWorkstations = (): WorkstationPlacement[] => [
     id: 'preset-solar-array',
     type: 'solar-array',
     label: 'East ridge solar array',
-    origin: { x: 20, y: 3 },
+    origin: presetOrigin(20, 3),
     size: { width: 3, height: 2 },
     rotation: 0,
   },
@@ -272,7 +281,7 @@ const presetWorkstations = (): WorkstationPlacement[] => [
     id: 'preset-battery-bank',
     type: 'battery-bank',
     label: 'Surface battery bank',
-    origin: { x: 20, y: 6 },
+    origin: presetOrigin(20, 6),
     size: { width: 2, height: 1 },
     rotation: 0,
   },
@@ -280,8 +289,8 @@ const presetWorkstations = (): WorkstationPlacement[] => [
 
 /** The pressurized, furnished relay base used after the opening landing. */
 export const createPresetMoonbaseConstruction = (): ConstructionLayout => ({
-  width: 24,
-  height: 18,
+  width: CONSTRUCTION_GRID_WIDTH,
+  height: CONSTRUCTION_GRID_HEIGHT,
   boundaries: presetBoundaries(),
   workstations: presetWorkstations(),
 })

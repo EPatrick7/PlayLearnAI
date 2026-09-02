@@ -173,8 +173,8 @@
   --construction-viewport-height: calc(100dvh - 58px);
   --construction-base-cell-size: min(calc(100vw / 24), calc((100dvh - 58px) / 18));
   --construction-cell-size: calc(var(--construction-base-cell-size) * var(--construction-zoom, 1));
-  --construction-map-width: calc(var(--construction-cell-size) * 24);
-  --construction-map-height: calc(var(--construction-cell-size) * 18);
+  --construction-map-width: calc(var(--construction-cell-size) * var(--construction-grid-width, 36));
+  --construction-map-height: calc(var(--construction-cell-size) * var(--construction-grid-height, 27));
   position: relative;
   left: max(0px, calc((100% - var(--construction-map-width)) / 2));
   top: max(0px, calc((var(--construction-viewport-height) - var(--construction-map-height)) / 2));
@@ -2099,8 +2099,8 @@
   --construction-viewport-height: calc(100dvh - 48px);
   --construction-base-cell-size: min(calc(100vw / 24), calc((100dvh - 48px) / 18));
   --construction-cell-size: calc(var(--construction-base-cell-size) * var(--construction-zoom, 1));
-  --construction-map-width: calc(var(--construction-cell-size) * 24);
-  --construction-map-height: calc(var(--construction-cell-size) * 18);
+  --construction-map-width: calc(var(--construction-cell-size) * var(--construction-grid-width, 36));
+  --construction-map-height: calc(var(--construction-cell-size) * var(--construction-grid-height, 27));
   --construction-camera-gutter-x: max(50vw, 420px);
   --construction-camera-gutter-top: max(24vh, 150px);
   --construction-camera-gutter-bottom: max(28vh, 180px);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectRooms } from './construction'
+import { detectRooms, offsetPresetPoint } from './construction'
 import { createPresetMoonbaseConstruction } from './constructionCatalog'
 import { constructionSemanticEvaCells } from './constructionHazards'
 import type { ConstructionOrder } from './constructionJobs'
@@ -76,7 +76,7 @@ describe('preset moonbase arrival', () => {
       layout,
       deployed.lab.atmosphere,
     )
-    const labFloor = { x: 16, y: 6 }
+    const labFloor = offsetPresetPoint({ x: 16, y: 6 })
 
     expect(evaRequiredCells).toContainEqual(labFloor)
     expect(findConstructionPath(
@@ -95,10 +95,11 @@ describe('preset moonbase arrival', () => {
 
   it('propagates a breached module hazard through a structurally opened room', () => {
     const [deployed] = deployPresetMoonbase(createInitialState())
+    const openedDoor = offsetPresetPoint({ x: 16, y: 8 })
     const openedLayout = {
       ...deployed.settlement.layout,
       boundaries: deployed.settlement.layout.boundaries.filter(
-        (boundary) => boundary.x !== 16 || boundary.y !== 8,
+        (boundary) => boundary.x !== openedDoor.x || boundary.y !== openedDoor.y,
       ),
     }
     const hazardKeys = new Set(constructionSemanticEvaCells(
@@ -107,8 +108,10 @@ describe('preset moonbase arrival', () => {
       deployed.lab.atmosphere,
     ).map((cell) => `${cell.x}:${cell.y}`))
 
-    expect(hazardKeys.has('16:6')).toBe(true)
-    expect(hazardKeys.has('13:9')).toBe(true)
+    const labKey = offsetPresetPoint({ x: 16, y: 6 })
+    const spineKey = offsetPresetPoint({ x: 13, y: 9 })
+    expect(hazardKeys.has(`${labKey.x}:${labKey.y}`)).toBe(true)
+    expect(hazardKeys.has(`${spineKey.x}:${spineKey.y}`)).toBe(true)
   })
 
   it('repairs fixture-overlapped crew into breathable preset cells', () => {
@@ -127,9 +130,9 @@ describe('preset moonbase arrival', () => {
       layout,
       [{ id: 'lab-left' }, { id: 'lab-right' }, { id: 'eclss' }],
       [
-        { crewId: 'lab-left', cell: { x: 15, y: 4 }, moveCredit: 0 },
-        { crewId: 'lab-right', cell: { x: 17, y: 5 }, moveCredit: 0 },
-        { crewId: 'eclss', cell: { x: 9, y: 4 }, moveCredit: 0 },
+        { crewId: 'lab-left', cell: offsetPresetPoint({ x: 15, y: 4 }), moveCredit: 0 },
+        { crewId: 'lab-right', cell: offsetPresetPoint({ x: 17, y: 5 }), moveCredit: 0 },
+        { crewId: 'eclss', cell: offsetPresetPoint({ x: 9, y: 4 }), moveCredit: 0 },
       ],
       deployed.settlement.constructionStockpile,
       [],
@@ -148,7 +151,8 @@ describe('preset moonbase arrival', () => {
     const [deployed] = deployPresetMoonbase(createInitialState())
     const exposed = structuredClone(deployed)
     const member = exposed.crew[0]
-    const labFloor = { x: 16, y: 6 }
+    const labFloor = offsetPresetPoint({ x: 16, y: 6 })
+    const target = offsetPresetPoint({ x: 16, y: 7 })
     const order: ConstructionOrder = {
       id: 'test-lab-wall',
       commandId: 'test-lab-command',
@@ -161,8 +165,8 @@ describe('preset moonbase arrival', () => {
       travelPhase: 'at_site',
       target: {
         kind: 'boundary',
-        cells: [{ x: 16, y: 7 }],
-        construct: { x: 16, y: 7, kind: 'wall' },
+        cells: [target],
+        construct: { ...target, kind: 'wall' },
         deconstruct: null,
       },
       materials: {

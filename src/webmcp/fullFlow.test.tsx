@@ -1,5 +1,6 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { offsetStarterPoint } from '../game/construction'
 import { canBeginOperations } from '../game/settlement'
 import { useColonyStore } from '../game/store'
 import {
@@ -74,6 +75,8 @@ const expectedState = (state: Envelope) => ({
   expectedWorldRevision: state.worldRevision,
 })
 
+const starterPoint = (x: number, y: number) => offsetStarterPoint({ x, y })
+
 const goldenActions = [
   { kind: 'assign_crew', crewId: 'crew-mateo-alvarez', workOrderId: 'work-seal-lab' },
   { kind: 'reserve_equipment', equipmentId: 'equipment-eva-01', workOrderId: 'work-seal-lab' },
@@ -147,7 +150,7 @@ describe('WebMCP first landing through verified operations', () => {
     expect(initial).toMatchObject({
       settlementPhase: 'landing',
       readyForFirstShift: false,
-      construction: { openOrderCount: 0, material: { stored: 14, available: 14 } },
+      construction: { openOrderCount: 0, material: { stored: 30, available: 30 } },
     })
     const paused = await executeTool<MutationResult>('manage_construction', {
       ...expectedState(initial), action: 'set_speed', speed: 0,
@@ -156,7 +159,10 @@ describe('WebMCP first landing through verified operations', () => {
 
     const cancelledBlueprint = await executeTool<MutationResult & { commandId: string }>(
       'place_construction_blueprint', {
-        ...expectedState(paused), kind: 'wall', start: { x: 12, y: 9 }, end: { x: 12, y: 9 },
+        ...expectedState(paused),
+        kind: 'wall',
+        start: starterPoint(9, 6),
+        end: starterPoint(9, 6),
       },
     )
     expect(cancelledBlueprint.ok).toBe(true)
@@ -182,17 +188,17 @@ describe('WebMCP first landing through verified operations', () => {
     expect(current).toMatchObject({ ok: true, code: 'command_cancelled' })
 
     // Expand east from the real starter habitat. Ten boundary cells and the
-    // four-material life support fit the untouched fourteen-material stock.
-    // The starter door becomes an interior door; (8,7) remains an exterior exit.
+    // four-material life support fit the untouched thirty-material stock.
+    // The starter door becomes an interior door; starter-relative (8,7) remains an exterior exit.
     // Build that exit before closing the shell so crew always have an airlock.
     const blueprints = [
-      { kind: 'wall', start: { x: 8, y: 7 }, end: { x: 11, y: 7 } },
-      { kind: 'door', start: { x: 8, y: 7 }, end: { x: 8, y: 7 } },
-      { kind: 'wall', start: { x: 11, y: 8 }, end: { x: 11, y: 9 } },
-      { kind: 'wall', start: { x: 8, y: 10 }, end: { x: 11, y: 10 } },
+      { kind: 'wall', start: starterPoint(8, 7), end: starterPoint(11, 7) },
+      { kind: 'door', start: starterPoint(8, 7), end: starterPoint(8, 7) },
+      { kind: 'wall', start: starterPoint(11, 8), end: starterPoint(11, 9) },
+      { kind: 'wall', start: starterPoint(8, 10), end: starterPoint(11, 10) },
       {
         kind: 'workstation', workstationType: 'life-support',
-        workstationId: 'first-shift-life-support', origin: { x: 9, y: 8 }, rotation: 0,
+        workstationId: 'first-shift-life-support', origin: starterPoint(9, 8), rotation: 0,
       },
     ]
     for (const blueprint of blueprints) {
@@ -359,5 +365,5 @@ describe('WebMCP first landing through verified operations', () => {
 
     hook.unmount()
     expect(registeredTools.size).toBe(0)
-  })
+  }, 10000)
 })

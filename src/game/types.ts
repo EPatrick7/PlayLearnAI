@@ -486,7 +486,7 @@ export interface MoonbaseState {
   elapsedHours: number
   worldRevision: number
   scenarioStatus: ScenarioStatus
-  map: { width: 24; height: 18 }
+  map: { width: number; height: number }
   settlement: SettlementState
   objective: ScenarioObjective
   reserves: ReserveState

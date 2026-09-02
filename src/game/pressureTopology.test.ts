@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { createStarterConstruction } from './constructionCatalog'
 import { findConstructionPath } from './constructionPathfinding'
-import type { BoundaryCell, ConstructionLayout } from './construction'
+import {
+  offsetStarterPoint,
+  type BoundaryCell,
+  type ConstructionLayout,
+} from './construction'
 import {
   analyzeConstructionPressure,
   constructionCellRequiresEva,
@@ -26,7 +30,7 @@ describe('construction pressure topology', () => {
   it('classifies the starter exit as an exterior airlock', () => {
     const layout = createStarterConstruction()
     const topology = analyzeConstructionPressure(layout)
-    const door = constructionDoorConnectionAt(topology, { x: 7, y: 9 })
+    const door = constructionDoorConnectionAt(topology, offsetStarterPoint({ x: 7, y: 9 }))
 
     expect(topology.rooms).toHaveLength(1)
     expect(door).toMatchObject({
@@ -35,11 +39,11 @@ describe('construction pressure topology', () => {
       roomIds: ['room-1'],
       passageRoomIds: ['room-1', null],
     })
-    expect(constructionEnvironmentAt(layout, topology, { x: 6, y: 9 }))
+    expect(constructionEnvironmentAt(layout, topology, offsetStarterPoint({ x: 6, y: 9 })))
       .toBe('pressurized')
-    expect(constructionEnvironmentAt(layout, topology, { x: 7, y: 9 }))
+    expect(constructionEnvironmentAt(layout, topology, offsetStarterPoint({ x: 7, y: 9 })))
       .toBe('airlock')
-    expect(constructionEnvironmentAt(layout, topology, { x: 8, y: 9 }))
+    expect(constructionEnvironmentAt(layout, topology, offsetStarterPoint({ x: 8, y: 9 })))
       .toBe('vacuum')
   })
 
@@ -60,11 +64,18 @@ describe('construction pressure topology', () => {
   it('routes the landed crew through the airlock before reaching lunar exterior', () => {
     const layout = createStarterConstruction()
     const topology = analyzeConstructionPressure(layout)
-    const route = findConstructionPath(layout, { x: 6, y: 9 }, [{ x: 8, y: 9 }])
+    const route = findConstructionPath(
+      layout,
+      offsetStarterPoint({ x: 6, y: 9 }),
+      [offsetStarterPoint({ x: 8, y: 9 })],
+    )
 
-    expect(route?.path).toContainEqual({ x: 7, y: 9 })
+    expect(route?.path).toContainEqual(offsetStarterPoint({ x: 7, y: 9 }))
     expect(route?.path.filter((cell) => constructionCellRequiresEva(layout, topology, cell)))
-      .toEqual([{ x: 7, y: 9 }, { x: 8, y: 9 }])
+      .toEqual([
+        offsetStarterPoint({ x: 7, y: 9 }),
+        offsetStarterPoint({ x: 8, y: 9 }),
+      ])
   })
 
   it('does not promote ambiguous or same-room doors to exterior airlocks', () => {
@@ -104,14 +115,18 @@ describe('construction pressure topology', () => {
 
   it('identifies a shell breach while preserving the structural exterior airlock', () => {
     const layout = createStarterConstruction()
+    const breach = offsetStarterPoint({ x: 7, y: 10 })
     layout.boundaries = layout.boundaries.filter((boundary) => (
-      boundary.x !== 7 || boundary.y !== 10
+      boundary.x !== breach.x || boundary.y !== breach.y
     ))
     const topology = analyzeConstructionPressure(layout)
 
     expect(topology.rooms).toHaveLength(0)
-    expect(topology.breachCells).toEqual([{ x: 7, y: 10 }])
-    expect(constructionDoorConnectionAt(topology, { x: 7, y: 9 })).toMatchObject({
+    expect(topology.breachCells).toEqual([breach])
+    expect(constructionDoorConnectionAt(
+      topology,
+      offsetStarterPoint({ x: 7, y: 9 }),
+    )).toMatchObject({
       role: 'exterior_airlock',
       passageRoomIds: ['room-1', null],
     })

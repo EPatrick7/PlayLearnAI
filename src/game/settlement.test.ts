@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CONSTRUCTION_GRID_HEIGHT,
+  CONSTRUCTION_GRID_WIDTH,
   eraseAt,
+  offsetPresetPoint,
+  offsetStarterPoint,
   paintBoundaryCell,
   paintBoundaryLine,
   placeWorkstation,
@@ -199,7 +203,10 @@ describe('tiny-start settlement construction', () => {
       phase: 'landing',
       builtModuleIds: ['module-habitat', 'module-corridor', 'module-landing-pad'],
     })
-    expect(state.map).toEqual({ width: 24, height: 18 })
+    expect(state.map).toEqual({
+      width: CONSTRUCTION_GRID_WIDTH,
+      height: CONSTRUCTION_GRID_HEIGHT,
+    })
     expect(state.settlement.buildSites.map((site) => [site.id, site.kind])).toEqual([
       ['site-power-west', 'exterior_power'],
       ['site-power-east', 'exterior_power'],
@@ -210,7 +217,7 @@ describe('tiny-start settlement construction', () => {
       ['site-bay-southeast', 'pressurized_bay'],
     ])
     expect(state.settlement.buildSites.every((site) => site.occupiedBy === null)).toBe(true)
-    expect(state.reserves.constructionStock).toBe(14)
+    expect(state.reserves.constructionStock).toBe(30)
     expect(buildBlueprints.reduce((total, blueprint) => total + blueprint.cost, 0)).toBe(14)
     expect(availableBlueprintsFor(state).map((blueprint) => blueprint.id)).toEqual([
       'solar_battery_skid',
@@ -229,12 +236,11 @@ describe('tiny-start settlement construction', () => {
 
     expect(solarResult).toMatchObject({ ok: true, code: 'built', phase: 'power_online' })
     expect(powered.modules.find((module) => module.id === 'module-solar-skid')?.position).toEqual({
-      x: 2,
-      y: 1,
+      ...offsetPresetPoint({ x: 2, y: 1 }),
       width: 5,
       height: 4,
     })
-    expect(powered.reserves.constructionStock).toBe(11)
+    expect(powered.reserves.constructionStock).toBe(27)
     expect(initial.modules.find((module) => module.id === 'module-solar-skid')?.position).not.toEqual(
       powered.modules.find((module) => module.id === 'module-solar-skid')?.position,
     )
@@ -257,7 +263,7 @@ describe('tiny-start settlement construction', () => {
 
     const ready = establishBase()
     expect(ready.settlement.phase).toBe('ready')
-    expect(ready.reserves.constructionStock).toBe(0)
+    expect(ready.reserves.constructionStock).toBe(16)
     expect(buildProgressFor(ready)).toEqual({ built: 5, total: 5, percent: 100 })
     expect(availableBlueprintsFor(ready)).toEqual([])
   })
@@ -287,7 +293,7 @@ describe('tiny-start settlement construction', () => {
     const [stillPowered, occupied] = constructModule(powered, 'life_support', 'site-power-east')
     expect(occupied).toMatchObject({ ok: false, code: 'site_occupied' })
     expect(stillPowered).toBe(powered)
-    expect(stillPowered.reserves.constructionStock).toBe(11)
+    expect(stillPowered.reserves.constructionStock).toBe(27)
   })
 
   it('reveals operations only when ready and preserves the complete emergency simulation', () => {
@@ -338,7 +344,7 @@ describe('tiny-start settlement construction', () => {
       version?: number
       state?: MoonbaseState
     }
-    expect(saved.version).toBe(14)
+    expect(saved.version).toBe(15)
     expect(saved.state).toMatchObject({
       runSequence: useColonyStore.getState().runSequence,
       runId: useColonyStore.getState().runId,
@@ -348,7 +354,7 @@ describe('tiny-start settlement construction', () => {
       constructionOrders: [],
       constructionSequence: 1,
       constructionSpeed: 3,
-      constructionStockpile: { x: 8, y: 9 },
+      constructionStockpile: offsetStarterPoint({ x: 8, y: 9 }),
       constructionCrew: expect.arrayContaining([
         expect.objectContaining({ crewId: 'crew-amina-okafor' }),
       ]),
@@ -387,6 +393,24 @@ describe('tiny-start settlement construction', () => {
       hazard: 'vacuum',
       requiredEquipment: ['eva_suit', 'engineering_kit'],
     })
+    const legacyV14 = structuredClone(saved.state!)
+    legacyV14.map = { width: 24, height: 18 }
+    legacyV14.settlement.layout = {
+      ...legacyV14.settlement.layout,
+      width: 24,
+      height: 18,
+    }
+    const legacyBoundary = legacyV14.settlement.layout.boundaries[0]
+    const migratedV14 = await migrate!(legacyV14, 14) as MoonbaseState
+    expect(migratedV14.map).toEqual({
+      width: CONSTRUCTION_GRID_WIDTH,
+      height: CONSTRUCTION_GRID_HEIGHT,
+    })
+    expect(migratedV14.settlement.layout).toMatchObject({
+      width: CONSTRUCTION_GRID_WIDTH,
+      height: CONSTRUCTION_GRID_HEIGHT,
+    })
+    expect(migratedV14.settlement.layout.boundaries).toContainEqual(legacyBoundary)
     const legacy = { ...createInitialState(), settlement: undefined }
     const migrated = await migrate!(legacy, 1) as MoonbaseState
     expect(migrated.settlement).toMatchObject({
@@ -527,7 +551,9 @@ describe('tiny-start settlement construction', () => {
       travelPhase: 'idle',
     })
     expect(migratedV6.settlement.constructionCrew).toHaveLength(migratedV6.crew.length)
-    expect(migratedV6.settlement.constructionStockpile).toEqual({ x: 8, y: 9 })
+    expect(migratedV6.settlement.constructionStockpile).toEqual(
+      offsetStarterPoint({ x: 8, y: 9 }),
+    )
 
     const legacyCompletedLayout = saved.state!.settlement.layout
     const legacyShellOrders = deriveConstructionOrders(
@@ -594,7 +620,7 @@ describe('tiny-start settlement construction', () => {
     ;(malformedSpeed.settlement as Record<string, unknown>).constructionSpeed = 99
     expect(merge!(malformedSpeed, useColonyStore.getState()).settlement.constructionSpeed).toBe(3)
 
-    const future = await migrate!(saved.state, 15) as MoonbaseState
+    const future = await migrate!(saved.state, 16) as MoonbaseState
     expect(future).toMatchObject({ worldRevision: 1, settlement: { phase: 'landing' } })
   })
 
@@ -1234,7 +1260,11 @@ describe('tiny-start settlement construction', () => {
     useColonyStore.setState((store) => ({ ...store, ...operations }))
 
     const result = useColonyStore.getState().queueConstruction(
-      paintBoundaryCell(operations.settlement.layout, { x: 7, y: 9 }, 'wall'),
+      paintBoundaryCell(
+        operations.settlement.layout,
+        offsetStarterPoint({ x: 7, y: 9 }),
+        'wall',
+      ),
     )
 
     expect(result).toMatchObject({
@@ -1313,7 +1343,7 @@ describe('tiny-start settlement construction', () => {
       status: 'deployed',
       assignedCrewId: 'crew-mateo-alvarez',
     })
-    expect(state.reserves.constructionStock).toBe(13)
+    expect(state.reserves.constructionStock).toBe(29)
     expect(state.settlement.layout.boundaries).not.toContainEqual({
       ...target,
       kind: 'wall',
@@ -1331,7 +1361,7 @@ describe('tiny-start settlement construction', () => {
       assignedCrewId: null,
       travelPhase: 'idle',
     })
-    expect(state.reserves.constructionStock).toBe(13)
+    expect(state.reserves.constructionStock).toBe(29)
     expect(state.settlement.layout.boundaries).toContainEqual({
       ...target,
       kind: 'wall',

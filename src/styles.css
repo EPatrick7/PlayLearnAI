@@ -2415,7 +2415,9 @@ button:disabled {
   background-image:
     linear-gradient(rgba(239, 234, 218, 0.045) 1px, transparent 1px),
     linear-gradient(90deg, rgba(239, 234, 218, 0.045) 1px, transparent 1px);
-  background-size: calc(100% / 24) calc(100% / 18);
+  background-size:
+    calc(100% / var(--map-columns, 36))
+    calc(100% / var(--map-rows, 27));
   mask-image: linear-gradient(to bottom, transparent, black 18%, black 85%, transparent);
   pointer-events: none;
 }
@@ -3696,22 +3698,28 @@ button:disabled {
 }
 
 .settlement-map-scroll > .moonbase-map {
-  --map-cell-size: min(calc(100vw / 24), calc((100dvh - 62px) / 18));
+  --map-cell-size: min(
+    calc(100vw / var(--map-columns, 36)),
+    calc((100dvh - 62px) / var(--map-rows, 27))
+  );
   inset: auto;
   left: 50%;
   top: 50%;
-  width: calc(var(--map-cell-size) * 24);
-  height: calc(var(--map-cell-size) * 18);
+  width: calc(var(--map-cell-size) * var(--map-columns, 36));
+  height: calc(var(--map-cell-size) * var(--map-rows, 27));
   transform: translate(-50%, -50%);
 }
 
 .operations-map-scroll > .moonbase-map {
-  --map-cell-size: min(calc(100vw / 24), calc((100dvh - 62px) / 18));
+  --map-cell-size: min(
+    calc(100vw / var(--map-columns, 36)),
+    calc((100dvh - 62px) / var(--map-rows, 27))
+  );
   inset: auto;
   left: 50%;
   top: 50%;
-  width: calc(var(--map-cell-size) * 24);
-  height: calc(var(--map-cell-size) * 18);
+  width: calc(var(--map-cell-size) * var(--map-columns, 36));
+  height: calc(var(--map-cell-size) * var(--map-rows, 27));
   transform: translate(-50%, -50%);
 }
 
@@ -4017,8 +4025,8 @@ button:disabled {
     inset: auto;
     left: auto;
     top: auto;
-    width: calc(var(--map-cell-size) * 24);
-    height: calc(var(--map-cell-size) * 18);
+    width: calc(var(--map-cell-size) * var(--map-columns, 36));
+    height: calc(var(--map-cell-size) * var(--map-rows, 27));
     transform: none;
   }
 
@@ -4185,11 +4193,10 @@ button:disabled {
   }
 
   .operations-map-scroll {
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: auto;
     overscroll-behavior: contain;
     scrollbar-width: none;
-    touch-action: pan-x;
+    touch-action: pan-x pan-y;
   }
 
   .operations-map-scroll::-webkit-scrollbar {
@@ -4201,10 +4208,10 @@ button:disabled {
     position: relative;
     inset: auto;
     left: auto;
-    top: 50%;
-    width: calc(var(--map-cell-size) * 24);
-    height: calc(var(--map-cell-size) * 18);
-    transform: translateY(-50%);
+    top: auto;
+    width: calc(var(--map-cell-size) * var(--map-columns, 36));
+    height: calc(var(--map-cell-size) * var(--map-rows, 27));
+    transform: none;
   }
 
   .colonist-strip {
